@@ -15,12 +15,12 @@ import {
 } from '@tabler/icons-react'
 import {
   isDesktop,
+  canSavePastedFiles,
   isMacOS,
   onBrowserShortcut,
   openExternalUrl,
   type BrowserShortcutAction,
 } from '../../bridge.js'
-import type { Transport } from '../../transport.js'
 import { BrowserAnnotations, type AnnotationGuest } from './BrowserAnnotations.js'
 import type { AnnotationDraft } from './browser-annotations.js'
 import { errorMessage } from '../../boundary.js'
@@ -77,8 +77,20 @@ declare global {
   }
 }
 
+/** The same document, ignoring the fragment, so a reload is not a move to another page. */
+function samePage(next: string | undefined, current: string): boolean {
+  if (!next) return false
+  try {
+    const [a, b] = [new URL(next), new URL(current)]
+    return a.origin === b.origin && a.pathname === b.pathname && a.search === b.search
+  } catch {
+    return false
+  }
+}
+
 const NavigationEventSchema = z.object({
   isMainFrame: z.boolean().optional(),
+  isInPlace: z.boolean().optional(),
   url: z.string().optional(),
 })
 const PageTitleEventSchema = z.object({ title: z.string() })
@@ -112,12 +124,10 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   tabId,
   onPageInfo,
   onClose,
-  transport,
   imagesSupported = false,
   onAnnotationDraft,
 }: {
   active: boolean
-  transport?: Transport | undefined
   imagesSupported?: boolean | undefined
   onAnnotationDraft?: ((draft: AnnotationDraft) => void) | undefined
   navigation?: BrowserNavigationRequest | undefined
@@ -235,6 +245,9 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     const onNavigationStart = (event: Event) => {
       const navigation = NavigationEventSchema.safeParse(event)
       if (!navigation.success || navigation.data.isMainFrame === false) return
+      if (navigation.data.isInPlace) return
+      // A dev server reloads the page under an agent's edits: comments outlive that.
+      if (samePage(navigation.data.url, view.getURL())) return
       setAnnotating(false)
       setAnnotationRevision((revision) => revision + 1)
     }
@@ -588,11 +601,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           </button>
         </form>
 
-        {isDesktop &&
-        transport &&
-        onAnnotationDraft &&
-        guest.current &&
-        typeof guest.current.executeJavaScript === 'function' ? (
+        {isDesktop && canSavePastedFiles && onAnnotationDraft ? (
           <button
             type="button"
             aria-label="Annotate page"
@@ -636,13 +645,12 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           data-visible={Boolean(state.url) && !failure}
           aria-hidden={!active}
         >
-          {guest.current && transport && onAnnotationDraft ? (
+          {guest.current && onAnnotationDraft ? (
             <BrowserAnnotations
               key={annotationRevision}
               view={guest.current}
               enabled={annotating && active}
               imagesSupported={imagesSupported}
-              transport={transport}
               onDraft={onAnnotationDraft}
               onExit={() => setAnnotating(false)}
             />

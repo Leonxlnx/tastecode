@@ -1,12 +1,15 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { Transport } from '../../transport.js'
 import { BrowserAnnotations, type AnnotationGuest } from './BrowserAnnotations.js'
 import type { AnnotationDraft } from './browser-annotations.js'
 
+const save = vi.hoisted(() => vi.fn())
+vi.mock('../../bridge.js', () => ({ savePastedFile: save }))
+
 const target = {
   selector: '#heading',
+  tag: 'h1',
   text: 'Heading',
   box: { x: 10, y: 20, width: 80, height: 40 },
 }
@@ -31,22 +34,21 @@ afterEach(() => {
 })
 
 function setup(imagesSupported = true) {
-  const view = document.createElement('div') as AnnotationGuest
+  const view = document.createElement('div') as unknown as AnnotationGuest
   view.executeJavaScript = vi
     .fn()
-    .mockResolvedValue({ width: 400, height: 300, scrollX: 0, scrollY: 0, targets: [target] })
+    .mockResolvedValue({ width: 400, height: 300, targets: [target], hit: target })
   view.capturePage = vi
     .fn()
     .mockResolvedValue({ toDataURL: () => 'data:image/png;base64,cGl4ZWxz' })
   view.getURL = () => 'http://127.0.0.1:6444'
-  const save = vi.fn().mockResolvedValue({ path: '/test/annotation.png' })
+  save.mockReset().mockResolvedValue({ path: '/test/annotation.png' })
   const onDraft = vi.fn<(draft: AnnotationDraft) => void>()
   const onExit = vi.fn()
   const props = {
     view,
     enabled: true,
     imagesSupported,
-    transport: { request: save } as unknown as Transport,
     onDraft,
     onExit,
   }
@@ -54,45 +56,82 @@ function setup(imagesSupported = true) {
   return { ...rendered, props, save, onDraft, view }
 }
 
-async function pin() {
+const clickPage = () =>
   fireEvent.click(screen.getByLabelText('Annotate page'), { clientX: 30, clientY: 40 })
+
+async function pin() {
+  clickPage()
   const input = await screen.findByLabelText('Comment 1')
   fireEvent.change(input, { target: { value: 'Make this smaller' } })
-  fireEvent.click(screen.getByText('Save comment'))
+  fireEvent.keyDown(input, { key: 'Enter' })
+  await screen.findByRole('button', { name: 'Add to chat' })
 }
 
-it('preserves pins on upload failure and clears only after ordinary send acceptance', async () => {
-  const { save, onDraft } = setup()
+it('hands the round to the composer, and keeps it when an image cannot be saved', async () => {
+  const { save, onDraft, props } = setup()
   await pin()
   expect(drawImage).toHaveBeenCalledWith(expect.anything(), 20, 40, 160, 80, 0, 0, 160, 80)
   save.mockRejectedValueOnce(new Error('offline'))
-  fireEvent.click(screen.getByText('Add 1 to composer'))
-  await screen.findByText(/Could not add annotations/)
-  expect(screen.getByText('1. Make this smaller')).toBeTruthy()
-  fireEvent.click(screen.getByText('Add 1 to composer'))
+  fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }))
+  await screen.findByText(/Could not add these/)
+  expect(onDraft).not.toHaveBeenCalled()
+  expect(screen.getByText('Make this smaller')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }))
   await waitFor(() => expect(onDraft).toHaveBeenCalledTimes(1))
   const draft = onDraft.mock.calls[0]![0]
   expect(draft.attachments).toEqual(['/test/annotation.png'])
-  expect(draft.text).toContain('"selector":"#heading"')
-  expect(screen.getByText('1. Make this smaller')).toBeTruthy()
-  act(() => draft.onSent())
-  expect(screen.queryByText('1. Make this smaller')).toBeNull()
+  expect(draft.text).toContain('Element: "#heading"')
+  expect(draft.text).toContain('Attached screenshots')
+  expect(screen.queryByText('Make this smaller')).toBeNull()
+  expect(props.onExit).toHaveBeenCalledTimes(1)
 })
 
-it('uses text only when images are unsupported and restores browsing on exit', async () => {
+it('says up front when comments go as text, and stops reading the page on exit', async () => {
   const { save, onDraft, props, rerender, view } = setup(false)
   await pin()
-  fireEvent.click(screen.getByText('Add 1 to composer'))
+  expect(screen.getByText(/Text only/)).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }))
   await waitFor(() => expect(onDraft).toHaveBeenCalledTimes(1))
   expect(save).not.toHaveBeenCalled()
   expect(onDraft.mock.calls[0]![0].attachments).toEqual([])
-  expect(screen.getByText(/This model does not support images/)).toBeTruthy()
-  fireEvent.keyDown(screen.getByLabelText('Annotate page'), { key: 'Escape' })
-  expect(props.onExit).toHaveBeenCalledTimes(1)
+  expect(onDraft.mock.calls[0]![0].text).not.toContain('screenshots')
   rerender(<BrowserAnnotations {...props} enabled={false} />)
   expect(screen.queryByLabelText('Annotate page')).toBeNull()
   expect(screen.queryByRole('status')).toBeNull()
   const calls = vi.mocked(view.executeJavaScript).mock.calls.length
-  await new Promise((resolve) => setTimeout(resolve, 200))
+  await new Promise((resolve) => setTimeout(resolve, 300))
   expect(vi.mocked(view.executeJavaScript).mock.calls).toHaveLength(calls)
+})
+
+it('lets Escape close the comment box first and leave the mode second', async () => {
+  const { props } = setup()
+  clickPage()
+  const input = await screen.findByLabelText('Comment 1')
+  fireEvent.keyDown(input, { key: 'Escape' })
+  expect(screen.queryByLabelText('Comment 1')).toBeNull()
+  expect(props.onExit).not.toHaveBeenCalled()
+  fireEvent.keyDown(screen.getByLabelText('Annotate page'), { key: 'Escape' })
+  expect(props.onExit).toHaveBeenCalledTimes(1)
+})
+
+it('keeps a line break on Shift+Enter and refuses an empty comment', async () => {
+  setup()
+  clickPage()
+  const input = await screen.findByLabelText('Comment 1')
+  fireEvent.keyDown(input, { key: 'Enter' })
+  expect(screen.getByLabelText('Comment 1')).toBeTruthy()
+  fireEvent.change(input, { target: { value: 'First' } })
+  fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
+  expect(screen.getByLabelText('Comment 1')).toBeTruthy()
+})
+
+it('reopens a pinned element instead of pinning it twice', async () => {
+  setup()
+  await pin()
+  clickPage()
+  const input = (await screen.findByLabelText('Comment 1')) as HTMLTextAreaElement
+  expect(input.value).toBe('Make this smaller')
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+  expect(screen.queryByText('Make this smaller')).toBeNull()
+  expect(screen.getByText('Click anything to comment')).toBeTruthy()
 })

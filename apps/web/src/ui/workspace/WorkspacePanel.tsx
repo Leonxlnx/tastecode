@@ -738,7 +738,6 @@ function WorkspaceToolSurface(props: {
     return (
       <WorkspaceBrowser
         active={props.active}
-        transport={props.transport}
         imagesSupported={props.imagesSupported}
         onAnnotationDraft={props.onAnnotationDraft}
         navigation={props.browserNavigation}

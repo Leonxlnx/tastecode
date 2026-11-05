@@ -1976,27 +1976,19 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       request: ++composerDraftRequests.current,
     })
   }, [])
-  const annotationDrafts = useRef(new Map<string, () => void>())
   const stageBrowserAnnotations = useCallback(
     (annotation: AnnotationDraft) => {
       const owner = threadController.draftOwner
       const current = threadController.draft(owner)
-      const next = threadController.editDraft(owner, {
-        text: [current.text, annotation.text].filter(Boolean).join('\n\n'),
-        attachments: [...current.attachments, ...annotation.attachments],
-      })
-      annotationDrafts.current.set(annotation.text.split('\n')[0]!, annotation.onSent)
-      publishComposerDraft(next)
+      publishComposerDraft(
+        threadController.editDraft(owner, {
+          text: [current.text, annotation.text].filter(Boolean).join('\n\n'),
+          attachments: [...current.attachments, ...annotation.attachments],
+        }),
+      )
     },
     [publishComposerDraft],
   )
-  const acceptBrowserAnnotations = useCallback((text: string) => {
-    for (const [marker, onSent] of annotationDrafts.current) {
-      if (!text.includes(marker)) continue
-      annotationDrafts.current.delete(marker)
-      onSent()
-    }
-  }, [])
   const restoreRejectedDraft = useCallback(
     (threadId: string, rejected: RecoverableDraft) => {
       const draft = threadController.recoverDraft(threadId, rejected)
@@ -5058,7 +5050,6 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         if (interruptRequested) requestInterrupt(threadId)
         const result = await turnRequest
         turnAccepted = true
-        acceptBrowserAnnotations(text)
         const current = threadController.snapshot(threadId) ?? emptyThread
         const pending = threadController.submission(threadId, optimisticItemId)
         threadController.updateSubmission(threadId, optimisticItemId, { accepted: true })
@@ -5168,7 +5159,6 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       restoreRejectedDraft,
       sendAvailability,
       publishComposerDraft,
-      acceptBrowserAnnotations,
       cancelArchive,
       moveChoice,
       displayedApproval,

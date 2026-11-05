@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
-import type { Transport } from '../../transport.js'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { savePastedFile } from '../../bridge.js'
 import {
   AnnotationProbe,
   annotationCrop,
+  annotationPopoverPlace,
   annotationProbeScript,
   annotationPrompt,
   annotationText,
+  type AnnotationBox,
   type AnnotationDraft,
   type AnnotationTarget,
   type BrowserAnnotation,
+  type ProbeRequest,
 } from './browser-annotations.js'
 
 export type AnnotationGuest = HTMLElement & {
@@ -17,336 +20,467 @@ export type AnnotationGuest = HTMLElement & {
   getURL(): string
 }
 
+const MAX_PINS = 20
+const TRACKING_INTERVAL_MS = 250
+/** Above this the screenshot only costs the agent's context, not detail it can use. */
+const MAX_CROP_SIDE = 1600
+
+/** Pixels of the element as the guest paints it now. The overlay is never in the capture. */
+async function captureElement(
+  view: AnnotationGuest,
+  box: AnnotationBox,
+  viewport: { width: number; height: number },
+): Promise<string | undefined> {
+  const screenshot = await view.capturePage()
+  const source = new Image()
+  source.src = screenshot.toDataURL()
+  await source.decode()
+  const bitmap = await createImageBitmap(source)
+  try {
+    const crop = annotationCrop(box, viewport, bitmap)
+    if (!crop) return undefined
+    const canvas = document.createElement('canvas')
+    const scale = Math.min(1, MAX_CROP_SIDE / Math.max(crop.width, crop.height))
+    canvas.width = Math.max(1, Math.round(crop.width * scale))
+    canvas.height = Math.max(1, Math.round(crop.height * scale))
+    canvas
+      .getContext('2d')!
+      .drawImage(bitmap, crop.x, crop.y, crop.width, crop.height, 0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/png').split(',')[1]
+  } finally {
+    bitmap.close()
+  }
+}
+
 export function BrowserAnnotations({
   view,
   enabled,
   imagesSupported,
-  transport,
   onDraft,
   onExit,
 }: {
   view: AnnotationGuest
   enabled: boolean
   imagesSupported: boolean
-  transport: Transport
   onDraft: (draft: AnnotationDraft) => void
   onExit: () => void
 }) {
   const [pins, setPins] = useState<BrowserAnnotation[]>([])
   const [hover, setHover] = useState<AnnotationTarget>()
-  const [positions, setPositions] = useState<(AnnotationTarget | null)[]>([])
+  const [boxes, setBoxes] = useState<ReadonlyMap<number, AnnotationBox | null>>(new Map())
   const [viewport, setViewport] = useState({ width: 1, height: 1 })
   const [editing, setEditing] = useState<BrowserAnnotation>()
+  const [popoverPlace, setPopoverPlace] = useState<{ left: number; top: number }>()
   const [busy, setBusy] = useState(false)
-  const [staged, setStaged] = useState(false)
-  const [notice, setNotice] = useState('Click an element to comment. Navigation clears pins.')
-  const pinsRef = useRef(pins)
-  pinsRef.current = pins
-  const epoch = useRef(0)
-  const reading = useRef(false)
-  const pointer = useRef<{ x: number; y: number } | undefined>(undefined)
+  const [unreadable, setUnreadable] = useState(false)
+  const [addFailed, setAddFailed] = useState(false)
+
   const overlay = useRef<HTMLDivElement>(null)
-  const input = useRef<HTMLTextAreaElement>(null)
+  const popover = useRef<HTMLFormElement>(null)
+  const pointer = useRef<{ x: number; y: number } | undefined>(undefined)
+  const pendingScroll = useRef({ dx: 0, dy: 0 })
+  const requestRead = useRef<() => void>(() => undefined)
+  const enabledRef = useRef(enabled)
+  enabledRef.current = enabled
+  const editingRef = useRef(editing)
+  editingRef.current = editing
+  // The element of a comment still being written is followed like a saved pin.
+  const tracked = useRef<BrowserAnnotation[]>([])
+  tracked.current =
+    editing && !pins.some((pin) => pin.number === editing.number) ? [...pins, editing] : pins
 
   useEffect(() => {
-    if (!enabled) {
-      setHover(undefined)
-      setEditing(undefined)
-      return
-    }
-    let cancelled = false
-    const refresh = async () => {
-      if (reading.current) return
-      reading.current = true
+    if (!enabled) return
+    let stopped = false
+    let reading = false
+    let readAgain = false
+    let frame: number | undefined
+    const read = async () => {
+      if (reading) {
+        readAgain = true
+        return
+      }
+      reading = true
+      const scroll = pendingScroll.current
+      pendingScroll.current = { dx: 0, dy: 0 }
+      const pins = tracked.current
+      const at = editingRef.current ? undefined : pointer.current
+      const request: ProbeRequest = {
+        selectors: pins.map((pin) => pin.selector),
+        ...(at ? { point: at } : {}),
+        ...(scroll.dx || scroll.dy ? { scroll } : {}),
+      }
       try {
-        const selectors = pinsRef.current.map((pin) => pin.selector)
         const data = AnnotationProbe.parse(
-          await view.executeJavaScript(annotationProbeScript({ selectors })),
+          await view.executeJavaScript(annotationProbeScript(request)),
         )
-        if (cancelled) return
-        setPositions(data.targets)
-        setViewport(data)
-        if (pointer.current) {
-          const hit = AnnotationProbe.parse(
-            await view.executeJavaScript(annotationProbeScript({ point: pointer.current })),
-          )
-          if (!cancelled) setHover(hit.targets[0] ?? undefined)
-        }
+        if (stopped) return
+        setViewport({ width: data.width, height: data.height })
+        setBoxes(new Map(pins.map((pin, index) => [pin.number, data.targets[index]?.box ?? null])))
+        setHover(data.hit ?? undefined)
+        setUnreadable(false)
       } catch {
-        if (!cancelled) setNotice('Could not read this page. Try reloading it.')
+        // Expected for a moment while a page reloads; the next read clears it.
+        if (!stopped) setUnreadable(true)
       } finally {
-        reading.current = false
+        reading = false
+        if (readAgain && !stopped) {
+          readAgain = false
+          void read()
+        }
       }
     }
-    void refresh()
-    const timer = window.setInterval(() => void refresh(), 150)
+    requestRead.current = () => {
+      frame ??= requestAnimationFrame(() => {
+        frame = undefined
+        void read()
+      })
+    }
+    void read()
+    // Pages move on their own too: layout shifts, carousels, late images.
+    const timer = window.setInterval(() => {
+      if (tracked.current.length > 0) void read()
+    }, TRACKING_INTERVAL_MS)
+    overlay.current?.focus({ preventScroll: true })
     return () => {
-      cancelled = true
-      epoch.current++
+      stopped = true
       window.clearInterval(timer)
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      requestRead.current = () => undefined
+      pointer.current = undefined
+      setHover(undefined)
+      setEditing(undefined)
     }
   }, [view, enabled])
 
-  useEffect(() => {
-    input.current?.focus()
-  }, [editing?.number])
-  useEffect(
-    () => () => {
-      epoch.current++
-    },
-    [],
-  )
+  const editingBox = editing ? (boxes.get(editing.number) ?? editing.box) : undefined
+  useLayoutEffect(() => {
+    if (!editingBox || !overlay.current || !popover.current) {
+      setPopoverPlace(undefined)
+      return
+    }
+    const area = overlay.current.getBoundingClientRect()
+    const panel = popover.current.getBoundingClientRect()
+    const scaleX = area.width / viewport.width
+    const scaleY = area.height / viewport.height
+    const next = annotationPopoverPlace(
+      {
+        x: editingBox.x * scaleX,
+        y: editingBox.y * scaleY,
+        width: editingBox.width * scaleX,
+        height: editingBox.height * scaleY,
+      },
+      area,
+      panel,
+    )
+    setPopoverPlace((current) =>
+      current?.left === next.left && current.top === next.top ? current : next,
+    )
+  }, [editingBox, viewport])
 
-  const point = (x: number, y: number) => {
+  // The box measures itself hidden first, and a hidden field cannot take focus.
+  const editorPlaced = popoverPlace !== undefined
+  useEffect(() => {
+    if (editorPlaced) popover.current?.querySelector('textarea')?.focus()
+  }, [editing?.number, editorPlaced])
+
+  const toPoint = (x: number, y: number) => {
     const rect = overlay.current!.getBoundingClientRect()
     return { x: (x - rect.x) / rect.width, y: (y - rect.y) / rect.height }
   }
-  const style = (target: AnnotationTarget) => ({
-    left: `${(target.box.x / viewport.width) * 100}%`,
-    top: `${(target.box.y / viewport.height) * 100}%`,
-    width: `${(target.box.width / viewport.width) * 100}%`,
-    height: `${(target.box.height / viewport.height) * 100}%`,
+  const boxStyle = (box: AnnotationBox): CSSProperties => ({
+    left: `${(box.x / viewport.width) * 100}%`,
+    top: `${(box.y / viewport.height) * 100}%`,
+    width: `${(box.width / viewport.width) * 100}%`,
+    height: `${(box.height / viewport.height) * 100}%`,
   })
+  const onPage = (box: AnnotationBox | null | undefined): box is AnnotationBox =>
+    !!box &&
+    box.width > 0 &&
+    box.height > 0 &&
+    box.x + box.width > 0 &&
+    box.y + box.height > 0 &&
+    box.x < viewport.width &&
+    box.y < viewport.height
+
+  const closeEditor = () => {
+    setEditing(undefined)
+    overlay.current?.focus({ preventScroll: true })
+  }
   const select = async (x: number, y: number) => {
-    if (busy || editing || staged || pins.length >= 20) return
+    if (busy || pins.length >= MAX_PINS) return
     setBusy(true)
-    const revision = epoch.current
     try {
       const data = AnnotationProbe.parse(
-        await view.executeJavaScript(annotationProbeScript({ point: point(x, y) })),
+        await view.executeJavaScript(
+          annotationProbeScript({ point: toPoint(x, y), withText: true }),
+        ),
       )
-      const target = data.targets[0]
+      const target = data.hit
       if (!target || !target.box.width || !target.box.height) return
-      const screenshot = await view.capturePage()
-      const source = new Image()
-      source.src = screenshot.toDataURL()
-      await source.decode()
-      const bitmap = await createImageBitmap(source)
-      let image: string | undefined
-      try {
-        const crop = annotationCrop(target.box, data, bitmap)
-        if (!crop) return
-        const canvas = document.createElement('canvas')
-        const scale = Math.min(1, 1600 / Math.max(crop.width, crop.height))
-        canvas.width = Math.max(1, Math.round(crop.width * scale))
-        canvas.height = Math.max(1, Math.round(crop.height * scale))
-        canvas
-          .getContext('2d')!
-          .drawImage(
-            bitmap,
-            crop.x,
-            crop.y,
-            crop.width,
-            crop.height,
-            0,
-            0,
-            canvas.width,
-            canvas.height,
-          )
-        image = canvas.toDataURL('image/png').split(',')[1]
-      } finally {
-        bitmap.close()
+      // A second click on a pinned element means this comment, not a duplicate of it.
+      const pinned = pins.find((pin) => pin.selector === annotationText(target.selector, 2048))
+      if (pinned) {
+        setEditing(pinned)
+        return
       }
-      if (revision !== epoch.current) return
-      setViewport(data)
+      if (!enabledRef.current) return
+      setViewport({ width: data.width, height: data.height })
+      const number = Math.max(0, ...pins.map((pin) => pin.number)) + 1
+      // The box opens at once: the capture is slower than a click should feel, and it
+      // cannot see the box. Add to chat stays disabled until the image has landed.
       setEditing({
         ...target,
+        tag: annotationText(target.tag, 64),
         text: annotationText(target.text, 500),
         selector: annotationText(target.selector, 2048),
-        number: Math.max(0, ...pins.map((p) => p.number)) + 1,
+        number,
         comment: '',
         url: annotationText(view.getURL(), 2048),
-        image,
       })
+      const image = await captureElement(view, target.box, data).catch(() => undefined)
+      if (image) {
+        setEditing((current) => (current?.number === number ? { ...current, image } : current))
+        setPins((current) =>
+          current.map((pin) => (pin.number === number ? { ...pin, image } : pin)),
+        )
+      }
     } catch {
-      setNotice('Could not capture this element. Your pins are still here.')
+      setUnreadable(true)
     } finally {
       setBusy(false)
     }
   }
-  const stage = async () => {
+  const saveEditing = () => {
+    if (!editing?.comment.trim()) return
+    const saved = { ...editing, comment: annotationText(editing.comment, 2000) }
+    setPins((current) =>
+      [...current.filter((pin) => pin.number !== saved.number), saved].sort(
+        (a, b) => a.number - b.number,
+      ),
+    )
+    closeEditor()
+  }
+  const addToChat = async () => {
     setBusy(true)
-    const revision = epoch.current
+    setAddFailed(false)
     try {
       const attachments: string[] = []
-      for (const pin of pins) {
-        if (imagesSupported && pin.image) {
-          const saved = await transport.request('attachments.saveImage', {
-            mimeType: 'image/png',
-            data: pin.image,
-          })
-          attachments.push(saved.path)
-        }
+      for (const [index, pin] of pins.entries()) {
+        if (!imagesSupported || !pin.image) continue
+        const bytes = Uint8Array.from(atob(pin.image), (character) => character.charCodeAt(0))
+        const saved = await savePastedFile(
+          new File([bytes], `browser-comment-${index + 1}.png`, { type: 'image/png' }),
+        )
+        if (!saved) throw new Error('Image attachment saving is unavailable')
+        attachments.push(saved.path)
       }
-      if (revision !== epoch.current) return
-      const text = annotationPrompt(pins, crypto.randomUUID())
-      onDraft({
-        text,
-        attachments,
-        onSent: () => {
-          setPins([])
-          setPositions([])
-          setStaged(false)
-          setNotice('Annotations sent.')
-        },
-      })
-      setStaged(true)
-      setNotice(
-        imagesSupported
-          ? 'Added to composer. Pins clear after a successful send.'
-          : 'Added to composer as text only. This model does not support images.',
-      )
+      onDraft({ text: annotationPrompt(pins, attachments.length > 0), attachments })
+      // The composer owns them now: there they can be edited, sent, or recovered after a failure.
+      setPins([])
+      setBoxes(new Map())
+      onExit()
     } catch {
-      setNotice('Could not add annotations. Your pins are still here; try again.')
+      setAddFailed(true)
     } finally {
       setBusy(false)
     }
   }
 
+  if (!enabled) return null
+
+  const editingExisting = editing && pins.some((pin) => pin.number === editing.number)
+  const editingIndex = editing
+    ? editingExisting
+      ? pins.findIndex((pin) => pin.number === editing.number)
+      : pins.length
+    : 0
+  const status = addFailed
+    ? 'Could not add these. They are still here.'
+    : unreadable
+      ? 'Cannot read this page right now'
+      : pins.length >= MAX_PINS
+        ? `${MAX_PINS} comments is the most for one round`
+        : pins.length === 0
+          ? 'Click anything to comment'
+          : !imagesSupported
+            ? 'Text only: this model cannot take images'
+            : `${pins.length} ${pins.length === 1 ? 'comment' : 'comments'}`
+
   return (
     <>
-      {enabled ? (
-        <div
-          ref={overlay}
-          className="browser-annotations__overlay"
-          tabIndex={0}
-          aria-label="Annotate page"
-          onPointerMove={(event) => {
-            pointer.current = point(event.clientX, event.clientY)
-          }}
-          onPointerLeave={() => {
-            pointer.current = undefined
-            setHover(undefined)
-          }}
-          onClick={(event) => {
-            event.stopPropagation()
-            void select(event.clientX, event.clientY)
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.stopPropagation()
-              setEditing(undefined)
-              onExit()
-            }
-          }}
-          onWheel={(event) => {
-            const p = point(event.clientX, event.clientY)
-            void view
-              .executeJavaScript(
-                annotationProbeScript({
-                  wheel: {
-                    x: p.x * viewport.width,
-                    y: p.y * viewport.height,
-                    dx: event.deltaX,
-                    dy: event.deltaY,
-                  },
-                }),
-              )
-              .catch(() => undefined)
-          }}
-        >
-          {hover ? <div className="browser-annotations__highlight" style={style(hover)} /> : null}
-          {pins.map((pin, index) => {
-            const target = positions[index]
-            return target && target.box.width > 0 && target.box.height > 0 ? (
-              <button
-                key={pin.number}
-                className="browser-annotations__pin"
-                style={{ left: style(target).left, top: style(target).top }}
-                title={`Annotation ${pin.number}: ${pin.comment}`}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  if (!staged) setEditing(pin)
-                }}
-              >
-                {pin.number}
-              </button>
-            ) : null
-          })}
-        </div>
-      ) : null}
-      {enabled ? (
-        <div
-          className="browser-annotations__tray"
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              setEditing(undefined)
-              onExit()
-            }
-          }}
-        >
-          {editing ? (
-            <form
-              onSubmit={(event) => {
-                event.preventDefault()
-                setPins((current) =>
-                  [
-                    ...current.filter((p) => p.number !== editing.number),
-                    { ...editing, comment: annotationText(editing.comment, 2000) },
-                  ].sort((a, b) => a.number - b.number),
-                )
-                setEditing(undefined)
+      <div
+        ref={overlay}
+        className="browser-annotations__overlay"
+        tabIndex={-1}
+        aria-label="Annotate page"
+        data-busy={busy || undefined}
+        onPointerMove={(event) => {
+          pointer.current = toPoint(event.clientX, event.clientY)
+          requestRead.current()
+        }}
+        onPointerLeave={() => {
+          pointer.current = undefined
+          setHover(undefined)
+        }}
+        onClick={(event) => {
+          event.stopPropagation()
+          if (!editing) void select(event.clientX, event.clientY)
+          else if (editing.comment.trim()) popover.current?.querySelector('textarea')?.focus()
+          else closeEditor()
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape') return
+          event.stopPropagation()
+          onExit()
+        }}
+        onWheel={(event) => {
+          pointer.current = toPoint(event.clientX, event.clientY)
+          pendingScroll.current.dx += event.deltaX
+          pendingScroll.current.dy += event.deltaY
+          requestRead.current()
+        }}
+      >
+        {pins.map((pin) => {
+          const box = boxes.get(pin.number)
+          return onPage(box) ? (
+            <div key={pin.number} className="browser-annotations__outline" style={boxStyle(box)} />
+          ) : null
+        })}
+        {hover && !editing ? (
+          <div
+            className="browser-annotations__highlight"
+            data-inside={hover.box.y < 24 || undefined}
+            style={boxStyle(hover.box)}
+          >
+            {pins.some((pin) => pin.selector === hover.selector) ? null : (
+              <span className="browser-annotations__tag">{annotationText(hover.tag, 32)}</span>
+            )}
+          </div>
+        ) : null}
+        {editing && !editingExisting && onPage(editingBox) ? (
+          <div className="browser-annotations__highlight" style={boxStyle(editingBox)} />
+        ) : null}
+        {pins.map((pin, index) => {
+          const box = boxes.get(pin.number)
+          return onPage(box) ? (
+            <button
+              key={pin.number}
+              type="button"
+              className="browser-annotations__pin"
+              style={{
+                left: `clamp(13px, ${(box.x / viewport.width) * 100}%, calc(100% - 13px))`,
+                top: `clamp(13px, ${(box.y / viewport.height) * 100}%, calc(100% - 13px))`,
+              }}
+              title={pin.comment}
+              aria-label={`Comment ${index + 1}: ${pin.comment}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                setEditing(pin)
               }}
             >
-              <label htmlFor="browser-annotation-comment">Comment {editing.number}</label>
-              <textarea
-                id="browser-annotation-comment"
-                ref={input}
-                maxLength={2000}
-                value={editing.comment}
-                onChange={(event) => setEditing({ ...editing, comment: event.target.value })}
-              />
-              <div>
-                <button className="btn" disabled={!editing.comment.trim()}>
-                  Save comment
-                </button>{' '}
+              {index + 1}
+            </button>
+          ) : null
+        })}
+      </div>
+
+      {editing ? (
+        <form
+          ref={popover}
+          className="browser-annotations__popover"
+          style={popoverPlace ?? { visibility: 'hidden' }}
+          onSubmit={(event) => {
+            event.preventDefault()
+            saveEditing()
+          }}
+        >
+          <div className="browser-annotations__target" title={editing.selector}>
+            <span className="browser-annotations__number">{editingIndex + 1}</span>
+            <code>{annotationText(editing.tag, 32)}</code>
+            {editing.text ? <span>{annotationText(editing.text, 80)}</span> : null}
+          </div>
+          <textarea
+            maxLength={2000}
+            rows={2}
+            placeholder="What should change?"
+            aria-label={`Comment ${editingIndex + 1}`}
+            value={editing.comment}
+            onChange={(event) => setEditing({ ...editing, comment: event.target.value })}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.stopPropagation()
+                closeEditor()
+              } else if (
+                event.key === 'Enter' &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.preventDefault()
+                saveEditing()
+              }
+            }}
+          />
+          <div className="browser-annotations__popover-actions">
+            {editingExisting ? (
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  setPins((current) => current.filter((pin) => pin.number !== editing.number))
+                  closeEditor()
+                }}
+              >
+                Delete
+              </button>
+            ) : null}
+            <button type="button" className="ghost" onClick={closeEditor}>
+              Cancel
+            </button>
+            <button className="btn" disabled={!editing.comment.trim()}>
+              {editingExisting ? 'Save' : 'Comment'}
+            </button>
+          </div>
+        </form>
+      ) : null}
+
+      <div className="browser-annotations__bar" role="group" aria-label="Page comments">
+        {pins.length > 0 ? (
+          <ol className="browser-annotations__list">
+            {pins.map((pin, index) => (
+              <li key={pin.number}>
                 <button
                   type="button"
-                  className="ghost"
-                  onClick={() => {
-                    setPins((current) => current.filter((p) => p.number !== editing.number))
-                    setEditing(undefined)
-                  }}
+                  className="browser-annotations__row"
+                  onClick={() => setEditing(pin)}
                 >
-                  Remove
-                </button>{' '}
-                <button type="button" className="ghost" onClick={() => setEditing(undefined)}>
-                  Cancel
+                  <span className="browser-annotations__number">{index + 1}</span>
+                  <span className="browser-annotations__comment">{pin.comment}</span>
+                  {boxes.get(pin.number) === null ? (
+                    <span className="browser-annotations__gone">Element gone</span>
+                  ) : null}
                 </button>
-              </div>
-            </form>
-          ) : (
-            <>
-              <p role="status">{notice}</p>
-              {pins.length ? (
-                <>
-                  <div className="browser-annotations__list">
-                    {pins.map((pin, index) => (
-                      <button
-                        key={pin.number}
-                        className="ghost"
-                        disabled={staged}
-                        onClick={() => setEditing(pin)}
-                      >
-                        {pin.number}. {pin.comment.slice(0, 60)}
-                        {!positions[index] ? ' (element missing)' : ''}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={busy || staged}
-                    onClick={() => void stage()}
-                  >
-                    Add {pins.length} to composer
-                  </button>
-                </>
-              ) : null}
-            </>
-          )}
+              </li>
+            ))}
+          </ol>
+        ) : null}
+        <div className="browser-annotations__actions">
+          <p role="status">{status}</p>
+          <button type="button" className="ghost" onClick={onExit}>
+            Done
+          </button>
+          {pins.length > 0 ? (
+            <button
+              type="button"
+              className="btn"
+              disabled={busy || Boolean(editing)}
+              onClick={() => void addToChat()}
+            >
+              Add to chat
+            </button>
+          ) : null}
         </div>
-      ) : null}
+      </div>
     </>
   )
 }
