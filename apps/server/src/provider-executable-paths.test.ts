@@ -90,6 +90,9 @@ describe('provider executable paths', () => {
       updateProviderExecutablePath(store, 'acp:devin', process.execPath)
       expect(commandOverride('devin')).toBe(process.execPath)
       expect(() => updateProviderExecutablePath(store, 'api', process.execPath)).toThrow(/Unknown/)
+      expect(() => updateProviderExecutablePath(store, 'constructor', process.execPath)).toThrow(
+        /Unknown/,
+      )
       expect(() => updateProviderExecutablePath(store, 'acp:unknown', process.execPath)).toThrow(
         /Unknown/,
       )

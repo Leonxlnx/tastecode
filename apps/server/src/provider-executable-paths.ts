@@ -4,21 +4,21 @@ import { resolveProviderExecutable } from './custom-harness-launch.js'
 import { assertProviderOffered } from './provider-edition.js'
 import type { Store } from './store.js'
 
-const DIRECT_COMMANDS: Readonly<Record<string, string>> = {
-  'claude-code': 'claude',
-  codex: 'codex',
-  grok: 'grok',
-  cursor: 'cursor-agent',
-  opencode: 'opencode',
-  antigravity: 'agy',
-  pi: 'pi',
-}
+const DIRECT_COMMANDS = new Map([
+  ['claude-code', 'claude'],
+  ['codex', 'codex'],
+  ['grok', 'grok'],
+  ['cursor', 'cursor-agent'],
+  ['opencode', 'opencode'],
+  ['antigravity', 'agy'],
+  ['pi', 'pi'],
+])
 
 function commandFor(source: string): string | undefined {
   if (source.startsWith('acp:')) {
     return ACP_AGENTS.find((agent) => agent.id === source.slice(4) && !agent.retired)?.command
   }
-  return DIRECT_COMMANDS[source]
+  return DIRECT_COMMANDS.get(source)
 }
 
 /** Restore paths before provider detection or any adapter can launch. */
