@@ -232,6 +232,31 @@ fixed modes retain their requested CSS viewport and scale the complete guest to 
 stretching it. All modes therefore share Electron's Chromium path across macOS, Windows, and
 Linux.
 
+Browser annotations live entirely in the trusted renderer: an overlay intercepts clicks,
+reads bounded DOM descriptions on demand, and captures the guest's visible pixels. There is no
+new guest preload, IPC, global, event listener, stylesheet or DOM mutation. Leaving the mode
+removes the overlay and stops polling; navigation discards the round. Open shadow boundaries
+use `>>>` in a DOM path, while frames and closed roots are represented by their host elements.
+Pins follow current element rectangles; removed elements retain their captured reference with
+an explicit missing-element label. A replaced element with the same selector can inherit a pin.
+
+`executeJavaScript` runs in the page world. A hostile page can falsify DOM metadata or deny the
+read, so the host validates shapes, counts and finite coordinates, bounds and strips control
+characters, and quotes all page strings as untrusted JSON. It cannot supply user comments,
+create pins without a host click, invoke a host action or receive host state through this
+stateless pull. Screenshots are also untrusted reference content. Quoting reduces instruction
+confusion; it cannot guarantee that an agent will resist every visual or textual injection.
+Crops use the captured bitmap dimensions relative to the guest's CSS viewport, independently
+of host scaling and device pixel ratio. Only visible portions are captured, at selection time.
+
+Rounds append to the ordinary composer draft with capability-gated image attachments, so its
+send, queue, Steer and rejection recovery remain authoritative. Pins clear only after the
+server accepts that draft's submission; an indeterminate or rejected send preserves them.
+No protocol or shared-contract changes are required.
+
+_Rejected:_ guest-to-host message channels, privileged guest preloads, persistent injected
+listeners and DOM overlays would add an unnecessary trust boundary and cleanup obligation.
+
 ### Desktop update assets
 
 The desktop updater finds releases in `Leonxlnx/tastecode` through the public release Atom
