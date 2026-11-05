@@ -3272,3 +3272,102 @@ describe('sub-agent provider setting', () => {
     })
   })
 })
+
+describe('settings search', () => {
+  it('finds an unopened tab and jumps to its row with the keyboard', async () => {
+    renderSettings({ initialSection: 'workflows' })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'dark mode' } })
+    expect(screen.getByRole('option', { name: 'Theme' })).toBeTruthy()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Appearance' })).toBeTruthy())
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-settings-id="theme"]')?.hasAttribute('data-settings-found'),
+      ).toBe(true),
+    )
+    expect(document.activeElement?.closest('[data-settings-id="theme"]')).toBeTruthy()
+  })
+  it('moves through results, reports no matches, and clears before closing on Escape', () => {
+    const onClose = vi.fn()
+    renderSettings({ initialSection: 'workflows', onClose })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'shortcut' } })
+    const options = screen.getAllByRole('option')
+    expect(options.length).toBeGreaterThan(1)
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(options[1]?.getAttribute('aria-selected')).toBe('true')
+    fireEvent.change(input, { target: { value: 'zzzzzz' } })
+    expect(screen.getByText('No matching settings')).toBeTruthy()
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(onClose).not.toHaveBeenCalled()
+    expect((input as HTMLInputElement).value).toBe('')
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+  it('finds provider defaults before the Providers tab has opened', async () => {
+    localStorage.removeItem('harness.signedInProviders')
+    localStorage.removeItem('harness.signedOutProviders')
+    const transport = new TestTransport((method) => {
+      if (method === 'auth.status') return { signedIn: true }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({
+      initialSection: 'workflows',
+      transport,
+      overrides: {
+        providerStatuses: [
+          { id: 'codex', displayName: 'Codex', installed: true, auth: 'authenticated' },
+        ],
+        providerRoster: ['codex'],
+        providerDefaults: { pins: {}, onPinChange: vi.fn(), access: {}, onAccessChange: vi.fn() },
+      },
+    })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'codex model' } })
+    const result = screen.getByRole('option', { name: 'Codex Model' })
+    fireEvent.click(result)
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Providers' })).toBeTruthy())
+    await waitFor(() =>
+      expect(
+        document
+          .querySelector('[data-settings-id="provider:codex:Codex:Model"]')
+          ?.hasAttribute('data-settings-found'),
+      ).toBe(true),
+    )
+  })
+  it('opens a category from its name', async () => {
+    renderSettings({ initialSection: 'workflows' })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'privacy' } })
+    fireEvent.click(screen.getByRole('option', { name: 'Data & privacy' }))
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy(),
+    )
+  })
+  it('does not replay a jump when its section is opened again later', async () => {
+    renderSettings({ initialSection: 'workflows' })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'dark mode' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-settings-id="theme"]')?.hasAttribute('data-settings-found'),
+      ).toBe(true),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
+    expect(screen.getByRole('heading', { name: 'Appearance' })).toBeTruthy()
+    expect(
+      document.querySelector('[data-settings-id="theme"]')?.hasAttribute('data-settings-found'),
+    ).toBe(false)
+  })
+  it('does not offer hidden debug and phone controls', () => {
+    renderSettings({ initialSection: 'workflows' })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'onboarding' } })
+    expect(screen.queryByRole('option', { name: 'Force onboarding' })).toBeNull()
+    fireEvent.change(input, { target: { value: 'phone access' } })
+    expect(screen.queryByRole('option', { name: 'Phone access' })).toBeNull()
+  })
+})

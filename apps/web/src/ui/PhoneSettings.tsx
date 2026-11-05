@@ -112,6 +112,7 @@ export function PhoneSettings(props: { transport: Transport }) {
       ) : (
         <>
           <SettingsRow
+            searchId="phone-access"
             name="Phone access"
             note="Phones reach this computer over your Wi-Fi or Tailscale. Every link is end-to-end encrypted and pinned to this computer's key; nothing passes through a server."
             tone={status.enabled ? 'active' : undefined}
