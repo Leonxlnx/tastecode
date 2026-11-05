@@ -161,7 +161,6 @@ const CAPABILITIES: Capabilities = {
 class FakeSession implements AgentSession {
   /** Set before attach to model an agent that negotiated no session reload. */
   static nextResumable: boolean | undefined
-  readonly capabilities = CAPABILITIES
   readonly resumable = FakeSession.nextResumable
   emit: (event: DomainEvent) => void = () => {}
   disposed = false
@@ -210,7 +209,10 @@ class FakeSession implements AgentSession {
 
   #listeners: Array<(event: DomainEvent) => void> = []
 
-  constructor(readonly id: string) {}
+  constructor(
+    readonly id: string,
+    readonly capabilities = CAPABILITIES,
+  ) {}
 
   async sendTurn(
     _threadId: string,
@@ -449,6 +451,7 @@ function harness(
   stopSettleMs?: number,
 ) {
   const sessions: FakeSession[] = []
+  const sessionCapabilities: Capabilities[] = []
   const received: Array<{
     threadId: string
     event: DomainEvent
@@ -495,7 +498,7 @@ function harness(
       startedOptions.push(options)
       const barrier = startBarriers.shift()
       if (barrier) await barrier
-      const session = new FakeSession(`s${sessions.length + 1}`)
+      const session = new FakeSession(`s${sessions.length + 1}`, sessionCapabilities.shift())
       sessions.push(session)
       return {
         thread: {
@@ -521,7 +524,7 @@ function harness(
             resumedOptions.push(options)
             const barrier = resumeBarriers.shift()
             if (barrier) await barrier
-            const session = new FakeSession(`s${sessions.length + 1}`)
+            const session = new FakeSession(`s${sessions.length + 1}`, sessionCapabilities.shift())
             sessions.push(session)
             return {
               thread: {
@@ -588,6 +591,7 @@ function harness(
   return {
     store,
     sessions,
+    sessionCapabilities,
     received,
     sideReceived,
     lifecycles,
@@ -612,6 +616,106 @@ function harness(
     capturePreview,
   }
 }
+
+describe('queue steering capability lifecycle', () => {
+  it.each(['new', 'persisted'] as const)(
+    'pushes steering availability for the first turn of a %s chat without queueing',
+    async (kind) => {
+      const { orchestrator, store, sessions, queueStates } = harness()
+      try {
+        let threadId: string
+        if (kind === 'persisted') {
+          store.addProject('/repo')
+          store.addThread({
+            id: 'persisted',
+            projectPath: '/repo',
+            provider: 'codex',
+            title: 'Old',
+          })
+          threadId = 'persisted'
+          expect(orchestrator.queue(threadId).canSteer).toBe(false)
+        } else {
+          threadId = (await orchestrator.startThread('codex', '/repo')).id
+        }
+        await orchestrator.submitTurn(threadId, 'First')
+
+        expect(orchestrator.queue(threadId)).toEqual({ items: [], canSteer: true })
+        expect(queueStates).toEqual([{ threadId, itemIds: [], canSteer: true }])
+        sessions[0]!.emit(turnStarted(threadId, 's1-turn'))
+        sessions[0]!.emit(message('Streaming', 's1-turn'))
+        expect(queueStates).toHaveLength(1)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+
+  it.each(['close', 'disconnect', 'idle', 'dispose'] as const)(
+    'pushes loss of steering availability on runtime %s',
+    async (reason) => {
+      const { orchestrator, store, sessions, queueStates } = harness(undefined, undefined, 1)
+      try {
+        const { id } = await orchestrator.startThread('codex', '/repo')
+        if (reason === 'idle') await orchestrator.startThread('codex', '/repo')
+        queueStates.length = 0
+        if (reason === 'close') await orchestrator.close(id)
+        else if (reason === 'disconnect') sessions[0]!.emitDisconnected()
+        else if (reason === 'dispose') await orchestrator.disposeAll()
+        else {
+          sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+          sessions[1]!.emit({ type: 'turn.completed', turnId: 's2-turn', status: 'completed' })
+        }
+
+        expect(orchestrator.queue(id).canSteer).toBe(false)
+        expect(queueStates).toEqual([{ threadId: id, itemIds: [], canSteer: false }])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+
+  it('publishes the replacement session capability when a chat moves providers', async () => {
+    const { orchestrator, store, sessionCapabilities, queueStates } = harness()
+    try {
+      const { id } = await orchestrator.startThread('codex', '/repo')
+      queueStates.length = 0
+      sessionCapabilities.push({ ...CAPABILITIES, steer: false })
+      await orchestrator.changeProvider(id, { provider: 'grok' })
+      expect(orchestrator.queue(id).canSteer).toBe(false)
+      expect(queueStates).toEqual([{ threadId: id, itemIds: [], canSteer: false }])
+
+      await orchestrator.changeProvider(id, { provider: 'codex', model: 'next-model' })
+      expect(orchestrator.queue(id).canSteer).toBe(true)
+      expect(queueStates.at(-1)).toEqual({ threadId: id, itemIds: [], canSteer: true })
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
+  it('keeps unsupported sessions unavailable and refuses to steer their queued prompts', async () => {
+    const { orchestrator, store, sessions, sessionCapabilities, queueStates } = harness()
+    try {
+      sessionCapabilities.push({ ...CAPABILITIES, steer: false })
+      const { id } = await orchestrator.startThread('grok', '/repo')
+      await orchestrator.submitTurn(id, 'First')
+      const queued = await orchestrator.submitTurn(id, 'Next')
+      if (!queued.queued) throw new Error('expected queued prompt')
+      expect(queueStates).toEqual([
+        { threadId: id, itemIds: [queued.queuedTurn.id], canSteer: false },
+      ])
+      await expect(orchestrator.steerQueuedTurn(id, queued.queuedTurn.id)).rejects.toThrow(
+        'this agent does not support steering a running turn',
+      )
+      expect(sessions[0]!.steered).toEqual([])
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+})
 
 describe('failed provider starts', () => {
   const cleanupFailure = (message: string, dispose: () => Promise<void>) => {
@@ -1152,11 +1256,13 @@ describe('idle thread runtime retention', () => {
     const store = new Store(':memory:')
     const { orchestrator, sessions } = harness(undefined, store, 8, 1_000)
     try {
-      const thread = await orchestrator.startThread('codex', process.cwd())
-      sessions[0]?.emit({
-        type: 'thread.error',
-        threadId: thread.id,
-        message: 'provider failed before the queued retry',
+      const thread = { id: 'persisted-queued' }
+      store.addProject(process.cwd())
+      store.addThread({
+        id: thread.id,
+        projectPath: process.cwd(),
+        provider: 'codex',
+        title: 'Queued retry',
       })
       store.enqueueQueuedTurn({
         id: 'queued',
@@ -1166,6 +1272,7 @@ describe('idle thread runtime retention', () => {
         options: {},
         createdAt: Date.now(),
       })
+      await orchestrator.setThreadApproval(thread.id, 'full')
 
       await vi.advanceTimersByTimeAsync(10_000)
       expect(sessions[0]?.disposed).toBe(false)
