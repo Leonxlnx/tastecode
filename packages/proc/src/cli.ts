@@ -314,7 +314,7 @@ export async function nativeShimTarget(
   command: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<string | undefined> {
-  if (process.platform !== 'win32') return undefined
+  if (process.platform !== 'win32' || commandOverride(command)) return undefined
   const shim = await locateCommand(command, environment)
   if (!shim || !/\.cmd$/i.test(shim)) return undefined
   let text: string
@@ -365,8 +365,8 @@ export async function commandVersion(
   command: string,
   timeoutMs = 5000,
 ): Promise<string | undefined> {
-  if (process.platform !== 'win32') {
-    const executable = resolveExecutable(commandOverride(command) ?? command)
+  if (process.platform !== 'win32' && !commandOverride(command)) {
+    const executable = resolveExecutable(command)
     if (executable) {
       try {
         const target = path.basename(realpathSync(executable))
