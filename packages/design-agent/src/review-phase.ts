@@ -14,6 +14,7 @@ import type { PageBlueprint } from './page.js'
 import { type BoundaryRecord, member, record, string, strings } from './parse.js'
 import { referenceDirectionsForPage, type ReferenceDirection } from './reference-directions.js'
 import { assertReviewViewports } from './preview.js'
+import { parsePhaseJson } from './phase-json.js'
 
 const SEVERITIES = ['blocking', 'major', 'minor'] as const
 export type ReviewSeverity = (typeof SEVERITIES)[number]
@@ -435,6 +436,5 @@ export function parseRepairPhaseOutput(text: string): RepairPhaseOutput {
 }
 
 function json(text: string): BoundaryRecord {
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  return record(JSON.parse(fenced?.[1] ?? text), 'phase output')
+  return record(parsePhaseJson(text), 'phase output')
 }

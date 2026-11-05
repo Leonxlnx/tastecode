@@ -16,6 +16,7 @@ import {
   selectReferenceDirectionDeck,
   type ReferenceDirection,
 } from './reference-directions.js'
+import { parsePhaseJson } from './phase-json.js'
 
 const FULL_PAGE_PROTOCOL = `Return the final page blueprint as JSON only, without Markdown fences:
 
@@ -227,8 +228,7 @@ export function parsePagePhaseOutput(
   referenceDriven = false,
   appDirection?: AppDirection,
 ): PageBlueprint {
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const parsed = parsePageBlueprint(JSON.parse(fenced?.[1] ?? text))
+  const parsed = parsePageBlueprint(parsePhaseJson(text))
   // The copy check reads sample-data labels only on an operating dashboard, so lock that first.
   if (appDirection) return assertPageCopy(lockAppScreenPage(parsed, suppliedReferenceIds))
   const page = assertPageCopy(referenceDriven ? parsed : assertPageLayoutSelections(parsed))

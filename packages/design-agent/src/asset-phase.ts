@@ -4,6 +4,7 @@ import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import type { PageBlueprint } from './page.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
+import { parsePhaseJson } from './phase-json.js'
 
 const ASSET_PROTOCOL = `Return the final asset manifest as JSON only, without Markdown fences:
 
@@ -71,8 +72,7 @@ export function parseAssetPhaseOutput(
   workspacePath?: string,
   suppliedReferences: readonly string[] = [],
 ): AssetManifest {
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const manifest = parseAssetManifest(JSON.parse(fenced?.[1] ?? text))
+  const manifest = parseAssetManifest(parsePhaseJson(text))
   return page
     ? validateAssetManifestForPage(manifest, page, workspacePath, suppliedReferences)
     : manifest

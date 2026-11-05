@@ -13,6 +13,7 @@ import {
   typographyGuidance,
   type TypographyCandidates,
 } from './typography.js'
+import { parsePhaseJson } from './phase-json.js'
 
 const BRAND_PROTOCOL = `Return the final brand system as JSON only, without Markdown fences:
 
@@ -129,8 +130,7 @@ ${JSON.stringify(suppliedReferenceCatalog, null, 2)}
 }
 
 export function parseBrandPhaseOutput(text: string): BrandSystem {
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const parsed: unknown = JSON.parse(fenced?.[1] ?? text)
+  const parsed: unknown = parsePhaseJson(text)
   let value
   try {
     value = record(parsed, 'brand output')
