@@ -205,6 +205,7 @@ import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './model-selector-utils.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderRow, ProviderRowSkeleton, type ProviderAction } from './ProviderRow.js'
+import { ProviderExecutablePath } from './ProviderExecutablePath.js'
 import { ProfileSettings } from './ProfileSettings.js'
 import { GeneratedAvatarLab } from './GeneratedAvatarLab.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
@@ -1481,6 +1482,12 @@ export function ProviderSettings(props: {
             renderTuning={(account) => renderAccountTuning(entry.status, account)}
           />
         ) : null}
+        <ProviderExecutablePath
+          source={entry.key}
+          name={name}
+          transport={props.transport}
+          onChanged={props.onConnectionsChanged}
+        />
       </div>
     )
   }
