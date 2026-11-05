@@ -114,8 +114,48 @@ vi.mock('@harness/design-agent', async (importOriginal) => {
       if (consistencyAuditFailure.current) throw consistencyAuditFailure.current
       return actual.designConsistencyAudit(...args)
     },
+    // The real download, against a local Google Fonts. Fetching the drawn family from the
+    // network before the Asset prompt made the workflow tests wait on it, past vi.waitFor's
+    // second on a slow runner (CI 42116597499, macOS), and fail without a network.
+    acquireBrandFonts: (
+      brand: Parameters<typeof actual.acquireBrandFonts>[0],
+      workspacePath: string,
+    ) => actual.acquireBrandFonts(brand, workspacePath, localGoogleFonts),
   }
 })
+
+/** Answers like Google Fonts and google/fonts for any family: one latin face per weight. */
+async function localGoogleFonts(input: string | URL | Request): Promise<Response> {
+  const url = new URL(input instanceof Request ? input.url : input)
+  if (url.host === 'fonts.googleapis.com') {
+    const [family = 'Font', axis = 'wght@400'] = (url.searchParams.get('family') ?? '').split(':')
+    const name = family.replaceAll('+', ' ')
+    const weights = axis.replace(/^wght@/, '').split(';')
+    return new Response(
+      weights
+        .map(
+          (weight) => `/* latin */
+@font-face {
+  font-family: '${name}';
+  font-style: normal;
+  font-weight: ${weight};
+  src: url(https://fonts.gstatic.com/s/test/${weight}.woff2) format('woff2');
+  unicode-range: U+0000-00FF;
+}`,
+        )
+        .join('\n'),
+    )
+  }
+  if (url.host === 'fonts.gstatic.com') {
+    // A WOFF2 header: its signature, and its own length at byte 8.
+    const woff2 = Buffer.alloc(64)
+    woff2.write('wOF2', 0, 'latin1')
+    woff2.writeUInt32BE(64, 8)
+    return new Response(woff2)
+  }
+  if (url.pathname.endsWith('/OFL.txt')) return new Response('SIL Open Font License 1.1')
+  return new Response('not found', { status: 404 })
+}
 
 vi.mock('./design-preview-runner.js', () => ({
   startDesignPreview: vi.fn(
