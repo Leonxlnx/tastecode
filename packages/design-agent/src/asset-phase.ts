@@ -1,4 +1,9 @@
-import { parseAssetManifest, validateAssetManifestForPage, type AssetManifest } from './assets.js'
+import {
+  parseAssetManifest,
+  relativizeAssetPaths,
+  validateAssetManifestForPage,
+  type AssetManifest,
+} from './assets.js'
 import path from 'node:path'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
@@ -72,7 +77,10 @@ export function parseAssetPhaseOutput(
   workspacePath?: string,
   suppliedReferences: readonly string[] = [],
 ): AssetManifest {
-  const manifest = parseAssetManifest(parsePhaseJson(text))
+  const raw = parsePhaseJson(text)
+  const manifest = parseAssetManifest(
+    workspacePath ? relativizeAssetPaths(raw, workspacePath) : raw,
+  )
   return page
     ? validateAssetManifestForPage(manifest, page, workspacePath, suppliedReferences)
     : manifest
