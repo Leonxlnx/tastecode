@@ -57,7 +57,7 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | Codex         | Generated app-server protocol types                             | Apache-2.0                              | [openai/codex](https://github.com/openai/codex)                             |
 | Thinking Orbs | Adapted activity-indicator source                               | [MIT](./licenses/thinking-orbs-MIT.txt) | [Jakubantalik/thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) |
 | cinetic       | Default Agent Skill `cinetic`, shipped unmodified               | [MIT](./licenses/cinetic-MIT.txt)       | [Leonxlnx/cinetic](https://github.com/Leonxlnx/cinetic)                     |
-| taste-skill   | Default Agent Skill `design-taste-frontend`, shipped unmodified | [MIT](./licenses/taste-skill-MIT.txt)   | [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill)             |
+| taste-skill   | Default Agent Skill `design-taste-frontend`, with a local patch | [MIT](./licenses/taste-skill-MIT.txt)   | [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill)             |
 | taste-skill   | Design app-screen library, rules, `app.css` and `charts.js`     | [MIT](./licenses/taste-skill-MIT.txt)   | [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) v2.5        |
 | cook          | Default Agent Skill `cook`, shipped unmodified                  | [MIT](./licenses/cook-MIT.txt)          | [Leonxlnx/cook](https://github.com/Leonxlnx/cook)                           |
 
@@ -65,12 +65,13 @@ The default Agent Skills are pinned to exact commits in `packages/default-skills
 and ship as real files in the app's `resources/default-skills` folder, each with its own
 `LICENSE`.
 
-`design-taste-frontend` (taste-skill v2.5.0) is shipped without its third-party media. The installer
-does not contain its photographs, its tool and app icons or the credits files that list them. When
-the skill's `scripts/photos.mjs` first runs, it downloads them from the same pinned commit on GitHub
-and checks them against the hashes in `packages/default-skills/skills.json`. It then keeps them, with
-their credits files, in the user's data folder. The images still in the installer are the skill's own
-fallback renders for its objects, which name no third-party source.
+`design-taste-frontend` (taste-skill v2.5.0) ships without its picture library. Its photographs,
+the sample photographs of its demos and hero templates, its demo icon sets and the credits files that
+list them are not in the installer, and TasteCode never downloads them. Three of its files are
+replaced by TasteCode's own copies, which point the skill at the user's own pictures:
+`SKILL.md`, `references/photos.md` and `scripts/photos.mjs`. The copies and the reasons for them are
+in `packages/default-skills/patches/design-taste-frontend`. The images still in the installer are the
+skill's own fallback renders for its objects, which name no third-party source.
 
 The release gate requires a complete top-level Apache-2.0 `LICENSE`, a clean production install,
 and a license or notice file for every package in the resolved production graph. It emits only
