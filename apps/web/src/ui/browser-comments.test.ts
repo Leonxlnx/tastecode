@@ -2,9 +2,12 @@
 import { afterEach, expect, it } from 'vitest'
 import {
   browserComment,
+  browserChipLabel,
   browserCommentBlock,
+  browserCommentElementLabel,
   browserCommentImages,
   browserCommentSegments,
+  browserCommentsAsPlainText,
   newBrowserCommentId,
   rememberBrowserComment,
   resetBrowserComments,
@@ -99,4 +102,27 @@ it('preserves whitespace and independent references between multiple comments', 
   expect(composerWireText(recalled)).toBe(prompt)
   const remaining = recalled.slice(composerChips(recalled)[0]!.end)
   expect(composerBrowserImages(remaining)).toEqual([second.image])
+})
+
+it('names an element by the last step of its DOM path, without its position', () => {
+  expect(browserCommentElementLabel('main > section.hero > div.mt-6.grid')).toBe('div.mt-6.grid')
+  expect(browserCommentElementLabel('ul > li:nth-of-type(2)')).toBe('li')
+  expect(browserCommentElementLabel('my-app >>> button.save')).toBe('button.save')
+  expect(browserCommentElementLabel('#hero')).toBe('#hero')
+})
+
+it('shortens a chip at a word, unless one long word is all there is', () => {
+  expect(browserChipLabel('Make this smaller')).toBe('Make this smaller')
+  expect(browserChipLabel('Use the accent colour here and make the button larger')).toBe(
+    'Use the accent colour here and make…',
+  )
+  expect(browserChipLabel('x'.repeat(60))).toBe(`${'x'.repeat(35)}…`)
+})
+
+it('reads a prompt as its comments, for titles and queued rows', () => {
+  const first = browserCommentBlock({ ...sample(), comment: 'Make this smaller' })
+  const second = browserCommentBlock({ ...sample(), comment: 'And tighter' })
+  const plain = browserCommentsAsPlainText(`${first}\n\n${second}`).replace(/\s+/g, ' ').trim()
+  expect(plain).toBe('Make this smaller And tighter')
+  expect(browserCommentsAsPlainText('Just a message')).toBe('Just a message')
 })

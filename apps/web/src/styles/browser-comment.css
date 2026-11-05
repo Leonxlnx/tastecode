@@ -1,15 +1,31 @@
-/* A comment pinned on a page, as a chip in a prompt and the card it opens. */
+/* A comment pinned on a page, as a chip in a prompt and the card it opens. The
+   tint is painted without padding, so a composer chip keeps every glyph where
+   the textarea above it has them. */
+.composer-chip--browser,
+.prompt-chip--browser,
+.browser-comment-card {
+  --browser-comment-mark: #2f7bf6;
+}
+
+.composer-chip--browser,
+.prompt-chip--browser {
+  --browser-comment-tint: color-mix(in srgb, var(--attention) 13%, transparent);
+  background: var(--browser-comment-tint);
+  border-radius: 5px;
+  box-shadow: 0 0 0 2px var(--browser-comment-tint);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
 .composer-chip--browser {
   pointer-events: auto;
-  border-radius: 5px;
 }
 
 .composer-chip--browser[data-active],
 .prompt-chip--browser:hover,
 .prompt-chip--browser:focus-visible {
   outline: none;
-  border-radius: 5px;
-  box-shadow: 0 0 0 1.5px #2f7bf6;
+  box-shadow: 0 0 0 2px var(--browser-comment-mark);
 }
 
 .prompt-chip--browser {
@@ -31,19 +47,45 @@
   animation: browser-comment-card var(--dur-popup-in) var(--ease-popup);
 }
 
-.browser-comment-card__image {
+.browser-comment-card__shot {
+  position: relative;
+  padding: 26px 12px 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--menu-line);
+}
+
+/* The crop is the element itself, so this frame is the element's outline. */
+.browser-comment-card__shot img {
   display: block;
   width: 100%;
-  max-height: 240px;
+  max-height: 220px;
   object-fit: cover;
   object-position: top left;
-  border-bottom: 1px solid var(--menu-line);
+  outline: 1px solid var(--browser-comment-mark);
+}
+
+.browser-comment-card__element {
+  position: absolute;
+  top: 10px;
+  left: 11.5px;
+  overflow: hidden;
+  max-width: calc(100% - 23px);
+  padding: 0 5px;
+  background: var(--browser-comment-mark);
+  border-radius: 3px 3px 0 0;
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .browser-comment-card__body {
   display: grid;
-  gap: 6px;
-  padding: 11px 13px 12px;
+  gap: 8px;
+  padding: 12px 14px 13px;
   overflow-wrap: anywhere;
 }
 

@@ -21,7 +21,8 @@ export const PromptText = memo(function PromptText({
   if (parts.some((part) => part.type === 'comment')) {
     return parts.map((part, index) =>
       part.type === 'text' ? (
-        <PromptWords key={index} text={part.text} />
+        // Comments stack without the blank line that separates them on the wire.
+        <PromptWords key={index} text={part.text.trim() ? part.text : '\n'} />
       ) : (
         <BrowserCommentChip
           key={index}

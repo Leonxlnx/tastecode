@@ -296,7 +296,7 @@ export function BrowserAnnotations({
       }
       for (const comment of comments) rememberBrowserComment(comment)
       // Images belong to their chips. The send path collects only those still in the draft.
-      onDraft({ text: comments.map(browserCommentChipText).join(' '), attachments })
+      onDraft({ text: comments.map(browserCommentChipText).join('\n'), attachments })
       // The composer owns them now: there they can be edited, sent, or recovered after a failure.
       setPins([])
       setBoxes(new Map())

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { IconClick } from '@tabler/icons-react'
 import { knownViewedImagePreview, previewViewedImage } from '../bridge.js'
-import type { BrowserComment } from './browser-comments.js'
+import { browserCommentElementLabel, type BrowserComment } from './browser-comments.js'
 import '../styles/browser-comment.css'
 
 const CARD_WIDTH = 380
@@ -10,7 +10,7 @@ const EDGE = 12
 
 /** What a browser comment holds: the marked page, where it was made, and the words. */
 export function BrowserCommentCard(props: {
-  comment: Pick<BrowserComment, 'comment' | 'title' | 'url'>
+  comment: Pick<BrowserComment, 'comment' | 'title' | 'url' | 'selector'>
   image?: string | undefined
   anchor: DOMRect
 }) {
@@ -49,12 +49,12 @@ export function BrowserCommentCard(props: {
   return createPortal(
     <div ref={panel} className="browser-comment-card" role="tooltip" style={{ left, top, width }}>
       {source ? (
-        <img
-          className="browser-comment-card__image"
-          src={source}
-          alt="Annotated element"
-          onLoad={place}
-        />
+        <div className="browser-comment-card__shot">
+          <span className="browser-comment-card__element">
+            {browserCommentElementLabel(props.comment.selector)}
+          </span>
+          <img src={source} alt="Annotated element" onLoad={place} />
+        </div>
       ) : null}
       <div className="browser-comment-card__body">
         <p className="browser-comment-card__title">{props.comment.title || props.comment.url}</p>
@@ -68,7 +68,7 @@ export function BrowserCommentCard(props: {
 
 /** The chip a sent prompt draws for a comment, keyboard-reachable for its card. */
 export function BrowserCommentChip(props: {
-  comment: Pick<BrowserComment, 'comment' | 'title' | 'url'>
+  comment: Pick<BrowserComment, 'comment' | 'title' | 'url' | 'selector'>
   label: string
   image?: string | undefined
 }) {
