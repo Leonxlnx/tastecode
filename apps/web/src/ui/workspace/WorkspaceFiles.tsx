@@ -20,6 +20,7 @@ import {
   IconSearch as Search,
   IconRefresh as Refresh,
 } from '@tabler/icons-react'
+import { canRevealProjectFile, revealProjectFile } from '../../bridge.js'
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
 import { IconMorph } from '../IconMorph.js'
@@ -97,6 +98,9 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
   const [file, setFile] = useState<FileContents>()
   const [loadingFile, setLoadingFile] = useState(false)
   const [error, setError] = useState<string>()
+  /** The folder the listed paths belong to (the project or the chat's own checkout). */
+  const [root, setRoot] = useState<string>()
+  const [revealFailed, setRevealFailed] = useState<string>()
   const [fileSelection] = useState(() => new FileSelectionStore())
   const directoryGeneration = useRef(0)
   const directoryRequests = useRef(new Map<string, number>())
@@ -127,6 +131,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
           ...(directory ? { directory } : {}),
         })
         if (isCurrent()) {
+          if (result.root) setRoot(result.root)
           setDirectories((current) => new Map(current).set(directory, result.entries))
           return result.entries
         }
@@ -153,6 +158,8 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
     directoryRequests.current.clear()
     fileGeneration.current += 1
     setDirectories(new Map())
+    setRoot(undefined)
+    setRevealFailed(undefined)
     setLoadingDirectories(new Set())
     setExpanded(new Set(['']))
     fileSelection.select(undefined)
@@ -341,6 +348,21 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
     [directories, expanded, rootEntries],
   )
 
+  // Explorer or Finder shows a listed file or folder where it really is: the project, or the
+  // chat's own checkout. Only the desktop app can; the shell checks the path stays inside root.
+  const reveal = useMemo(
+    () =>
+      canRevealProjectFile && root
+        ? (relative: string) => {
+            setRevealFailed(undefined)
+            void revealProjectFile(rootedPath(root, relative), root).catch(() =>
+              setRevealFailed(relative || lastPathPart(root)),
+            )
+          }
+        : undefined,
+    [root],
+  )
+
   if (!props.projectPath) {
     return (
       <WorkspaceEmptyState
@@ -355,8 +377,19 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
     <div className="workspace-files">
       <header className="workspace-files__toolbar">
         <FolderOpen size={15} aria-hidden />
-        <span>{props.projectName ?? lastPathPart(props.projectPath)}</span>
-        {selectedPath ? <span className="workspace-files__crumb">› {selectedPath}</span> : null}
+        <span>
+          <RevealText reveal={reveal} path="">
+            {props.projectName ?? lastPathPart(props.projectPath)}
+          </RevealText>
+        </span>
+        {selectedPath ? (
+          <span className="workspace-files__crumb">
+            ›{' '}
+            <RevealText reveal={reveal} path={selectedPath}>
+              {selectedPath}
+            </RevealText>
+          </span>
+        ) : null}
         <button
           type="button"
           className="icon-btn icon-btn--always"
@@ -395,7 +428,24 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
           )}
         </main>
 
-        <aside className="workspace-files__tree" aria-label="Workspace file tree">
+        <aside
+          className="workspace-files__tree"
+          aria-label="Workspace file tree"
+          // One handler for every row, so the rows (and their memo) stay as they are. The
+          // context-menu key on a focused row lands here too.
+          onContextMenu={
+            reveal
+              ? (event) => {
+                  const row = (event.target as HTMLElement).closest<HTMLElement>(
+                    '[data-reveal-path]',
+                  )
+                  if (!row) return
+                  event.preventDefault()
+                  reveal(row.dataset['revealPath'] ?? '')
+                }
+              : undefined
+          }
+        >
           <label className="workspace-tree-search">
             <Search size={14} aria-hidden />
             <input
@@ -406,6 +456,12 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
               aria-label="Filter workspace files"
             />
           </label>
+
+          {revealFailed ? (
+            <div className="workspace-files__tree-error" role="alert">
+              Could not show {revealFailed}
+            </div>
+          ) : null}
 
           {error && !selectedPath ? (
             <div className="workspace-files__tree-error" role="alert">
@@ -655,6 +711,7 @@ function FileTreeDirectoryButton(props: {
       style={{ paddingLeft: 9 + props.depth * WORKSPACE_TREE_INDENT }}
       aria-expanded={props.entry.restricted ? undefined : props.open}
       title={props.entry.restricted ? `${props.entry.name} is protected` : props.entry.path}
+      data-reveal-path={props.entry.restricted ? undefined : props.entry.path}
       onClick={() => props.onToggle(props.entry)}
     >
       <IconMorph active={props.entry.restricted ? 2 : props.open ? 1 : 0}>
@@ -707,6 +764,7 @@ function FileTreeFile(props: {
       className={`workspace-files__entry is-file${selected ? ' is-selected' : ''}`}
       style={{ paddingLeft: 12 + props.depth * WORKSPACE_TREE_INDENT }}
       title={props.entry.restricted ? `${props.entry.name} is protected` : props.entry.path}
+      data-reveal-path={props.entry.restricted ? undefined : props.entry.path}
       disabled={props.entry.restricted}
       onClick={() => props.onSelect(props.entry)}
     >
@@ -715,6 +773,33 @@ function FileTreeFile(props: {
       {props.entry.restricted ? <LockKeyhole size={12} aria-hidden /> : null}
     </button>
   )
+}
+
+/** A path in the toolbar that opens its folder in Explorer or Finder, where the app can. */
+function RevealText(props: {
+  reveal: ((path: string) => void) | undefined
+  path: string
+  children: string
+}) {
+  if (!props.reveal) return props.children
+  const reveal = props.reveal
+  return (
+    <button
+      type="button"
+      className="workspace-files__reveal"
+      title={`Show ${props.path || props.children} in its folder`}
+      onClick={() => reveal(props.path)}
+    >
+      {props.children}
+    </button>
+  )
+}
+
+/** A listed path under its root, in the root's own separators. */
+function rootedPath(root: string, relative: string): string {
+  if (!relative) return root
+  const separator = root.includes('\\') ? '\\' : '/'
+  return `${root.replace(/[\\/]+$/, '')}${separator}${relative.split('/').join(separator)}`
 }
 
 function MiddleEllipsis({ text }: { text: string }) {
