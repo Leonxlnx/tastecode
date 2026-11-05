@@ -6522,25 +6522,21 @@ ${JSON.stringify(deck, null, 2)}
     ) {
       this.#designMessageItems.delete(event.item.id)
       if (this.#acceptedDesignOutputs.has(turnId)) return
+      // Providers without commentary phases put progress text in the same message as the
+      // phase result, before its JSON (Claude Code does). That prose is the agent's own
+      // progress and shows whether or not the JSON parses; the JSON itself never shows.
+      const text = event.item.text ?? ''
+      const json = text.search(/^\s*(?:[{[]|```)/m)
+      const prose = (json < 0 ? text : text.slice(0, json)).trim()
       try {
-        this.#handleDesignOutput(threadId, turnId, event.item.text ?? '')
+        this.#handleDesignOutput(threadId, turnId, text)
         // A completed or failed phase can release ownership inside the handler.
         if (this.#designTurns.get(turnId) === threadId) {
           this.#acceptedDesignOutputs.add(turnId)
         }
+        if (prose && json > 0) this.#recordDesignProse(threadId, event, prose)
       } catch (error) {
-        // Providers without commentary phases still expose completed progress text,
-        // but not a phase result: one that opens with prose and puts its JSON on a
-        // line of its own fails the parse too (Claude Code's asset manifest did).
-        const text = event.item.text ?? ''
-        const json = text.search(/^\s*(?:[{[]|```)/m)
-        const prose = (json < 0 ? text : text.slice(0, json)).trim()
-        if (prose) {
-          this.#record(threadId, {
-            ...event,
-            item: { ...event.item, text: prose, phase: 'commentary' },
-          })
-        }
+        if (prose) this.#recordDesignProse(threadId, event, prose)
         this.#designOutputErrors.set(turnId, error)
       }
       return
@@ -6601,6 +6597,14 @@ ${JSON.stringify(deck, null, 2)}
     if (event.type === 'turn.started' && this.#designTurns.get(event.turn.id) === threadId) {
       this.#startDesignActivity(threadId, event.turn.id)
     }
+  }
+
+  #recordDesignProse(
+    threadId: string,
+    event: Extract<DomainEvent, { type: 'item.completed' }>,
+    prose: string,
+  ): void {
+    this.#record(threadId, { ...event, item: { ...event.item, text: prose, phase: 'commentary' } })
   }
 
   #handleDesignOutput(threadId: string, turnId: string, text: string): void {
