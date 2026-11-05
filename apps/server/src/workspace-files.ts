@@ -38,7 +38,7 @@ export type WorkspaceFileContents = {
 export async function listWorkspaceDirectory(
   workspacePath: string,
   relativeDirectory = '',
-): Promise<{ path: string; entries: WorkspaceFileEntry[] }> {
+): Promise<{ path: string; root: string; entries: WorkspaceFileEntry[] }> {
   const workspace = await realpath(workspacePath)
   const directory = await containedRealPath(workspace, relativeDirectory)
   if (!(await stat(directory)).isDirectory()) throw new Error('path must be a directory')
@@ -47,7 +47,8 @@ export async function listWorkspaceDirectory(
   const children = await readdir(directory, { withFileTypes: true })
   const entries = await workspaceEntries(workspace, protocolDirectory, directory, children)
 
-  return { path: protocolDirectory, entries }
+  // The real folder the paths are relative to, so a client can show a file where it is.
+  return { path: protocolDirectory, root: workspace, entries }
 }
 
 /** Breadth-first search keeps unopened folders discoverable without an unbounded tree walk. */
