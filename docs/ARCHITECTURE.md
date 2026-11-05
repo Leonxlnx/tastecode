@@ -384,7 +384,8 @@ recoverable new-chat instruction rather than passing a synthetic TasteCode id to
 
 **Completed resumable runtimes are a hardware-scaled warm LRU.** Each attached adapter can own a
 child process, so keeping every completed thread attached makes idle memory grow without a bound.
-TasteCode keeps one warm idle runtime per 2 GiB of RAM, with a floor of four and a ceiling of 16.
+TasteCode keeps one warm idle runtime per 8 GiB of RAM, with a floor of two and a ceiling of six,
+and stops an idle runtime after two minutes. An idle Claude Code process holds about 0.5-1 GB.
 Viewing a thread refreshes its recency; an evicted thread resumes on its next submission. Running,
 queued, Side chat, provider-operation, and non-resumable runtimes are never evicted.
 
