@@ -129,15 +129,24 @@ export async function fetchArchive(skill, fetchImpl = fetch) {
 
 /**
  * Whether a skill file is left out of the bundle. A `paths` entry ending in `/`
- * takes the pictures and credits files under that folder; any other entry
- * names one file.
+ * takes the pictures and credits files under that folder; an entry with `*`
+ * takes the files it matches, `*` staying inside one path segment; any other
+ * entry names one file.
  */
 export function isOmitted(relative, omit) {
   return omit.paths.some((entry) =>
     entry.endsWith('/')
       ? relative.startsWith(entry) && MEDIA_FILE.test(relative)
-      : relative === entry,
+      : entry.includes('*')
+        ? segmentPattern(entry).test(relative)
+        : relative === entry,
   )
+}
+
+/** A path pattern whose `*` stands for any run of characters inside one path segment. */
+function segmentPattern(entry) {
+  const escaped = entry.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '[^/]*')
+  return new RegExp(`^${escaped}$`)
 }
 
 /** A skill's files without the ones its `omit` entry leaves out. */

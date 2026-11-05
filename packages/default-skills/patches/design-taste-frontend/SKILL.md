@@ -29,8 +29,12 @@ Asset phase. `scripts/photos.mjs` is switched off and says so. When this skill o
 of library frames, dealt photographs, the draft path or stand-in frames, use the user's own
 pictures. When there are none, the section's frame becomes a named slot for the client's file
 (`sections-library.md`, client-slots), and the report lists it. A sample picture that a copied kit
-file still points to is not content: replace it, or remove it. This section wins over the rest of
-the skill.
+file still points to is not content: replace it, or remove it. The objects kit ships without its
+sample posters (`fallback*.png`) and without its sample product specs (`product-render/specs/`): a
+product render is built from a spec written for the client's own product, and every object or
+render a page uses gets its posters made for that page (`product-render/make-posters.mjs`,
+`_print-core/make-fallbacks.html`) before it ships, so no still ever shows a sample. This section
+wins over the rest of the skill.
 
 ## House rules
 

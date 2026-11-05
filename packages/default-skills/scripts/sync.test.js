@@ -146,6 +146,41 @@ test('leaves the omitted pictures and credits out, and keeps pages in the same f
   ])
 })
 
+test('leaves out the files a pattern names, with * inside one path segment', () => {
+  const files = new Map(
+    [
+      'assets/objects/print-cup/fallback-dark.png',
+      'assets/objects/print-cup/object.js',
+      'assets/objects/print-cup/meta.json',
+      'assets/objects/product-turntable/fallback-camera-light.png',
+      'assets/objects/print-cup/deeper/fallback.png',
+    ].map((name) => [name, Buffer.from(name)]),
+  )
+  const kept = omitFiles(files, { paths: ['assets/objects/*/fallback*.png'] })
+  assert.deepEqual([...kept.keys()].sort(), [
+    'assets/objects/print-cup/deeper/fallback.png',
+    'assets/objects/print-cup/meta.json',
+    'assets/objects/print-cup/object.js',
+  ])
+})
+
+test('ships TasteSkill with no picture of its own', async () => {
+  const manifest = await readManifest()
+  const skill = manifest.skills.find((entry) => entry.folder === 'design-taste-frontend')
+  for (const sample of [
+    'assets/objects/print-cup/fallback-render.png',
+    'assets/objects/product-turntable/fallback-chair-dark.png',
+    'assets/objects/product-render/specs/city-bike.json',
+    'assets/objects/product-render/specs/robot-arm.fallback.png',
+    'assets/photos/img/photo-326-1200.webp',
+  ])
+    assert.equal(
+      omitFiles(new Map([[sample, Buffer.alloc(0)]]), skill.omit).size,
+      0,
+      `${sample} is bundled`,
+    )
+})
+
 test('bundles the patched copies, no library, and nothing that fetches one', async () => {
   const { temp, root, patches, pinned } = await patchedFixture()
   try {
