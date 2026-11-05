@@ -10,8 +10,16 @@ import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
-import { DESIGN_PHASE_NOTICE, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
+import {
+  DESIGN_PHASE_MARKER,
+  DESIGN_PHASE_NOTICE,
+  RESTORE_CONTEXT_NOTICE,
+} from './provider-session.js'
 import { continuationPromptFromReplay } from './side-chat.js'
+
+/** The Design phase notice as provider histories saved before 2026-11-05 hold it. */
+const EARLIER_DESIGN_NOTICE =
+  "Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n"
 
 let store: Store
 const histories: ProviderHistory[] = []
@@ -624,6 +632,13 @@ describe('provider history integration', () => {
     ])
   })
 
+  it('asks for progress in the language of the request, under the marker history matches', () => {
+    expect(DESIGN_PHASE_NOTICE.startsWith(DESIGN_PHASE_MARKER)).toBe(true)
+    expect(EARLIER_DESIGN_NOTICE.startsWith(DESIGN_PHASE_MARKER)).toBe(true)
+    expect(DESIGN_PHASE_NOTICE).toContain('in the language the user wrote their request in')
+    expect(DESIGN_PHASE_NOTICE).not.toContain("Use the user's language")
+  })
+
   it('hides Design phase prompts that the provider saved as turns of their own', async () => {
     store.addThread({
       id: 'local',
@@ -659,7 +674,13 @@ describe('provider history integration', () => {
       message('brief-json', 'native-brief', 'assistant', '{"status":"complete"}'),
       { type: 'turn.completed', turnId: 'native-brief', status: 'completed' },
       started('native-page', 'native'),
-      message('page', 'native-page', 'user', `${RESTORE_CONTEXT_NOTICE}${DESIGN_PHASE_NOTICE}Page`),
+      // A run saved before 2026-11-05 opened its phases with the earlier notice.
+      message(
+        'page',
+        'native-page',
+        'user',
+        `${RESTORE_CONTEXT_NOTICE}${EARLIER_DESIGN_NOTICE}Page`,
+      ),
       message('page-json', 'native-page', 'assistant', '{"version":1}'),
       { type: 'turn.completed', turnId: 'native-page', status: 'interrupted' },
       started('native-outside', 'native'),
