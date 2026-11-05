@@ -11,7 +11,7 @@
 .prompt-chip--browser {
   --browser-comment-tint: color-mix(in srgb, var(--attention) 13%, transparent);
   background: var(--browser-comment-tint);
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   box-shadow: 0 0 0 2px var(--browser-comment-tint);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
@@ -72,7 +72,7 @@
   max-width: calc(100% - 23px);
   padding: 0 5px;
   background: var(--browser-comment-mark);
-  border-radius: 3px 3px 0 0;
+  border-radius: var(--r-xs) var(--r-xs) 0 0;
   color: #fff;
   font-family: var(--font-mono);
   font-size: 10.5px;
