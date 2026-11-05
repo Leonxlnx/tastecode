@@ -116,21 +116,26 @@ describe('build phase', () => {
     expect(prompt).not.toContain('<reference-reveal-source>')
     expect(prompt).not.toContain('installReferenceReveals')
     expect(prompt).not.toContain('Verify an actual hero animation')
-    expect(designBuildPrompt(...artifacts)).toContain('<reference-reveal-source>')
+    expect(designBuildPrompt(...artifacts)).not.toContain('<reference-reveal-source>')
+    expect(prompt).not.toContain('TASTESKILL WEBSITE RULES')
   })
 
   it('requires the existing architecture and leaves preview to the harness', () => {
     const prompt = designBuildPrompt(...artifacts)
-    expect(prompt).toContain('Build must wire the triggers and classes')
-    expect(prompt).toContain('Verify an actual hero animation')
+    expect(prompt).toContain(
+      'Do not add scroll reveals, a reveal helper or an entrance to any other section',
+    )
+    expect(prompt).toContain(
+      'that the hover layer answers on a button, a linked card and a linked photograph',
+    )
+    expect(prompt).toContain('## 4. Equal edges and the grid')
     expect(prompt).toContain('Build and Review must preserve it')
     expect(prompt).toContain('only fulfilled image needs may reach Build')
     expect(prompt).toContain('Do not scaffold a second app')
     expect(prompt).toContain('TasteCode owns Preview next')
     expect(prompt).toContain('The reference is the primary hard composition requirement')
-    expect(prompt).toContain("Implement each section's recorded motion decision")
     expect(prompt).toContain(
-      "Implement the page's motion vocabulary once, as two or three named reveal types with shared timing",
+      "Implement the hover layer on every interactive element, the hero's one load motion, the one creative moment",
     )
     expect(prompt).toContain('never use transition: all')
     expect(prompt).toContain('replace the reference with a generic centered heading')
