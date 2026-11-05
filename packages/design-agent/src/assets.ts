@@ -398,7 +398,7 @@ export function readAssetManifest(workspacePath: string): AssetManifest {
  * rather than sending the agent back to edit the manifest. Paths outside the workspace are left
  * as they are, for the validation to reject.
  */
-export function relativizeAssetPaths(value: unknown, workspacePath: string): unknown {
+export function relativizeAssetPaths(value: unknown, workspacePath: string) {
   if (
     typeof value !== 'object' ||
     value === null ||
