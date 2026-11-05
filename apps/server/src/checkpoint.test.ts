@@ -14,7 +14,7 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import * as fsPromises from 'node:fs/promises'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   changedSince,
   checkpointRepository,
@@ -26,6 +26,7 @@ import {
   RestoreSnapshotError,
   takeSnapshot,
 } from './checkpoint.js'
+import { gitRepositoryTemplate, removeTestFolder } from './git-fixture.test-support.js'
 import { DubiousOwnership } from './git-ownership.js'
 import { runHistoryCli } from './history-cli.js'
 import { DatabaseSync } from './sqlite.js'
@@ -47,22 +48,22 @@ const git = (...args: string[]) =>
 const read = (file: string) => readFileSync(path.join(repo, file), 'utf8')
 const write = (file: string, text: string) => writeFileSync(path.join(repo, file), text)
 
+// One committed repository with tracked.txt, copied for each test (git-fixture.test-support).
+const template = gitRepositoryTemplate('harness-cp-', { 'tracked.txt': 'original\n' })
+
 beforeEach(() => {
-  repo = mkdtempSync(path.join(os.tmpdir(), 'harness-cp-'))
-  execFileSync('git', ['init', '-b', 'main', repo], { windowsHide: true })
-  git('config', 'user.email', 'test@example.com')
-  git('config', 'user.name', 'Test')
-  // Otherwise git rewrites line endings on checkout and these assertions
-  // would pass on macOS and fail on Windows for a reason unrelated to them.
-  git('config', 'core.autocrlf', 'false')
-  write('tracked.txt', 'original\n')
-  git('add', '.')
-  git('commit', '-m', 'first')
+  repo = template.create()
 })
 
 afterEach(() => {
-  rmSync(repo, { recursive: true, force: true })
+  removeTestFolder(repo)
 })
+
+// Built once, before the first test's own hooks, with its own budget for a slow runner.
+beforeAll(() => {
+  template.build()
+}, 30_000)
+afterAll(() => template.dispose())
 
 describe('takeSnapshot', () => {
   it('reports a clean tree as having nothing to record', async () => {
@@ -880,11 +881,29 @@ describe('changedSince', () => {
 
 it('keeps legacy checkpoint batches after cache removal and Git garbage collection', async () => {
   const tree = git('rev-parse', 'HEAD^{tree}').trim()
+  // One git process writes all 257 commit objects. A commit-tree process each took most of a
+  // minute on a Windows runner (CI 42109425713).
+  const bodies = mkdtempSync(path.join(os.tmpdir(), 'harness-cp-legacy-'))
+  const files = Array.from({ length: 257 }, (_, index) => {
+    const file = path.join(bodies, `${index}.txt`)
+    writeFileSync(
+      file,
+      `tree ${tree}\nauthor Test <test@example.com> 1700000000 +0000\ncommitter Test <test@example.com> 1700000000 +0000\n\nLegacy checkpoint ${index}\n`,
+    )
+    return file
+  })
   const commits = new Set(
-    Array.from({ length: 257 }, (_, index) =>
-      git('commit-tree', tree, '-m', `Legacy checkpoint ${index}`).trim(),
-    ),
+    execFileSync('git', ['hash-object', '-t', 'commit', '-w', '--stdin-paths'], {
+      cwd: repo,
+      input: `${files.join('\n')}\n`,
+      windowsHide: true,
+    })
+      .toString()
+      .trim()
+      .split('\n'),
   )
+  removeTestFolder(bodies)
+  expect(commits.size).toBe(257)
   const [first, second] = [...commits]
   await retainCheckpoint(repo, 'legacy-data', first!)
   // Repair a stale ref as well as creating the missing refs in multiple batches.
