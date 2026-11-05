@@ -140,8 +140,10 @@ describe('account limits', () => {
 
     // Two accounts of one provider sit under its name, each a line that opens to its limits.
     const codex = screen.getByRole('group', { name: 'Codex' })
-    // A provider shown once keeps its own name.
-    expect(screen.getByRole('region', { name: 'Grok' })).toBeTruthy()
+    // Beside a provider with several accounts, a provider with one reads the same way: a line.
+    const grok = screen.getByRole('group', { name: 'Grok' })
+    expect(within(grok).getByText('Personal')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
 
     // An account that could not be read says so on its line, with Retry beside it.
     expect(within(codex).getByText('Unavailable')).toBeTruthy()
