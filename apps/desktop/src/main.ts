@@ -1246,7 +1246,11 @@ ipcMain.handle(
   'harness:revealProjectFile',
   async (event, value: unknown, projectRootValue: unknown) => {
     requireOwnRenderer(event.sender)
-    shell.showItemInFolder(await projectFilePath(value, projectRootValue))
+    const file = await projectFilePath(value, projectRootValue)
+    // A reply can name a file the project does not have (a bare name, a path from another
+    // checkout). Explorer then opens nothing, so the chat says it could not show the file.
+    await stat(file)
+    shell.showItemInFolder(file)
   },
 )
 

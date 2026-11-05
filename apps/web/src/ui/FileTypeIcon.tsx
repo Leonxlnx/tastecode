@@ -21,6 +21,7 @@ import {
   IconDiamond,
   IconFileCode,
   IconFileText,
+  IconFolder,
   IconLetterC,
   IconMarkdown,
   IconPhoto,
@@ -65,8 +66,10 @@ const ICONS = {
   code: { kind: 'code', Icon: IconFileCode },
 } satisfies Record<FileReferenceKind, IconSpec>
 
+const FOLDER: IconSpec = { kind: 'folder', Icon: IconFolder }
+
 export function FileTypeIcon({ path }: { path: string }) {
-  const spec: IconSpec = ICONS[fileReferenceKind(path) ?? 'code']
+  const spec: IconSpec = /[\\/]$/.test(path) ? FOLDER : ICONS[fileReferenceKind(path) ?? 'code']
   const Icon = spec.Icon
 
   return (

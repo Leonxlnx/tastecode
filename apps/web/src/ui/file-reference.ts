@@ -121,6 +121,14 @@ export function isInlineFileReference(text: string): boolean {
   return !/\s/.test(text) && !/^[^/\\]+\.env$/i.test(text) && isFileReference(text)
 }
 
+/** A folder named in inline code: one or more path segments ending in a separator (`src/ui/`). */
+export function isInlineFolderReference(text: string): boolean {
+  return (
+    /^(?:[a-z]:[\\/]|[\\/])?(?:[\w@.+-]+[\\/])+$/i.test(text) &&
+    !/(?:^|[\\/])\.{1,2}[\\/]/.test(text)
+  )
+}
+
 export function fileReferenceKind(path: string): FileReferenceKind | undefined {
   const withoutPosition = path.includes(':') ? path.replace(/:\d+(?::\d+)?$/, '') : path
   const separator = Math.max(withoutPosition.lastIndexOf('/'), withoutPosition.lastIndexOf('\\'))

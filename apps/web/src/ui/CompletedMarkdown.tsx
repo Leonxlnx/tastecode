@@ -26,7 +26,11 @@ import {
   preservedRelativeLink,
   projectFileReference,
 } from '../project-file-link.js'
-import { isFileReference, isInlineFileReference } from './file-reference.js'
+import {
+  isFileReference,
+  isInlineFileReference,
+  isInlineFolderReference,
+} from './file-reference.js'
 import { FileTypeIcon } from './FileTypeIcon.js'
 import { shikiPlugin } from './highlighter.js'
 import { STREAMDOWN_ICONS } from './streamdown-icons.js'
@@ -43,21 +47,46 @@ import { normalizeMathDelimiters } from './math-delimiters.js'
 type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
 
 function InlineCode({ children, node: _node, ...props }: InlineCodeProps) {
-  const reference = typeof children === 'string' && isInlineFileReference(children)
+  const projectPath = useContext(ProjectPathContext)
+  const text = typeof children === 'string' ? children : undefined
+  const file = text !== undefined && isInlineFileReference(text)
+  const folder = text !== undefined && !file && isInlineFolderReference(text)
+  if (text === undefined || (!file && !folder)) return <code {...props}>{children}</code>
 
-  if (!reference) return <code {...props}>{children}</code>
+  // A path the reply names in code opens like a file link when it resolves inside the project.
+  const reference =
+    projectPath && canRevealProjectFile ? projectFileReference(text, projectPath) : undefined
+  if (projectPath && reference?.kind === 'safe') {
+    return (
+      <RevealProjectFileButton path={reference.path} projectPath={projectPath} iconPath={text}>
+        {text}
+      </RevealProjectFileButton>
+    )
+  }
+  if (folder) return <code {...props}>{children}</code>
 
   return (
     <span className="md-file-ref">
-      <FileTypeIcon path={children} />
-      {children}
+      <FileTypeIcon path={text} />
+      {text}
     </span>
   )
 }
 
-type RevealProjectFileButtonProps = { path: string; projectPath: string; children: ReactNode }
+type RevealProjectFileButtonProps = {
+  path: string
+  projectPath: string
+  /** The path as the reply wrote it, when that says more (a folder keeps its trailing slash). */
+  iconPath?: string
+  children: ReactNode
+}
 
-function RevealProjectFileButton({ path, projectPath, children }: RevealProjectFileButtonProps) {
+function RevealProjectFileButton({
+  path,
+  projectPath,
+  iconPath,
+  children,
+}: RevealProjectFileButtonProps) {
   const [revealFailed, setRevealFailed] = useState(false)
   return (
     <button
@@ -69,7 +98,7 @@ function RevealProjectFileButton({ path, projectPath, children }: RevealProjectF
         void revealProjectFile(path, projectPath).catch(() => setRevealFailed(true))
       }}
     >
-      <FileTypeIcon path={path} />
+      <FileTypeIcon path={iconPath ?? path} />
       {children}
       {revealFailed ? (
         <span className="md-file-link__reason" role="alert">
