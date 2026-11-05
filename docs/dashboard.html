@@ -291,12 +291,19 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-04 dev 116e2d36 · nightly 681a5e89 · main d5e45826</span>
+        <span class="meta">2026-11-05 dev fc445067 · nightly 681a5e89 · main d5e45826</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 5, pending on fix/chat-steer-running-turn: the queue publishes steering
+          availability when a provider session attaches or leaves, so a first turn or restored chat
+          offers Steer as soon as its engine supports it, in either split pane. A failed client
+          notification cannot interrupt runtime attachment or cleanup. Unsupported engines keep
+          ordinary queueing and offer no Steer; Design runs keep their existing queue-only behavior.
+        </p>
         <p>
           November 4, evening: v0.5.1 is published as Latest (<a
             href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.5.1"
