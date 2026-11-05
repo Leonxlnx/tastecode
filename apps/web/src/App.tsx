@@ -8359,7 +8359,13 @@ function Empty(props: {
       : 'a project'
   return (
     <div className="empty">
-      <div className="empty__prompt" role="heading" aria-level={1}>
+      <div
+        className="empty__prompt"
+        role="heading"
+        aria-level={1}
+        // The name span would read as "in project ?" where layout is unknown; say it once, as shown.
+        aria-label={`What should we build in ${projectName}?`}
+      >
         What should we build in{' '}
         <span className={projectName.length <= EMPTY_PROJECT_NOWRAP ? 'empty__project' : undefined}>
           {projectName}
