@@ -133,6 +133,11 @@ describe('build phase', () => {
     expect(prompt).toContain('only fulfilled image needs may reach Build')
     expect(prompt).toContain('Do not scaffold a second app')
     expect(prompt).toContain('TasteCode owns Preview next')
+    // A real Codex run without a browser host stopped on the font check it could not run.
+    expect(prompt).toContain(
+      'Where no browser can launch, check instead that every approved family',
+    )
+    expect(prompt).toContain('A local browser that cannot launch is not a blocker')
     expect(prompt).toContain('The reference is the primary hard composition requirement')
     expect(prompt).toContain(
       "Implement the hover layer on every interactive element, the hero's one load motion, the one creative moment",
