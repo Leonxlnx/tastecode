@@ -135,6 +135,8 @@ const INVALID_PARAMS = -32602
 const CONTROL_READ_TIMEOUT_MS = 10_000
 const INITIALIZE_TIMEOUT_MS = 30_000
 const THREAD_START_TIMEOUT_MS = 30_000
+/** Codex 0.164+ answers thread/resume this way for a thread whose rollout was never written. */
+const MISSING_ROLLOUT = /no rollout found for thread id/i
 /**
  * How long a new thread may wait without a single frame from Codex.
  * thread/start answers only after Codex set the session up, which includes
@@ -692,6 +694,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   /** A command waiting to learn the id of the turn its request started. */
   #turnStartWaiters = new Map<string, (turnId: string | undefined) => void>()
   #sessionThread: { id: string; workspacePath: string } | undefined
+  /** The thread a resume started because the requested one had no rollout. */
+  #replacedThreadId: string | undefined
+  readonly #providerSessionIdListeners = new Set<(providerSessionId: string) => void>()
   #mcpServers: Record<string, JsonValue>
   #mcpEnvironment: NodeJS.ProcessEnv
   readonly #accountEnvironment: NodeJS.ProcessEnv
@@ -1417,23 +1422,36 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ...(Object.keys(this.#mcpServers).length ? { mcp_servers: this.#mcpServers } : {}),
       ...this.#mcpShellConfig,
     }
-    const response = await this.#callParsed(
-      'thread/resume',
-      {
-        threadId,
-        cwd: workspacePath,
-        // We replay our own event log; full provider history can exceed the frame limit.
-        excludeTurns: true,
-        ...(options.instructions
-          ? {
-              developerInstructions: options.instructions,
-            }
-          : {}),
-        ...approval,
-        ...(Object.keys(config).length ? { config } : {}),
-      },
-      ThreadResumeResponseSchema,
-    )
+    let response: z.infer<typeof ThreadResumeResponseSchema>
+    try {
+      response = await this.#callParsed(
+        'thread/resume',
+        {
+          threadId,
+          cwd: workspacePath,
+          // We replay our own event log; full provider history can exceed the frame limit.
+          excludeTurns: true,
+          ...(options.instructions
+            ? {
+                developerInstructions: options.instructions,
+              }
+            : {}),
+          ...approval,
+          ...(Object.keys(config).length ? { config } : {}),
+        },
+        ThreadResumeResponseSchema,
+      )
+    } catch (error) {
+      // Codex writes a thread's rollout with its first turn. A thread that never completed
+      // one has nothing to resume ("no rollout found for thread id …", #2190) and nothing to
+      // lose: start a fresh one and report its id so the chat resumes that one next time.
+      if (!(error instanceof Error) || !MISSING_ROLLOUT.test(error.message)) throw error
+      this.emit('log', `${error.message}; starting a new Codex thread for this chat`)
+      const thread = await this.startThread(workspacePath, options)
+      this.#replacedThreadId = thread.id
+      for (const listener of this.#providerSessionIdListeners) listener(thread.id)
+      return thread
+    }
     this.#ownThreads.add(response.thread.id)
     this.#threadModels.set(response.thread.id, response.model)
     if (options.approval) this.#threadApprovals.set(response.thread.id, options.approval)
@@ -1450,6 +1468,15 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     }
     this.#sessionThread = { id: thread.id, workspacePath }
     return thread
+  }
+
+  /**
+   * The thread id to resume after a restart, when a resume had to start a new thread. The
+   * replacement is replayed: it was chosen before the server could listen.
+   */
+  onProviderSessionId(listener: (providerSessionId: string) => void): void {
+    this.#providerSessionIdListeners.add(listener)
+    if (this.#replacedThreadId) listener(this.#replacedThreadId)
   }
 
   async setApproval(approval: ApprovalMode): Promise<void> {
