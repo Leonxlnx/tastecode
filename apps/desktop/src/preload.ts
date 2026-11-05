@@ -56,6 +56,8 @@ const api = {
   previewViewedImage: (reference: string): Promise<PickedAttachment | undefined> =>
     ipcRenderer.invoke('harness:previewViewedImage', reference),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('harness:revealPath', path),
+  setAgentBrowserGuest: (webContentsId: number, driven: boolean): Promise<void> =>
+    ipcRenderer.invoke('harness:agentBrowserGuest', webContentsId, driven),
   revealProjectFile: (path: string, projectPath: string): Promise<void> =>
     ipcRenderer.invoke('harness:revealProjectFile', path, projectPath),
   savePastedFile: (file: {

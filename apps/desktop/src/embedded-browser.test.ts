@@ -1,6 +1,11 @@
 import type { Event, WebContents, WebPreferences } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
-import { browserGuestUrl, browserUserAgent, configureEmbeddedBrowser } from './embedded-browser.js'
+import {
+  browserGuestUrl,
+  browserUserAgent,
+  configureEmbeddedBrowser,
+  setAgentDrivenGuest,
+} from './embedded-browser.js'
 
 describe('embedded browser guest', () => {
   it('accepts HTTPS pages, loopback HTTP and a blank bootstrap document', () => {
@@ -78,6 +83,7 @@ describe('embedded browser guest', () => {
       webRequest: { onBeforeRequest: vi.fn() },
       setPermissionCheckHandler: vi.fn(),
       setPermissionRequestHandler: vi.fn(),
+      on: vi.fn(),
     }
     const guest = {
       getUserAgent: vi.fn(() => 'Mozilla/5.0 Chrome/150 Safari/537.36 Electron/43.4.0'),
@@ -93,6 +99,23 @@ describe('embedded browser guest', () => {
     expect(session.setPermissionCheckHandler).toHaveBeenCalledOnce()
     expect(session.setPermissionRequestHandler).toHaveBeenCalledOnce()
     expect(guest.setUserAgent).toHaveBeenCalledWith('Mozilla/5.0 Chrome/150 Safari/537.36')
+
+    // A tab an agent drives downloads nothing; the user's own tabs are unchanged.
+    const willDownload = session.on.mock.calls.find(([name]) => name === 'will-download')![1] as (
+      event: { preventDefault: () => void },
+      item: unknown,
+      contents: { id: number },
+    ) => void
+    const download = (id: number) => {
+      const event = { preventDefault: vi.fn() }
+      willDownload(event, {}, { id })
+      return event.preventDefault
+    }
+    setAgentDrivenGuest(7, true)
+    expect(download(7)).toHaveBeenCalledOnce()
+    expect(download(8)).not.toHaveBeenCalled()
+    setAgentDrivenGuest(7, false)
+    expect(download(7)).not.toHaveBeenCalled()
 
     const openWindow = guest.setWindowOpenHandler.mock.calls[0]![0]
     expect(openWindow({ url: 'https://example.com/next' })).toEqual({ action: 'deny' })
@@ -120,6 +143,8 @@ describe('embedded browser guest', () => {
         webRequest: { onBeforeRequest: vi.fn() },
         setPermissionCheckHandler: vi.fn(),
         setPermissionRequestHandler: vi.fn(),
+        on: vi.fn(),
+        on: vi.fn(),
       },
       setUserAgent: vi.fn(),
       setWindowOpenHandler: vi.fn(),
@@ -167,6 +192,8 @@ describe('embedded browser guest', () => {
         webRequest: { onBeforeRequest: vi.fn() },
         setPermissionCheckHandler: vi.fn(),
         setPermissionRequestHandler: vi.fn(),
+        on: vi.fn(),
+        on: vi.fn(),
       },
     }
     owner.listener('did-attach-webview')({}, guest)

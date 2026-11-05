@@ -2,6 +2,14 @@ import type { Event, Session, WebContents, WebPreferences } from 'electron'
 
 const BROWSER_PARTITION = 'persist:harness-browser'
 const configuredSessions = new WeakSet<Session>()
+/** Guests an agent drives now, by webContents id: a download they start is cancelled. */
+const agentDrivenGuests = new Set<number>()
+
+/** The renderer says which in-app browser tab an agent drives, and when it stops. */
+export function setAgentDrivenGuest(webContentsId: number, driven: boolean): void {
+  if (driven) agentDrivenGuests.add(webContentsId)
+  else agentDrivenGuests.delete(webContentsId)
+}
 
 export interface EmbeddedBrowserOwner {
   on(
@@ -142,4 +150,8 @@ function configureBrowserSession(browserSession: Session): void {
   })
   browserSession.setPermissionCheckHandler(() => false)
   browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  // An agent never downloads: a file its page starts is dropped before it is written.
+  browserSession.on('will-download', (event, _item, contents) => {
+    if (contents && agentDrivenGuests.has(contents.id)) event.preventDefault()
+  })
 }

@@ -31,6 +31,7 @@ type Bridge = {
   pickFiles: () => Promise<Array<PickedAttachment | string>>
   previewViewedImage?: (reference: string) => Promise<PickedAttachment | undefined>
   revealPath: (path: string) => Promise<void>
+  setAgentBrowserGuest?: (webContentsId: number, driven: boolean) => Promise<void>
   revealProjectFile?: (path: string, projectPath: string) => Promise<void>
   savePastedFile: (file: {
     name: string
@@ -247,6 +248,11 @@ function parsePickedAttachment(value: unknown): PickedAttachment {
     ...(previewUrl === undefined ? {} : { previewUrl }),
     ...(thumbnailUrl === undefined ? {} : { thumbnailUrl }),
   }
+}
+
+/** Marks the in-app browser tab an agent drives, so the desktop app drops its downloads. */
+export function setAgentBrowserGuest(webContentsId: number, driven: boolean): Promise<void> {
+  return bridge?.setAgentBrowserGuest?.(webContentsId, driven) ?? Promise.resolve()
 }
 
 export function revealPath(path: string): Promise<void> {

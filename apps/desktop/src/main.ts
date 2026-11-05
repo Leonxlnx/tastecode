@@ -50,7 +50,11 @@ import { ChatNotifier, type ShownNotification } from './chat-notifier.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
 import { forwardBrowserShortcuts } from './browser-shortcuts.js'
-import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
+import {
+  browserGuestUrl,
+  configureEmbeddedBrowser,
+  setAgentDrivenGuest,
+} from './embedded-browser.js'
 import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { localDiagnosticsDirectory, LocalDiagnostics } from './local-diagnostics.js'
@@ -1235,6 +1239,14 @@ ipcMain.handle('harness:previewViewedImage', async (event, reference: unknown) =
   if (!filePath) return undefined
   const attachment = pickedAttachment(filePath, attachmentPreviewSecret)
   return attachment.mediaType ? attachment : undefined
+})
+
+// The in-app browser tab an agent drives: its downloads are dropped while it does.
+ipcMain.handle('harness:agentBrowserGuest', (event, webContentsId: unknown, driven: unknown) => {
+  requireOwnRenderer(event.sender)
+  if (!Number.isSafeInteger(webContentsId) || typeof driven !== 'boolean')
+    throw new Error('Invalid agent browser guest')
+  setAgentDrivenGuest(webContentsId as number, driven)
 })
 
 ipcMain.handle('harness:revealPath', (event, value: unknown) => {
