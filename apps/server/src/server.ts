@@ -30,6 +30,7 @@ import { FeedbackService, providerVersionLabel } from './feedback.js'
 import { PushBus } from './push-bus.js'
 import { storeLocation } from './data-location.js'
 import { acquireDataLease } from './data-lease.js'
+import { BrowserCommandCoordinator } from './browser-commands.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 import type { CheckoutPullRequests } from './checkout-pull-request.js'
 import type { PullRequestService } from './pull-requests.js'
@@ -198,6 +199,11 @@ export function startServer(
     35_000,
     (socket, requestId) => push.send(socket, 'preview.captureCancelled', { requestId }),
   )
+  // Agent browser commands go only to a window that declared browserTools and shows the chat.
+  const browserCommands = new BrowserCommandCoordinator<ClientSocket>(
+    (socket, command) => push.send(socket, 'browser.command', command),
+    (socket, commandId) => push.send(socket, 'browser.commandCancelled', { commandId }),
+  )
 
   // A port clash is the most likely startup failure — a previous run that did
   // not shut down cleanly. An unhandled 'error' event crashes the process with
@@ -274,6 +280,8 @@ export function startServer(
       if (event.type === 'item.delta') streamQuiet.noteDelta()
       else if (event.type === 'turn.completed') {
         turnEndedInCheckout(threadId)
+        // A stopped or finished turn ends its browser commands and clears the window's bar.
+        browserCommands.cancelThread(threadId)
         if (orchestrator.awaitsProviderTitle(threadId)) void nameUnnamedChat(threadId)
       }
       if (serializedEvent === undefined) {
@@ -299,6 +307,9 @@ export function startServer(
       }
     },
     agentTools: true,
+    browserTools: {
+      run: (caller, request, signal) => browserCommands.run(caller.threadId, request, signal),
+    },
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result, accountId) => {
@@ -702,6 +713,7 @@ export function startServer(
 
     const removeSocket = () => {
       previewCapture.remove(socket)
+      browserCommands.remove(socket)
       push.remove(socket)
     }
     listen(
@@ -783,8 +795,19 @@ export function startServer(
     params: unknown,
   ): Promise<unknown> {
     switch (method) {
-      case 'client.capabilities':
-        previewCapture.setCapability(socket, parseParams(method, params).previewCapture)
+      case 'client.capabilities': {
+        const capabilities = parseParams(method, params)
+        previewCapture.setCapability(socket, capabilities.previewCapture)
+        browserCommands.setCapability(
+          socket,
+          capabilities.browserTools,
+          capabilities.browserThreads,
+        )
+        return {}
+      }
+
+      case 'browser.result':
+        browserCommands.complete(socket, parseParams(method, params))
         return {}
 
       case 'preview.captureResult':
