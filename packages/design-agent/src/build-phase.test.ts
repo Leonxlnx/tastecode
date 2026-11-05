@@ -259,6 +259,21 @@ describe('build phase', () => {
     ).toMatchObject({ status: 'complete', files: ['src/App.tsx'] })
   })
 
+  it('reads a failed Build that names its blocker as summary, as Codex answered', () => {
+    const failed = (fields: Record<string, string>) =>
+      parseBuildPhaseOutput(
+        JSON.stringify({ status: 'failed', ...fields, files: ['.taste/assets.json'], checks: [] }),
+      )
+    expect(failed({ summary: 'Syne remains unavailable.' })).toMatchObject({
+      status: 'failed',
+      error: 'Syne remains unavailable.',
+    })
+    expect(failed({ error: 'Port in use.', summary: 'Other.' })).toMatchObject({
+      error: 'Port in use.',
+    })
+    expect(() => failed({})).toThrow('build error must be a non-empty string')
+  })
+
   it('accepts reported folders, as Codex lists generated output', () => {
     const report = (files: string[]) =>
       JSON.stringify({ status: 'complete', summary: 'Built.', files, checks: [] })
