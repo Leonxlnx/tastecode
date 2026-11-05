@@ -1060,6 +1060,16 @@ export const methods = {
     params: z.object({ provider: ProviderIdSchema, runtime: z.string().min(1).nullable() }),
     result: ProviderRuntimeSettingsSchema,
   },
+  /** Custom executables for built-in CLI providers, keyed by roster entry. */
+  'providers.executablePaths': {
+    params: z.object({}),
+    result: z.record(z.string(), z.string()),
+  },
+  /** An empty path restores automatic discovery. Existing processes keep running. */
+  'providers.updateExecutablePath': {
+    params: z.object({ source: z.string().min(1).max(200), path: z.string().max(4096) }),
+    result: z.record(z.string(), z.string()),
+  },
   /** Every further account that has context settings of its own. */
   'providers.accountContextSettings': {
     params: z.object({}),

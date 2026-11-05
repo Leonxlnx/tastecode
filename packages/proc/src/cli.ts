@@ -5,6 +5,19 @@ import path from 'node:path'
 import { applyDesktopPath, desktopPath } from './desktop-path.js'
 import { killTree, leaveRunning, spawnOwned } from './kill.js'
 
+const commandOverrides = new Map<string, string>()
+
+/** Override a named provider command; existing children are unaffected. */
+export function setCommandOverride(command: string, executable?: string): void {
+  if (executable === undefined) commandOverrides.delete(command)
+  else commandOverrides.set(command, executable)
+  invalidateCommandCache()
+}
+
+export function commandOverride(command: string): string | undefined {
+  return commandOverrides.get(command)
+}
+
 /**
  * Spawn a CLI that may have been installed as an npm shim.
  *
@@ -20,13 +33,20 @@ import { killTree, leaveRunning, spawnOwned } from './kill.js'
 export function spawnCli(
   command: string,
   args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv; replaceEnv?: boolean } = {},
+  options: {
+    cwd?: string
+    env?: NodeJS.ProcessEnv
+    replaceEnv?: boolean
+    keepGroupAfterExit?: boolean
+  } = {},
 ): ChildProcessWithoutNullStreams {
+  command = commandOverride(command) ?? command
   const spawnOptions = {
     ...(!(options.cwd === undefined) ? { cwd: options.cwd } : {}),
     env: childEnvironment(options),
     stdio: ['pipe', 'pipe', 'pipe'] satisfies ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
+    ...(options.keepGroupAfterExit ? { keepGroupAfterExit: true } : {}),
   }
 
   if (process.platform === 'win32') {
@@ -35,10 +55,7 @@ export function spawnCli(
     const executable = resolved ?? command
     if (/\.(?:exe|com)$/i.test(executable)) return spawnOwned(executable, args, spawnOptions)
     const batch = /\.(?:cmd|bat)$/i.test(executable)
-    const shellCommand = [
-      escapeCmdToken(path.win32.normalize(executable)),
-      ...args.map((argument) => quoteCmdArgument(argument, batch)),
-    ].join(' ')
+    const shellCommand = windowsCliCommand(executable, args, batch)
     return spawnOwned('cmd.exe', ['/d', '/s', '/v:off', '/c', `"${shellCommand}"`], {
       ...spawnOptions,
       // cmd.exe searches cwd for a name it could not find on PATH either.
@@ -75,6 +92,14 @@ function escapeCmdToken(value: string): string {
     throw new Error('Windows batch commands cannot contain line breaks or NUL bytes')
   }
   return value.replace(CMD_META, '^$1')
+}
+
+/** Command text for cmd.exe /d /s /v:off /c, with no shell interpolation. */
+export function windowsCliCommand(executable: string, args: string[], batch: boolean): string {
+  return [
+    escapeCmdToken(path.win32.normalize(executable)),
+    ...args.map((argument) => quoteCmdArgument(argument, batch)),
+  ].join(' ')
 }
 
 export function quoteCmdArgument(value: string, batch = false): string {
@@ -258,6 +283,7 @@ export function locateCommand(
   command: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<string | undefined> {
+  command = commandOverride(command) ?? command
   if (process.platform !== 'win32') return Promise.resolve(resolveExecutable(command, environment))
   const env = { ...environment }
   applyDesktopPath(env)
@@ -273,6 +299,7 @@ export function locateCommandSync(
   command: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
+  command = commandOverride(command) ?? command
   if (process.platform !== 'win32') return resolveExecutable(command, environment)
   const env = { ...environment }
   applyDesktopPath(env)
@@ -298,7 +325,7 @@ export async function nativeShimTarget(
   command: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<string | undefined> {
-  if (process.platform !== 'win32') return undefined
+  if (process.platform !== 'win32' || commandOverride(command)) return undefined
   const shim = await locateCommand(command, environment)
   if (!shim || !/\.cmd$/i.test(shim)) return undefined
   let text: string
@@ -349,7 +376,7 @@ export async function commandVersion(
   command: string,
   timeoutMs = 5000,
 ): Promise<string | undefined> {
-  if (process.platform !== 'win32') {
+  if (process.platform !== 'win32' && !commandOverride(command)) {
     const executable = resolveExecutable(command)
     if (executable) {
       try {

@@ -147,3 +147,40 @@ describe('argument prompt limit', () => {
     expect(argumentPromptLimit('darwin')).toBeGreaterThan(argumentPromptLimit('linux'))
   })
 })
+
+describe('command overrides', () => {
+  it.skipIf(process.platform === 'win32')(
+    'uses one executable for detection and launches, then clears it',
+    async () => {
+      const { chmodSync, realpathSync } = await import('node:fs')
+      const { commandVersion, locateCommand, locateCommandSync, runCli, setCommandOverride } =
+        await import('./cli.js')
+      const directory = mkdtempSync(path.join(os.tmpdir(), 'cli override '))
+      const executable = path.join(directory, 'custom executable')
+      writeFileSync(
+        executable,
+        '#!/usr/bin/env node\nconsole.log("wrapper 1.2.3", process.argv.slice(2).join(" "))\n',
+      )
+      chmodSync(executable, 0o755)
+      try {
+        setCommandOverride('tastecode-test-command', executable)
+        expect(await locateCommand('tastecode-test-command')).toBe(executable)
+        expect(locateCommandSync('tastecode-test-command')).toBe(executable)
+        const { cliPath } = await import('./updates.js')
+        expect(await cliPath('tastecode-test-command')).toBe(realpathSync(executable))
+        expect(await commandVersion('tastecode-test-command')).toContain('1.2.3')
+        expect((await runCli('tastecode-test-command', ['hello world'])).stdout).toContain(
+          'hello world',
+        )
+        expect((await captureCli(spawnCli('tastecode-test-command', ['test']))).stdout).toContain(
+          'test',
+        )
+        setCommandOverride('tastecode-test-command')
+        expect(await locateCommand('tastecode-test-command')).toBeUndefined()
+      } finally {
+        setCommandOverride('tastecode-test-command')
+        rmSync(directory, { recursive: true, force: true })
+      }
+    },
+  )
+})

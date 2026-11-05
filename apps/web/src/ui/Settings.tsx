@@ -205,6 +205,7 @@ import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './model-selector-utils.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderRow, ProviderRowSkeleton, type ProviderAction } from './ProviderRow.js'
+import { ProviderExecutablePath, useProviderExecutablePaths } from './ProviderExecutablePath.js'
 import { ProfileSettings } from './ProfileSettings.js'
 import { GeneratedAvatarLab } from './GeneratedAvatarLab.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
@@ -1080,6 +1081,7 @@ export function ProviderSettings(props: {
     entries.flatMap((entry) => ('status' in entry ? [entry.status] : [])),
   )
   const providerAccounts = useProviderAccounts(props.transport, accountProviders.length > 0)
+  const executablePaths = useProviderExecutablePaths(props.transport)
   const accountContext = useAccountContextSettings(
     props.transport,
     providerDefaults !== undefined && accountProviders.length > 0,
@@ -1481,6 +1483,17 @@ export function ProviderSettings(props: {
             renderTuning={(account) => renderAccountTuning(entry.status, account)}
           />
         ) : null}
+        <ProviderExecutablePath
+          source={entry.key}
+          name={name}
+          paths={executablePaths.paths}
+          readError={executablePaths.readError}
+          transport={props.transport}
+          onSaved={(paths) => {
+            executablePaths.setPaths(paths)
+            props.onConnectionsChanged()
+          }}
+        />
       </div>
     )
   }

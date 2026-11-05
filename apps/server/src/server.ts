@@ -15,6 +15,11 @@ import {
 } from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { cliProbe, invalidateCliProbes } from './cli-probe.js'
+import {
+  restoreProviderExecutablePaths,
+  selectedProviderShellCommand,
+  updateProviderExecutablePath,
+} from './provider-executable-paths.js'
 import { stopModelListings } from './runtime-loader.js'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
@@ -158,6 +163,7 @@ export function startServer(
     releaseDataLease()
     throw error
   }
+  restoreProviderExecutablePaths(store)
   let wss: WebSocketServer
   try {
     wss = new WebSocketServer({ port, host })
@@ -891,6 +897,18 @@ export function startServer(
         return { providers }
       }
 
+      case 'providers.executablePaths':
+        parseParams(method, params)
+        return store.providerExecutablePaths()
+
+      case 'providers.updateExecutablePath': {
+        const p = parseParams(method, params)
+        const paths = updateProviderExecutablePath(store, p.source, p.path)
+        invalidateCliProbes()
+        updatesService = undefined
+        return paths
+      }
+
       case 'providers.contextSettings':
         return orchestrator.contextSettings()
 
@@ -927,7 +945,12 @@ export function startServer(
         const command = await (await providerUpdates()).commandFor(p.provider)
         return {
           terminalId: setupTerminal(
-            orchestrator.installProvider(`update:${p.provider}`, command, p.columns, p.rows),
+            orchestrator.installProvider(
+              `update:${p.provider}`,
+              selectedProviderShellCommand(p.provider, command),
+              p.columns,
+              p.rows,
+            ),
           ),
         }
       }
@@ -979,7 +1002,16 @@ export function startServer(
             : { id: accountId, environment }
         return {
           terminalId: setupTerminal(
-            orchestrator.launchProviderLogin(target, command, p.columns, p.rows, account),
+            orchestrator.launchProviderLogin(
+              target,
+              selectedProviderShellCommand(
+                p.provider === 'acp' && p.agent ? `acp:${p.agent}` : p.agent ? '' : p.provider,
+                command,
+              ),
+              p.columns,
+              p.rows,
+              account,
+            ),
           ),
         }
       }

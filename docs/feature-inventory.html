@@ -990,6 +990,24 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Executable path for each added CLI provider and ACP agent
+                <span class="d"
+                  >Under the provider's settings, Executable path takes an absolute path to the CLI,
+                  for one installed somewhere automatic discovery cannot see or a build other than
+                  the one on PATH; the path is checked before saving, a bad one is explained under
+                  the field and changes nothing, and quotes or spaces pasted around it are dropped;
+                  detection, version checks, new processes, and sign-in and update terminals all use
+                  it, while running processes keep theirs; it survives a restart, empty returns to
+                  automatic discovery, an updater that does not start with the CLI itself asks the
+                  user to update the custom executable on their own, and phone links can neither
+                  read nor change it</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Auto-detect installed CLIs with version check and mismatch warning
                 <span class="d"
                   >Windows discovery, provider launch and terminal environments preserve mixed-case

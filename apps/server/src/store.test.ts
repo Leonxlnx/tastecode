@@ -1773,6 +1773,22 @@ describe('threads', () => {
     }
   })
 
+  it('persists provider executable paths and removes a reset path', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-executable-'))
+    const file = path.join(dir, 'settings.db')
+    const persistent = new Store(file)
+    persistent.updateProviderExecutablePath('codex', '/chosen path/codex')
+    persistent.close()
+    const reopened = new Store(file)
+    try {
+      expect(reopened.providerExecutablePaths()).toEqual({ codex: '/chosen path/codex' })
+      expect(reopened.updateProviderExecutablePath('codex', '')).toEqual({})
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('falls back to engine defaults when stored context settings are unreadable', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-context-'))
     const file = path.join(dir, 'context.db')

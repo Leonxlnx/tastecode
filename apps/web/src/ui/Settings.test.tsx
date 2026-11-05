@@ -1137,9 +1137,11 @@ function renderProviders(
   request: TestRequestResolver,
   account?: Account,
 ) {
-  const transport = new TestTransport((method, params) =>
-    method === 'providers.updates' ? { updates: [] } : request(method, params),
-  )
+  const transport = new TestTransport((method, params) => {
+    if (method === 'providers.updates') return { updates: [] }
+    if (method === 'providers.executablePaths') return {}
+    return request(method, params)
+  })
   render(
     <ProviderSettings
       provider="codex"
@@ -1304,6 +1306,36 @@ describe('provider authentication states', () => {
     emitAuth('login-2', true)
     await waitFor(() => action(row, 'Sign out'))
     expect(statusReads).toBe(3)
+  })
+})
+
+describe('provider executable paths', () => {
+  it('reads once for the page and offers each provider its own field', async () => {
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method === 'providers.executablePaths') return { grok: '/opt/grok' }
+      if (method === 'auth.status') return { signedIn: false }
+      throw new Error(`unexpected ${method}`)
+    })
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        providerStatuses={[
+          installedProvider('codex', 'Codex'),
+          { id: 'grok', displayName: 'Grok', installed: false, auth: 'unknown' },
+        ]}
+        acpAgents={[]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+      />,
+    )
+    expect(await screen.findByText('Executable path · Custom')).toBeTruthy()
+    expect(screen.getAllByText(/^Executable path/)).toHaveLength(2)
+    expect(
+      transport.requests.filter((entry) => entry.method === 'providers.executablePaths'),
+    ).toHaveLength(1)
   })
 })
 
