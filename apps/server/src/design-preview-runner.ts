@@ -107,6 +107,8 @@ export async function startDesignPreview(
         throw new AggregateError([error, stopError], 'Preview failed and did not stop')
       }
     }
+    const running = await runningNextDevPreview(output, url, plan, unavailable, signal)
+    if (running) return running
     throw error
   } finally {
     releaseStart()
@@ -123,6 +125,56 @@ export async function startDesignPreview(
       confirmPort ??= child.exitCode === null && child.signalCode === null
       return stopProcess(child, url, confirmPort)
     },
+  }
+}
+
+/**
+ * Next.js 16 allows one `next dev` per project and exits a second one with "Another next dev
+ * server is already running" and that server's address. That server serves this workspace's
+ * own files with hot reload, so the preview uses it, when it answers on a loopback address the
+ * app does not reserve for itself. TasteCode did not start it, so stopping the preview leaves
+ * it running.
+ */
+async function runningNextDevPreview(
+  output: string,
+  url: string,
+  plan: PreviewPlan,
+  unavailable: Pick<ReadonlySet<number>, 'has'>,
+  signal?: AbortSignal,
+): Promise<RunningPreview | undefined> {
+  const local = /Another next dev server is already running[\s\S]*?Local:\s*(https?:\/\/\S+)/.exec(
+    output,
+  )?.[1]
+  if (!local) return undefined
+  let existing: URL
+  try {
+    existing = new URL(local)
+  } catch {
+    return undefined
+  }
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(existing.hostname)) return undefined
+  const previewUrl = new URL(url)
+  previewUrl.protocol = existing.protocol
+  // localhost resolves to IPv6 first on Windows; the server listens on the IPv4 loopback.
+  previewUrl.hostname = existing.hostname === '[::1]' ? '[::1]' : '127.0.0.1'
+  previewUrl.port = existing.port
+  if (!previewUrl.port || unavailable.has(Number(previewUrl.port))) return undefined
+  try {
+    const timeout = AbortSignal.timeout(5_000)
+    const response = await fetch(previewUrl, {
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    })
+    if (!response.ok || response.headers.has(STATIC_PREVIEW_HEADER)) return undefined
+  } catch {
+    signal?.throwIfAborted()
+    return undefined
+  }
+  const note = `\nUsing the next dev server already running for this project at ${previewUrl.origin}; TasteCode did not start it and leaves it running.\n`
+  return {
+    url: previewUrl.href,
+    viewports: plan.viewports,
+    output: () => `${output}${note}`,
+    stop: async () => {},
   }
 }
 
