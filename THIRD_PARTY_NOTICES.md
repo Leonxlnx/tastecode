@@ -66,12 +66,12 @@ and ship as real files in the app's `resources/default-skills` folder, each with
 `LICENSE`.
 
 `design-taste-frontend` (taste-skill v2.5.0) ships without its picture library. Its photographs,
-the sample photographs of its demos and hero templates, its demo icon sets and the credits files that
-list them are not in the installer, and TasteCode never downloads them. Three of its files are
+the sample photographs of its demos and hero templates, its demo icon sets, its objects kit's sample
+posters and sample product specs, and the credits files that list them are not in the installer, and
+TasteCode never downloads them. Three of its files are
 replaced by TasteCode's own copies, which point the skill at the user's own pictures:
 `SKILL.md`, `references/photos.md` and `scripts/photos.mjs`. The copies and the reasons for them are
-in `packages/default-skills/patches/design-taste-frontend`. The images still in the installer are the
-skill's own fallback renders for its objects, which name no third-party source.
+in `packages/default-skills/patches/design-taste-frontend`. The installer holds no picture from the skill.
 
 The release gate requires a complete top-level Apache-2.0 `LICENSE`, a clean production install,
 and a license or notice file for every package in the resolved production graph. It emits only

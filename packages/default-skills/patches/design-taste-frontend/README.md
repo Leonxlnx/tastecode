@@ -8,11 +8,14 @@ TasteCode's Design mode.
 Two parts in `packages/default-skills/skills.json` do this:
 
 - `omit` lists the files that are never bundled: the upstream photo library, the sample photographs
-  of the demos and hero templates, the demo icon sets, and their credits files. Pages and scripts in
-  those folders still ship.
+  of the demos and hero templates, the demo icon sets, the objects kit's sample posters
+  (`assets/objects/*/fallback*.png`) and sample product specs (`product-render/specs/`), and their
+  credits files. Pages and scripts in those folders still ship. The bundled skill holds no picture.
 - `patch` lists the upstream files that the files in this folder replace, each with the sha256 of the
   upstream file it was written against:
-  - `SKILL.md`: the upstream text plus a section, "In TasteCode: no picture library". The place plan,
+  - `SKILL.md`: the upstream text plus a section, "In TasteCode: no picture library". It also says
+    that a product render is built from a spec for the client's own product, and that every object
+    a page uses gets its posters made for that page. The place plan,
     the photographs row of the asset table, run steps 3, 5 and 7 now point to the user's own pictures
     and client slots instead of the library, the draft path and stand-ins.
   - `references/photos.md`: the upstream reference without the library, the draft path and the
