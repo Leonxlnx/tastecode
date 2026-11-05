@@ -27,6 +27,23 @@ describe('preview plan', () => {
     expect(parsePreviewPhaseOutput(JSON.stringify(plan))).toMatchObject({ command: 'pnpm' })
   })
 
+  // #2193: Preview served a legacy index.html the project's AGENTS.md put out of scope, while
+  // Build had changed msa-portal.html and ui/*.css, served by a launcher outside npm start.
+  it('points Preview at the page Build reported, not at a legacy root page', () => {
+    const prompt = designPreviewPrompt(['msa-portal.html', 'ui/portal.css', 'ui/tokens.css'])
+    expect(prompt).toContain(
+      'Build reported these files: msa-portal.html, ui/portal.css, ui/tokens.css.',
+    )
+    expect(prompt).toContain("the command's url with that page's path")
+    expect(prompt).toContain('such as a legacy prototype or a demo')
+    expect(prompt).toContain('(AGENTS.md, CLAUDE.md, README)')
+    expect(prompt).toContain('use a static plan with that page as its entry')
+    const many = designPreviewPrompt(Array.from({ length: 45 }, (_, index) => `img/${index}.png`))
+    expect(many).toContain('img/39.png, and 5 more.')
+    expect(many).not.toContain('img/40.png')
+    expect(designPreviewPrompt()).not.toContain('Build reported these files')
+  })
+
   it('normalizes a TasteCode-owned static preview plan', () => {
     expect(
       parsePreviewPlan({
