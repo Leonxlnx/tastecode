@@ -3352,6 +3352,10 @@
   text-align: center;
 }
 
+.empty__project {
+  white-space: nowrap;
+}
+
 .empty__detail {
   color: var(--text-2);
   font-size: var(--t-sm);
