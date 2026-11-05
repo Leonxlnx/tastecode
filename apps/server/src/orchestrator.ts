@@ -76,6 +76,7 @@ import { compactHistoryReplay } from './history-replay.js'
 import { decodeHistoryCursor, readHistoryPage, type HistoryPage } from './history-page.js'
 import { readIndexedNewestHistoryPage } from './history-tail.js'
 import {
+  designPhaseLanguageReminder,
   designPhaseNotice,
   mapProviderSession,
   RESTORE_CONTEXT_NOTICE,
@@ -6270,7 +6271,7 @@ ${JSON.stringify(deck, null, 2)}
           this.#saveDesignFlow(threadId)
         }
         if (designFlow.phase !== 'response')
-          prompt = `${designPhaseNotice(designFlow.originalRequest)}${prompt}`
+          prompt = `${designPhaseNotice(designFlow.originalRequest)}${prompt}${designPhaseLanguageReminder(designFlow.originalRequest)}`
         this.#validateApprovedDesignArtifacts(designFlow)
         attachments = [
           ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),

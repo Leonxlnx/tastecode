@@ -45,15 +45,28 @@ export const DESIGN_PHASE_NOTICE = designPhaseNotice()
  * request; the notice quotes the request's opening words, for its language only.
  */
 export function designPhaseNotice(request?: string): string {
-  const quote = request
-    ?.replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, REQUEST_QUOTE_CHARS)
-    .replaceAll('"', "'")
+  const quote = requestQuote(request)
   const language = quote
     ? `Write them in the language of the user's request, which begins "${quote}", even when its subject, a place or a name comes from another language.`
     : 'Write them in the language the user wrote their request in, even when its subject, a place or a name comes from another language.'
   return `${DESIGN_PHASE_MARKER} ${language} Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n`
+}
+
+/**
+ * Closes every Design phase prompt. Review and Repair prompts run to 80,000 characters, and a
+ * real Codex run whose earlier phases narrated in English switched to German in its third
+ * Review, with the opening notice unchanged. The language rule is repeated where the model
+ * reads last.
+ */
+export function designPhaseLanguageReminder(request?: string): string {
+  const quote = requestQuote(request)
+  return quote
+    ? `\n\nWrite every progress update in the language of the user's request ("${quote}"), not in the language of the place, the names or the earlier progress messages.`
+    : "\n\nWrite every progress update in the language of the user's request, not in the language of the place, the names or the earlier progress messages."
+}
+
+function requestQuote(request?: string): string | undefined {
+  return request?.replace(/\s+/g, ' ').trim().slice(0, REQUEST_QUOTE_CHARS).replaceAll('"', "'")
 }
 
 /** Preserve the local identity while resuming an imported provider session. */
