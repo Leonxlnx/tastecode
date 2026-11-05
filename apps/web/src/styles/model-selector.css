@@ -1,7 +1,7 @@
 /* ---------- model selector ---------- */
 
 .menutrigger--model-selector {
-  max-width: min(270px, 42vw, 100%);
+  max-width: min(290px, 42vw, 100%);
   padding: 5px 9px 5px 8px;
 }
 

@@ -121,7 +121,7 @@
 
 .rail {
   --rail-text: #dcdcda;
-  --rail-font-size: 13px;
+  --rail-font-size: 14px;
   --rail-font-weight: 400;
   --rail-letter-spacing: -0.01em;
   /* One raised surface for the rail: the account card and the active chat. */
