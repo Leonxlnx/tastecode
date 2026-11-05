@@ -18,15 +18,9 @@ import {
   type JsonRpcValue,
 } from '@harness/proc'
 import { z } from 'zod'
+import { PI_CAPABILITIES } from './capabilities.js'
 
-export const PI_CAPABILITIES: Capabilities = {
-  steer: true,
-  fork: false,
-  interrupt: true,
-  reasoningItems: true,
-  approvals: false,
-  images: false,
-}
+export { PI_CAPABILITIES } from './capabilities.js'
 
 type Spawn = typeof spawnCli
 type Events = { event: [DomainEvent]; log: [string] }
