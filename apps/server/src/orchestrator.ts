@@ -75,7 +75,7 @@ import { compactHistoryReplay } from './history-replay.js'
 import { decodeHistoryCursor, readHistoryPage, type HistoryPage } from './history-page.js'
 import { readIndexedNewestHistoryPage } from './history-tail.js'
 import {
-  DESIGN_PHASE_NOTICE,
+  designPhaseNotice,
   mapProviderSession,
   RESTORE_CONTEXT_NOTICE,
   StartupCleanupError,
@@ -6180,7 +6180,8 @@ ${JSON.stringify(deck, null, 2)}
           delete designFlow.continueNormally
           this.#saveDesignFlow(threadId)
         }
-        if (designFlow.phase !== 'response') prompt = `${DESIGN_PHASE_NOTICE}${prompt}`
+        if (designFlow.phase !== 'response')
+          prompt = `${designPhaseNotice(designFlow.originalRequest)}${prompt}`
         this.#validateApprovedDesignArtifacts(designFlow)
         attachments = [
           ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),

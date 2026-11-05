@@ -13,6 +13,7 @@ import { createProjectListProjector, type ProjectListState } from './project-lis
 import {
   DESIGN_PHASE_MARKER,
   DESIGN_PHASE_NOTICE,
+  designPhaseNotice,
   RESTORE_CONTEXT_NOTICE,
 } from './provider-session.js'
 import { continuationPromptFromReplay } from './side-chat.js'
@@ -637,6 +638,17 @@ describe('provider history integration', () => {
     expect(EARLIER_DESIGN_NOTICE.startsWith(DESIGN_PHASE_MARKER)).toBe(true)
     expect(DESIGN_PHASE_NOTICE).toContain('in the language the user wrote their request in')
     expect(DESIGN_PHASE_NOTICE).not.toContain("Use the user's language")
+  })
+
+  it("quotes the opening of a run's request, so a correction prompt still knows its language", () => {
+    const notice = designPhaseNotice(
+      'A one-page website for Brotzeit, a small sourdough bakery in Munich with a cafe corner. Warm, calm, modern. Opening hours Tue-Sat 7-15, address "Nymphenburger Str. 12".',
+    )
+    expect(notice.startsWith(DESIGN_PHASE_MARKER)).toBe(true)
+    const quote = /which begins "([^"]*)"/.exec(notice)?.[1] ?? ''
+    expect(quote.startsWith('A one-page website for Brotzeit')).toBe(true)
+    expect(quote.length).toBeLessThanOrEqual(120)
+    expect(notice).not.toContain('Nymphenburger')
   })
 
   it('hides Design phase prompts that the provider saved as turns of their own', async () => {
