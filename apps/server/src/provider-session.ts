@@ -69,6 +69,18 @@ function requestQuote(request?: string): string | undefined {
   return request?.replace(/\s+/g, ' ').trim().slice(0, REQUEST_QUOTE_CHARS).replaceAll('"', "'")
 }
 
+/**
+ * A resume the provider refused because it has no saved conversation for the session (Codex:
+ * "no rollout found for thread id"). Adapters mark it with this code; the server decides how
+ * the chat continues, from what its own history says the chat already did.
+ */
+export function isProviderSessionMissing(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { code?: unknown }).code === 'provider_session_missing'
+  )
+}
+
 /** Preserve the local identity while resuming an imported provider session. */
 export function mapProviderSession(
   threadId: string,
