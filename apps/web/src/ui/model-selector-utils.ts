@@ -57,6 +57,17 @@ export function getCompactModelName(displayName: string | undefined): string {
   return `GPT${version}${rest ? ` ${rest}` : ''}`
 }
 
+/**
+ * The name a narrow composer shows beside the provider icon: a GPT model by its own name
+ * (`GPT-6.1 Luna` → `Luna`), since the icon already says GPT; every other name as it is.
+ */
+export function getShortModelName(displayName: string | undefined): string {
+  const gpt = GPT_MODEL_NAME.exec(displayName?.trim() ?? '')
+  return gpt?.[2]
+    ? formatModelName(gpt[2].replace(/-/g, ' ').trim())
+    : getCompactModelName(displayName)
+}
+
 export function getFriendlyEffortLabel(value: string | undefined): string {
   if (!value) return 'Default'
   if (value.toLowerCase() === 'xhigh') return 'Extra High'

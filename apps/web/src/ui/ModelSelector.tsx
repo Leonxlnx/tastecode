@@ -8,6 +8,7 @@ import {
   getCompactModelName,
   getFriendlyEffortLabel,
   getSelectedChoice,
+  getShortModelName,
   getSelectedEffort,
   isFastModeEnabled,
   type ModelSelectorProps,
@@ -42,6 +43,7 @@ let panelPreloadScheduled = false
 
 export {
   getCompactModelName,
+  getShortModelName,
   getEffortIndexFromPointer,
   getEffortProgressFromPointer,
   getFastModeOffValue,
@@ -89,6 +91,9 @@ export const ModelSelector = memo(function ModelSelector(props: ModelSelectorPro
               {choice ? <ProviderIcon mark={choice.mark} size={14} /> : null}
               <span className="model-selector__trigger-name">
                 {getCompactModelName(model?.displayName)}
+              </span>
+              <span className="model-selector__trigger-short">
+                {getShortModelName(model?.displayName)}
               </span>
             </span>
             <span className="model-selector__trigger-effort">{effortLabel}</span>
