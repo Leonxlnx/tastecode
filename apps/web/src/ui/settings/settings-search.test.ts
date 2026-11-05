@@ -58,44 +58,46 @@ describe('settings search', () => {
 
   it('keeps the catalog and row anchors in sync', () => {
     const ids = new Set<string>()
-    const exempt: Record<string, number> = {
-      // Model and account entity rows and their loading skeletons are not fixed settings.
-      'Settings.tsx': 1,
-      'ModelLabSection.tsx': 1,
-      'ModelVisibilityControls.tsx': 1,
-      'ProfileAccounts.tsx': 2,
-      // A live network address is status, not a setting.
-      'PhoneSettings.tsx': 1,
+    // These are named entities, a loading placeholder, or live status, not fixed settings.
+    const exempt: Record<string, string[]> = {
+      'Settings.tsx': ['key={row}'],
+      'ModelLabSection.tsx': ['className="model-lab__head"'],
+      'ModelVisibilityControls.tsx': ['name={name}'],
+      'ProfileAccounts.tsx': ['key={status.id}', 'providerMark(account.provider)'],
+      'PhoneSettings.tsx': ['name="Reachable at"'],
     }
     for (const file of files) {
       const text = source(file)
       const tree = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-      let missing = 0
+      const missing: string[] = []
       const visit = (node: ts.Node) => {
         if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
           const attributes = node.attributes.properties.filter(ts.isJsxAttribute)
           const anchor = attributes.find((attr) =>
             ['searchId', 'data-settings-id'].includes(attr.name.getText(tree)),
           )
-          if (node.tagName.getText(tree) === 'SettingsRow' && !anchor) missing++
+          if (node.tagName.getText(tree) === 'SettingsRow' && !anchor) {
+            const signature = (exempt[file] ?? []).find((value) =>
+              node.getText(tree).includes(value),
+            )
+            missing.push(signature ?? node.getText(tree))
+          }
           if (anchor?.initializer && ts.isStringLiteral(anchor.initializer))
             ids.add(anchor.initializer.text)
         }
         ts.forEachChild(node, visit)
       }
       visit(tree)
-      expect(missing, `${file}: unexpected row without a searchId`).toBe(exempt[file] ?? 0)
+      expect(missing.sort(), `${file}: unexpected row without a searchId`).toEqual(
+        [...(exempt[file] ?? [])].sort(),
+      )
     }
-    // The level row is generated for dim and blur from its name.
-    const generated = new Set(['window-dim', 'window-blur'])
-    for (const entry of STATIC_SETTINGS)
-      expect(ids.has(entry.id) || generated.has(entry.id), entry.id).toBe(true)
+    for (const entry of STATIC_SETTINGS) expect(ids.has(entry.id), entry.id).toBe(true)
     for (const id of ids)
       expect(
         STATIC_SETTINGS.some((entry) => entry.id === id),
         id,
       ).toBe(true)
-    expect(source('AppBackgroundSettings.tsx')).toContain('`window-${props.name.toLowerCase()}`')
     expect(source('KeybindSettings.tsx')).toContain('`keybind:${definition.id}`')
     for (const label of Object.keys(TUNING_LABELS))
       expect(source('ProviderTuning.tsx')).toContain(

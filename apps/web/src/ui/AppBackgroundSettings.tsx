@@ -134,12 +134,14 @@ export function AppBackgroundSettings(props: {
             images={props.images ?? indexedDbBackgroundImages}
           />
           <LevelRow
+            searchId="window-dim"
             name="Dim"
             value={background.dim}
             max={MAX_APP_BACKGROUND_DIM}
             onChange={(dim) => writeAppBackground({ dim })}
           />
           <LevelRow
+            searchId="window-blur"
             name="Blur"
             value={background.blur}
             max={MAX_APP_BACKGROUND_BLUR}
@@ -164,6 +166,7 @@ export function AppBackgroundSettings(props: {
             images={props.images ?? indexedDbBackgroundImages}
           />
           <LevelRow
+            searchId="window-dim"
             name="Dim"
             value={background.dim}
             max={MAX_APP_BACKGROUND_DIM}
@@ -181,12 +184,13 @@ export function AppBackgroundSettings(props: {
  */
 function LevelRow(props: {
   name: string
+  searchId: string
   value: number
   max: number
   onChange: (value: number) => void
 }) {
   return (
-    <SettingsRow searchId={`window-${props.name.toLowerCase()}`} name={props.name}>
+    <SettingsRow searchId={props.searchId} name={props.name}>
       <input
         className="app-bg-settings__range"
         type="range"
