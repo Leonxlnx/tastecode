@@ -1,11 +1,14 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
-import { spawnOwned } from '@harness/proc'
+import { spawnCli, spawnOwned } from '@harness/proc'
+import { commandOverride } from '@harness/proc/cli'
 
 /** Resolve the binary: PATH name normally, the installer's fixed Windows home
  *  as a fallback because the installing shell's PATH update needs a restart. */
 export function antigravityCommand(): string {
+  const selected = commandOverride('agy')
+  if (selected) return selected
   if (process.platform !== 'win32') return 'agy'
   const localAppData = process.env['LOCALAPPDATA']
   if (!localAppData) return 'agy.exe'
@@ -50,4 +53,6 @@ export type AgySpawn = (
 
 /** The built-in spawn: owned for its lifetime, with this process's environment. */
 export const spawnAgy: AgySpawn = (command, args, options) =>
-  spawnOwned(command, args, { ...options, env: { ...process.env, ...options.env } })
+  commandOverride('agy')
+    ? spawnCli(command, args, { ...options, env: { ...process.env, ...options.env } })
+    : spawnOwned(command, args, { ...options, env: { ...process.env, ...options.env } })

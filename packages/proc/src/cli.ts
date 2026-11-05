@@ -33,7 +33,12 @@ export function commandOverride(command: string): string | undefined {
 export function spawnCli(
   command: string,
   args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv; replaceEnv?: boolean } = {},
+  options: {
+    cwd?: string
+    env?: NodeJS.ProcessEnv
+    replaceEnv?: boolean
+    keepGroupAfterExit?: boolean
+  } = {},
 ): ChildProcessWithoutNullStreams {
   command = commandOverride(command) ?? command
   const spawnOptions = {
@@ -41,6 +46,7 @@ export function spawnCli(
     env: childEnvironment(options),
     stdio: ['pipe', 'pipe', 'pipe'] satisfies ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
+    ...(options.keepGroupAfterExit ? { keepGroupAfterExit: true } : {}),
   }
 
   if (process.platform === 'win32') {

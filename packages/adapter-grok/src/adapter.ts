@@ -22,7 +22,7 @@ import {
   spawnOwned,
   readNdjson,
 } from '@harness/proc'
-import { captureCli } from '@harness/proc/cli'
+import { captureCli, commandOverride, spawnCli } from '@harness/proc/cli'
 import { startsWithAcpCommand } from '@harness/adapter-acp/commands'
 import { z } from 'zod'
 import { withInstructions } from './prompt-instructions.js'
@@ -229,6 +229,8 @@ export function grokTurnArgs(
  * counts: spawnOwned cannot start a .cmd shim.
  */
 export function grokCommand(): string {
+  const selected = commandOverride('grok')
+  if (selected) return selected
   const executable = process.platform === 'win32' ? 'grok.exe' : 'grok'
   const onPath = locateCommandSync(executable)
   if (onPath) return onPath
@@ -297,6 +299,9 @@ export type GrokAdapterEvents = {
   providerSessionId: [string]
 }
 
+const spawnGrok: SpawnFn = (command, args, options) =>
+  commandOverride('grok') ? spawnCli(command, args, options) : spawnOwned(command, args, options)
+
 type SpawnFn = (
   command: string,
   args: string[],
@@ -341,7 +346,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
 
   constructor(options: { spawn?: SpawnFn; accountHome?: string | undefined } = {}) {
     super()
-    this.#spawn = options.spawn ?? spawnOwned
+    this.#spawn = options.spawn ?? spawnGrok
     this.#accountHome = options.accountHome
   }
 
@@ -773,7 +778,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   async listModels(): Promise<Model[]> {
     // A custom harness launches its own binary, so only the built-in CLI shares a read.
     const shared =
-      this.#spawn === spawnOwned ? await sharedSignInModels(this.#accountHome) : undefined
+      this.#spawn === spawnGrok ? await sharedSignInModels(this.#accountHome) : undefined
     return parseGrokModels(shared ?? (await this.#capture(['models'])))
   }
 
@@ -996,7 +1001,7 @@ export async function grokSignIn(target: GrokAccountTarget = {}): Promise<GrokSi
   const key = target.accountHome ?? ''
   // The sign-in state itself is always read fresh; only its model list is shared.
   const read = {
-    output: captureGrok(spawnOwned, ['models'], undefined, target.accountHome),
+    output: captureGrok(spawnGrok, ['models'], undefined, target.accountHome),
     expiresAt: Number.POSITIVE_INFINITY,
   }
   signInModels.set(key, read)
@@ -1025,7 +1030,7 @@ export async function signOutGrok(target: GrokAccountTarget = {}): Promise<void>
   const key = target.accountHome ?? ''
   signInModels.delete(key)
   try {
-    await captureGrok(spawnOwned, ['logout'], undefined, target.accountHome)
+    await captureGrok(spawnGrok, ['logout'], undefined, target.accountHome)
   } finally {
     signInModels.delete(key)
   }
