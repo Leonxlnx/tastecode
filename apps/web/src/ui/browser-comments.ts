@@ -192,6 +192,7 @@ export function resetBrowserComments(): void {
 /** A queued prompt is one short line: blocks read as their comments there. */
 export function browserCommentsAsPlainText(text: string): string {
   return browserCommentSegments(text)
-    .map((segment) => (segment.type === 'text' ? segment.text : segment.comment.comment))
+    .map((segment) => (segment.type === 'text' ? segment.text.trim() : segment.comment.comment))
+    .filter(Boolean)
     .join(' ')
 }

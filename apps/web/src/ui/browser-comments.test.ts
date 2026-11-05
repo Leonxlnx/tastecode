@@ -122,7 +122,6 @@ it('shortens a chip at a word, unless one long word is all there is', () => {
 it('reads a prompt as its comments, for titles and queued rows', () => {
   const first = browserCommentBlock({ ...sample(), comment: 'Make this smaller' })
   const second = browserCommentBlock({ ...sample(), comment: 'And tighter' })
-  const plain = browserCommentsAsPlainText(`${first}\n\n${second}`).replace(/\s+/g, ' ').trim()
-  expect(plain).toBe('Make this smaller And tighter')
+  expect(browserCommentsAsPlainText(`${first}\n\n${second}`)).toBe('Make this smaller And tighter')
   expect(browserCommentsAsPlainText('Just a message')).toBe('Just a message')
 })

@@ -2004,7 +2004,7 @@ function ComposerComponent(props: {
                     type="button"
                     className="queue-row__handle"
                     title="Drag to reorder"
-                    aria-label={`Drag ${queuedTurn.text} to reorder`}
+                    aria-label={`Drag ${browserCommentsAsPlainText(queuedTurn.text)} to reorder`}
                     onKeyDown={(event) => {
                       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
                       event.preventDefault()
@@ -2041,7 +2041,7 @@ function ComposerComponent(props: {
                     className="queue-row__action"
                     onClick={() => void editQueuedTurn(queuedTurn)}
                     title="Edit prompt"
-                    aria-label={`Edit ${queuedTurn.text}`}
+                    aria-label={`Edit ${browserCommentsAsPlainText(queuedTurn.text)}`}
                   >
                     <Pencil size={14} aria-hidden />
                   </button>
@@ -2050,7 +2050,7 @@ function ComposerComponent(props: {
                     className="queue-row__action"
                     onClick={() => void removeQueuedTurn(queuedTurn.id)}
                     title="Remove from queue"
-                    aria-label={`Remove ${queuedTurn.text} from queue`}
+                    aria-label={`Remove ${browserCommentsAsPlainText(queuedTurn.text)} from queue`}
                   >
                     <Trash2 size={14} aria-hidden />
                   </button>
