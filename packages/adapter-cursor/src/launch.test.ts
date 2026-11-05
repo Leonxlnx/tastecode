@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { spawnOwned } from '@harness/proc/kill'
+import { setCommandOverride } from '@harness/proc/cli'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { findCursorWindowsLauncher, runCursorAgent } from './launch.js'
 
@@ -38,6 +39,7 @@ describe('Cursor Windows launcher', () => {
     localAppData = mkdtempSync(path.join(tmpdir(), 'cursor-launch-'))
   })
   afterEach(() => {
+    setCommandOverride('cursor-agent')
     Object.defineProperty(process, 'platform', platform)
     vi.unstubAllEnvs()
     vi.mocked(spawnOwned).mockReset()
@@ -72,6 +74,25 @@ describe('Cursor Windows launcher', () => {
   it('finds nothing when cursor-agent is not installed in the standard place', () => {
     expect(findCursorWindowsLauncher({})).toBeUndefined()
     expect(findCursorWindowsLauncher({ LOCALAPPDATA: localAppData })).toBeUndefined()
+  })
+
+  it('uses the selected executable even when the bundled launcher is installed', async () => {
+    install('2026.07.23-e383d2b')
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+    vi.stubEnv('LOCALAPPDATA', localAppData)
+    setCommandOverride('cursor-agent', 'C:\\custom\\cursor.exe')
+    const child = new FakeChild()
+    vi.mocked(spawnOwned).mockImplementation(() => child)
+    const result = runCursorAgent('cursor-agent', ['status'])
+    child.stdout.end('ok')
+    child.stderr.end()
+    setImmediate(() => child.emit('close', 0, null))
+    await result
+    expect(spawnOwned).toHaveBeenCalledWith(
+      'C:\\custom\\cursor.exe',
+      ['status'],
+      expect.objectContaining({ windowsHide: true }),
+    )
   })
 
   it('runs short commands through the bundled node and captures their answer', async () => {
