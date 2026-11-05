@@ -7,6 +7,7 @@ import {
   useMemo,
   useState,
   type ComponentPropsWithoutRef,
+  type ReactNode,
 } from 'react'
 import {
   Streamdown,
@@ -54,6 +55,31 @@ function InlineCode({ children, node: _node, ...props }: InlineCodeProps) {
   )
 }
 
+type RevealProjectFileButtonProps = { path: string; projectPath: string; children: ReactNode }
+
+function RevealProjectFileButton({ path, projectPath, children }: RevealProjectFileButtonProps) {
+  const [revealFailed, setRevealFailed] = useState(false)
+  return (
+    <button
+      className="md-file-link md-file-link--action"
+      type="button"
+      title={revealFailed ? `Try showing ${path} again` : `Show ${path} in its folder`}
+      onClick={() => {
+        setRevealFailed(false)
+        void revealProjectFile(path, projectPath).catch(() => setRevealFailed(true))
+      }}
+    >
+      <FileTypeIcon path={path} />
+      {children}
+      {revealFailed ? (
+        <span className="md-file-link__reason" role="alert">
+          Could not show file
+        </span>
+      ) : null}
+    </button>
+  )
+}
+
 type MarkdownLinkProps = ComponentPropsWithoutRef<'a'> & { node?: unknown }
 
 const ProjectPathContext = createContext<string | undefined>(undefined)
@@ -61,7 +87,6 @@ const ProjectPathContext = createContext<string | undefined>(undefined)
 function MarkdownLink({ children, href: source, node: _node, ...props }: MarkdownLinkProps) {
   const projectPath = useContext(ProjectPathContext)
   const images = useContext(MarkdownImageContext)
-  const [revealFailed, setRevealFailed] = useState(false)
   const href = images && source ? repositoryLink(source, images.normalize) : source
   const fileLink = href ? localFileLink(href) : undefined
   if (fileLink) {
@@ -70,27 +95,9 @@ function MarkdownLink({ children, href: source, node: _node, ...props }: Markdow
       const reference = projectFileReference(fileLink.href, projectPath)
       if (reference?.kind === 'safe' && canRevealProjectFile) {
         return (
-          <button
-            className="md-file-link md-file-link--action"
-            type="button"
-            title={
-              revealFailed
-                ? `Try showing ${reference.path} again`
-                : `Show ${reference.path} in its folder`
-            }
-            onClick={() => {
-              setRevealFailed(false)
-              void revealProjectFile(reference.path, projectPath).catch(() => setRevealFailed(true))
-            }}
-          >
-            <FileTypeIcon path={reference.path} />
+          <RevealProjectFileButton path={reference.path} projectPath={projectPath}>
             {children}
-            {revealFailed ? (
-              <span className="md-file-link__reason" role="alert">
-                Could not show file
-              </span>
-            ) : null}
-          </button>
+          </RevealProjectFileButton>
         )
       }
       if (reference?.kind === 'blocked') {
