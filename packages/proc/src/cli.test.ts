@@ -152,7 +152,7 @@ describe('command overrides', () => {
   it.skipIf(process.platform === 'win32')(
     'uses one executable for detection and launches, then clears it',
     async () => {
-      const { chmodSync } = await import('node:fs')
+      const { chmodSync, realpathSync } = await import('node:fs')
       const { commandVersion, locateCommand, locateCommandSync, runCli, setCommandOverride } =
         await import('./cli.js')
       const directory = mkdtempSync(path.join(os.tmpdir(), 'cli override '))
@@ -167,7 +167,7 @@ describe('command overrides', () => {
         expect(await locateCommand('tastecode-test-command')).toBe(executable)
         expect(locateCommandSync('tastecode-test-command')).toBe(executable)
         const { cliPath } = await import('./updates.js')
-        expect(await cliPath('tastecode-test-command')).toBe(executable)
+        expect(await cliPath('tastecode-test-command')).toBe(realpathSync(executable))
         expect(await commandVersion('tastecode-test-command')).toContain('1.2.3')
         expect((await runCli('tastecode-test-command', ['hello world'])).stdout).toContain(
           'hello world',
