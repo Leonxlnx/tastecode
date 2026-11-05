@@ -215,10 +215,15 @@ export function searchSettings(
       return {
         entry,
         index,
-        score: scores.includes(-1) ? Infinity : scores.reduce((sum, score) => sum + score, 0),
+        matched: !scores.includes(-1),
+        titleMatches: scores.filter((score) => score === 0).length,
+        keywordMatches: scores.filter((score) => score === 1).length,
       }
     })
-    .filter((result) => Number.isFinite(result.score))
-    .sort((a, b) => a.score - b.score || a.index - b.index)
+    .filter((result) => result.matched)
+    .sort(
+      (a, b) =>
+        b.titleMatches - a.titleMatches || b.keywordMatches - a.keywordMatches || a.index - b.index,
+    )
     .map((result) => result.entry)
 }

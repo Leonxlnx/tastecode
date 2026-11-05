@@ -39,6 +39,12 @@ describe('settings search', () => {
       'description',
     ])
     expect(searchSettings('dark missing', entries)).toEqual([])
+    expect(
+      searchSettings('dark mode', [
+        { id: 'keywords', section: 'appearance', title: 'Other', keywords: 'dark mode' },
+        { id: 'mixed', section: 'appearance', title: 'Dark', description: 'mode' },
+      ]).map((entry) => entry.id),
+    ).toEqual(['mixed', 'keywords'])
   })
 
   it('generates provider defaults from the same labels used by the rows', () => {
