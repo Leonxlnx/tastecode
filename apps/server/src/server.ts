@@ -15,6 +15,10 @@ import {
 } from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { cliProbe, invalidateCliProbes } from './cli-probe.js'
+import {
+  restoreProviderExecutablePaths,
+  updateProviderExecutablePath,
+} from './provider-executable-paths.js'
 import { stopModelListings } from './runtime-loader.js'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
@@ -158,6 +162,7 @@ export function startServer(
     releaseDataLease()
     throw error
   }
+  restoreProviderExecutablePaths(store)
   let wss: WebSocketServer
   try {
     wss = new WebSocketServer({ port, host })
@@ -889,6 +894,17 @@ export function startServer(
         const providers = await (await providerService).detectProviders()
         providerStatuses = providers
         return { providers }
+      }
+
+      case 'providers.executablePaths':
+        parseParams(method, params)
+        return store.providerExecutablePaths()
+
+      case 'providers.updateExecutablePath': {
+        const p = parseParams(method, params)
+        const paths = updateProviderExecutablePath(store, p.source, p.path)
+        invalidateCliProbes()
+        return paths
       }
 
       case 'providers.contextSettings':

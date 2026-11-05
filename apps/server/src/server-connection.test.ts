@@ -76,6 +76,9 @@ vi.mock('./credentials.js', () => ({
 vi.mock('@harness/proc/desktop-path', () => ({ applyDesktopPath: () => undefined }))
 vi.mock('./store.js', () => ({
   Store: class {
+    providerExecutablePaths() {
+      return {}
+    }
     projects() {
       state.handled.push('projects.list')
       return state.projects
