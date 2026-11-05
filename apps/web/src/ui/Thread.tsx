@@ -679,6 +679,23 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     [settledHeight, virtualizer],
   )
   /**
+   * Where the pinned turn's first shown row starts. Rows the transcript hides
+   * measure 0: a Design phase's own prompt and answer, or the error the
+   * composer shows instead. A failed Design run pinned such a row at the top
+   * with room below it, so the chat looked empty under the error banner while
+   * every step of the run sat just above the edge. With no shown row left in
+   * the turn, nothing is pinned and the chat ends at its last shown row.
+   */
+  const visibleStartFrom = useCallback(
+    (index: number) => {
+      const rows = virtualizer.measurementsCache
+      for (let row = index; row < rows.length; row += 1)
+        if (rows[row]?.size !== 0) return rows[row]?.start
+      return undefined
+    },
+    [virtualizer],
+  )
+  /**
    * The settled end of the scroll, from the virtual total and what was last
    * measured, held at a pinned prompt while its answer is shorter than the
    * screen; and the room below the content that makes that end reachable.
@@ -686,13 +703,11 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const endAndRoom = useCallback(() => {
     const state = follow.current
     const natural = Math.round(virtualizer.getTotalSize() + state.extra) - state.clientHeight
-    const start = state.pinned
-      ? virtualizer.measurementsCache[anchorIndex.current]?.start
-      : undefined
+    const start = state.pinned ? visibleStartFrom(anchorIndex.current) : undefined
     const pinned =
       start === undefined ? undefined : Math.round(state.contentTop + start - TURN_TOP_GAP)
     return turnRoom(natural, pinned)
-  }, [virtualizer])
+  }, [virtualizer, visibleStartFrom])
   const endOf = useCallback(() => endAndRoom().end, [endAndRoom])
   const roomRef = useRef<HTMLDivElement>(null)
   /**
