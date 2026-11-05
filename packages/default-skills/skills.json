@@ -25,15 +25,15 @@
       "folder": "design-taste-frontend",
       "summary": "art direction for websites and app screens (tasteskill)",
       "repository": "Leonxlnx/taste-skill",
-      "ref": "v2.5",
-      "commit": "939b5640b56614f0e4cd1189311d106c451497e6",
+      "ref": "v2.5.0",
+      "commit": "822e0b9d872e10deb931afad2c6c2bd943cf4c7b",
       "path": "skills/taste-skill",
       "license": "MIT",
       "licenseFile": "LICENSE",
-      "archiveSha256": "e16faf9fc55ce08d0472b440b6e5a37f6386c4982b269d6ae87a4f69abc8cb67",
-      "treeSha256": "9e16a4b47eae6ccf8784da95555977b02d40ae5df129a585bf69d2eafe307fa6",
-      "files": 212,
-      "bytes": 9693274
+      "archiveSha256": "f7995b87905c1881e48fad6aa0c6ba4ad871bded5e673ecc455a085f922da2e5",
+      "treeSha256": "ff2a44d0a71029ee9fcd7e61266eb7ce1fa25ad89107b214d8631c9bf6434ede",
+      "files": 1618,
+      "bytes": 36114561
     },
     {
       "folder": "cook",

@@ -8,7 +8,7 @@
 //   node scripts/sync.js --update   fetch and write the measured hashes into
 //                                   skills.json (after moving a pin on purpose)
 //
-// The bundle is gitignored: the skill files are about 12 MB, so only the pins
+// The bundle is gitignored: the skill files are about 39 MB, so only the pins
 // and their hashes live in the repository.
 import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
