@@ -47,6 +47,28 @@ describe('settings search', () => {
     ).toEqual(['mixed', 'keywords'])
   })
 
+  it('matches row descriptions and checks conditional background controls', () => {
+    expect(searchSettings('reparses history', STATIC_SETTINGS).map((entry) => entry.id)).toContain(
+      'debug-usage',
+    )
+    const speed = STATIC_SETTINGS.find((entry) => entry.id === 'background-speed')!
+    const context = {
+      phone: false,
+      debug: false,
+      desktop: false,
+      notifications: false,
+      haptics: false,
+      fontSmoothing: false,
+      backgroundMode: 'none',
+      backgroundImage: false,
+      material: false,
+      backgroundEffort: false,
+      backgroundSpeed: false,
+    }
+    expect(speed.visible?.(context)).toBe(false)
+    expect(speed.visible?.({ ...context, backgroundSpeed: true })).toBe(true)
+  })
+
   it('generates provider defaults from the same labels used by the rows', () => {
     const provider = {
       id: 'codex',

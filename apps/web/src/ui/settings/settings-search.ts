@@ -48,7 +48,8 @@ export const STATIC_SETTINGS: SettingsSearchEntry[] = [
     id: 'general-notifications',
     section: 'workflows',
     title: 'Notifications',
-    description: 'Background approvals, questions, failures and finished chats.',
+    description:
+      'While TasteCode is in the background, for approvals, questions and failures, or also when a chat finishes.',
     visible: (c) => c.notifications,
   },
   {
@@ -113,7 +114,8 @@ export const STATIC_SETTINGS: SettingsSearchEntry[] = [
     id: 'model-subagents',
     section: 'models',
     title: 'Sub-agents on other providers',
-    description: 'Let agents use your other subscriptions when another model fits a task better.',
+    description:
+      "Let agents use your other subscriptions when another model fits a task better. When off, sub-agents run on the chat's provider unless your message asks for another one.",
   },
   {
     id: 'background-model',
@@ -125,13 +127,22 @@ export const STATIC_SETTINGS: SettingsSearchEntry[] = [
     id: 'background-effort',
     section: 'models',
     title: 'Background reasoning effort',
+    description: 'Choose the effort used for background writing.',
     visible: (c) => c.backgroundEffort,
   },
-  { id: 'background-speed', section: 'models', title: 'Background speed', visible: () => false },
+  {
+    id: 'background-speed',
+    section: 'models',
+    title: 'Background speed',
+    description: 'Choose the speed used for background writing.',
+    visible: (c) => c.backgroundSpeed,
+  },
   {
     id: 'phone-access',
     section: 'phone',
     title: 'Phone access',
+    description:
+      "Phones reach this computer over your Wi-Fi or Tailscale. Every link is end-to-end encrypted and pinned to this computer's key; nothing passes through a server.",
     keywords: 'pair mobile',
     visible: (c) => c.phone,
   },
@@ -139,25 +150,49 @@ export const STATIC_SETTINGS: SettingsSearchEntry[] = [
     id: 'diagnostics',
     section: 'data',
     title: 'Local diagnostics',
-    description: 'Stores redacted app error text only on this device.',
+    description:
+      'Off by default. Stores redacted app error text only on this device. Nothing is uploaded. New entries stop immediately when turned off.',
     visible: (c) => c.desktop,
   },
-  { id: 'reset-preferences', section: 'data', title: 'Reset app preferences' },
+  {
+    id: 'reset-preferences',
+    section: 'data',
+    title: 'Reset app preferences',
+    description: 'Clears appearance, layout and model choices.',
+  },
   { id: 'debug-onboarding', section: 'debug', title: 'Force onboarding', visible: (c) => c.debug },
   {
     id: 'debug-app-update',
     section: 'debug',
     title: 'Simulate app update',
+    description:
+      'Plays a fake release through the sidebar button and About. Nothing is downloaded; restarting reloads the window.',
     visible: (c) => c.debug,
   },
   {
     id: 'debug-provider-update',
     section: 'debug',
     title: 'Simulate provider updates',
+    description:
+      'Pops the update notice with made-up releases one step past what is installed. Update plays the whole run without touching a CLI; dismissing the notice ends it.',
     visible: (c) => c.debug,
   },
-  { id: 'debug-usage', section: 'debug', title: 'Usage history index', visible: (c) => c.debug },
-  { id: 'debug-avatar', section: 'debug', title: 'Avatar generator', visible: (c) => c.debug },
+  {
+    id: 'debug-usage',
+    section: 'debug',
+    title: 'Usage history index',
+    description:
+      'Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted.',
+    visible: (c) => c.debug,
+  },
+  {
+    id: 'debug-avatar',
+    section: 'debug',
+    title: 'Avatar generator',
+    description:
+      'The picture a profile gets from its name when no photo is uploaded. Same name, same picture, on every provider.',
+    visible: (c) => c.debug,
+  },
   { id: 'about-version', section: 'about', title: 'TasteCode version' },
   { id: 'about-updates', section: 'about', title: 'Updates' },
   { id: 'about-source', section: 'about', title: 'Source' },
