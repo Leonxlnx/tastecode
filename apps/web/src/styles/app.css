@@ -2424,7 +2424,7 @@
 
 :root[data-theme='light']
   .composer__design-beam:is([data-active], [data-fading])
-  .composer__prompt {
+  :is(.composer__prompt, .composer__shelf--project) {
   border-color: var(--composer-design-prompt-border);
 }
 
