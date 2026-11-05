@@ -2,6 +2,7 @@ import type {
   AppDirection,
   AssetManifest,
   BrandSystem,
+  BrandFont,
   BriefingQuestion,
   DesignBrief,
   DesignFileSnapshot,
@@ -800,6 +801,8 @@ export class Orchestrator {
    */
   #heldQueues = new Set<string>()
   #designFlows = new Map<string, DesignFlow>()
+  /** Brand fonts TasteCode tried to download for a run's Asset phase; in memory only, the files are the record. */
+  #brandFontAttempts = new WeakMap<DesignFlow, BrandFont[]>()
   #designTurns = new Map<string, string>()
   #designStartingThreads = new Set<string>()
   #designStartWaiters = new Map<string, (turnId: string) => void>()
@@ -3159,7 +3162,10 @@ export class Orchestrator {
             flow.options = { ...flow.options, ...options }
             try {
               this.#validateApprovedDesignArtifacts(flow)
-              const prompt = flow.pendingPrompt ?? this.#designPromptFor(flow)
+              const prompt = await this.#readyDesignPrompt(
+                flow,
+                flow.pendingPrompt ?? this.#designPromptFor(flow),
+              )
               delete flow.pendingPrompt
               this.#saveDesignFlow(threadId)
               this.#notePromptWrapping(threadId, true)
@@ -5901,6 +5907,30 @@ ${JSON.stringify(deck, null, 2)}
 </selected-reference-workflow>`
   }
 
+  /** What TasteCode knows about the run's brand fonts: its own attempt, else the project's font folder. */
+  #brandFontsFor(flow: DesignFlow): BrandFont[] {
+    return (
+      this.#brandFontAttempts.get(flow) ??
+      designAgent().localBrandFonts(flow.approvedBrand!, flow.workspacePath)
+    )
+  }
+
+  /**
+   * Before the Asset phase's first prompt, TasteCode downloads the approved brand fonts into the
+   * project itself: a provider sandbox may block the agent's own downloads. The prompt is rebuilt
+   * so it names the files instead of asking the agent to fetch them.
+   */
+  async #readyDesignPrompt(flow: DesignFlow, prompt: string): Promise<string> {
+    if (flow.phase !== 'assets' || !flow.approvedBrand || this.#brandFontAttempts.has(flow))
+      return prompt
+    const fonts = await designAgent().acquireBrandFonts(flow.approvedBrand, flow.workspacePath)
+    this.#brandFontAttempts.set(flow, fonts)
+    for (const font of fonts)
+      if (font.status === 'failed')
+        this.#onLog(`[design] could not download ${font.family}: ${font.reason}`)
+    return flow.correcting ? prompt : this.#designPromptFor(flow)
+  }
+
   #designPhasePrompt(flow: DesignFlow): string {
     if (flow.phase === 'brief') return designAgent().designBriefingPrompt(flow.originalRequest)
     this.#validateApprovedDesignArtifacts(flow)
@@ -5923,7 +5953,13 @@ ${JSON.stringify(deck, null, 2)}
       )
     const page = flow.approvedPage!
     if (flow.phase === 'assets')
-      return designAgent().designAssetPrompt(brief, brand, page, flow.referenceAttachments)
+      return designAgent().designAssetPrompt(
+        brief,
+        brand,
+        page,
+        flow.referenceAttachments,
+        this.#brandFontsFor(flow),
+      )
     // Build and Repair copy from the kit; rewrite it in case the workspace lost it since Brief.
     if (flow.appDirection && (flow.phase === 'build' || flow.phase === 'repair'))
       designAgent().writeAppScreenKit(flow.workspacePath)
@@ -6548,12 +6584,16 @@ ${JSON.stringify(deck, null, 2)}
         delete flow.pendingPrompt
         this.#saveDesignFlow(threadId)
         this.#record(threadId, event)
-        void this.#sendDesignTurn(
-          threadId,
-          prompt,
-          this.#designAttachmentsFor(flow),
-          this.#designTurnOptions(flow),
-        ).catch((error: unknown) => this.#failOwnedDesignFlow(threadId, owner, error))
+        void this.#readyDesignPrompt(owner, prompt)
+          .then((ready) =>
+            this.#sendDesignTurn(
+              threadId,
+              ready,
+              this.#designAttachmentsFor(owner),
+              this.#designTurnOptions(owner),
+            ),
+          )
+          .catch((error: unknown) => this.#failOwnedDesignFlow(threadId, owner, error))
         return
       }
     }
@@ -6692,12 +6732,24 @@ ${JSON.stringify(deck, null, 2)}
       return
     }
     if (flow.phase === 'assets') {
-      const output = designAgent().parseAssetPhaseOutput(
-        text,
+      const fonts = this.#brandFontsFor(flow)
+      const output = designAgent().validateAssetManifestForPage(
+        designAgent().withBrandFonts(
+          designAgent().parseAssetPhaseOutput(
+            text,
+            flow.approvedPage!,
+            flow.workspacePath,
+            flow.referenceAttachments,
+          ),
+          fonts,
+          flow.approvedPage!,
+        ),
         flow.approvedPage!,
         flow.workspacePath,
         flow.referenceAttachments,
       )
+      // A missing brand font is found here, not in Build at the end of the run.
+      designAgent().validateBrandFontsResolved(output, flow.approvedBrand!, fonts)
       try {
         designAgent().validateResolvedDesignAssets(output)
       } catch (error) {
