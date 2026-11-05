@@ -5,6 +5,12 @@
    The window alone bounds the popup; the well takes what it leaves beside
    the actions and scrolls only then, so Edit profile and Settings stay
    pinned beside the card. */
+/* With accounts listed, the popup grows past the card it opens from, so every account keeps
+   its whole name beside the two bars. */
+.menu.menu--settings:has(.account-menu__account) {
+  width: min(max(var(--menu-trigger-w, 224px), 312px), calc(100vw - 16px));
+}
+
 .account-menu__usage {
   flex: 0 1 auto;
   min-height: 0;
@@ -589,13 +595,12 @@ button.account-menu__account-line:focus-visible {
 }
 
 .account-menu__account-name {
-  /* The name keeps a few letters before the plan chip gives way. */
+  /* A name is never cut: one that does not fit the line wraps under itself. */
   flex: 0 1 auto;
   min-width: min(3em, 100%);
-  overflow: hidden;
   font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .account-menu__account-line[aria-expanded='true'] .account-menu__account-name {
@@ -699,10 +704,8 @@ button.account-menu__account-line:focus-visible {
 
 .account-menu__pool-name {
   min-width: 0;
-  overflow: hidden;
   color: var(--text);
   font-weight: 500;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
