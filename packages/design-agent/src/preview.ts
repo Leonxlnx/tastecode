@@ -26,10 +26,28 @@ Existing app: {"version":1,"kind":"command","command":"pnpm","args":["dev","--ho
 
 Static files: {"version":1,"kind":"static","entry":"index.html","cwd":".","url":"http://127.0.0.1:4173/","viewports":[{"name":"desktop","width":1440,"height":1000},{"name":"mobile","width":390,"height":844}]}`
 
-export function designPreviewPrompt(): string {
+/** Enough of Build's file list to name the page; a long list only repeats assets. */
+const PREVIEW_BUILD_FILES = 40
+
+/**
+ * Build's own file list points Preview at the page this run made. Without it a project that
+ * keeps a legacy prototype at its root previewed that prototype, which its AGENTS.md put out of
+ * scope, and Review could not judge or repair the real screens (#2193).
+ */
+function previewTarget(buildFiles: readonly string[]): string {
+  const listed = buildFiles.slice(0, PREVIEW_BUILD_FILES)
+  const files = listed.length
+    ? ` Build reported these files: ${listed.join(', ')}${buildFiles.length > listed.length ? `, and ${buildFiles.length - listed.length} more` : ''}.`
+    : ''
+  return `Preview the page this Design run built.${files} Point the plan at the page that renders them: a static entry, or the command's url with that page's path (for example http://127.0.0.1:3000/portal.html). Do not preview another page the project also keeps, such as a legacy prototype or a demo, only because it is the root page or the default script. Follow the project's own instructions (AGENTS.md, CLAUDE.md, README) on which screens are current and how they are served; when they are served by a launcher TasteCode cannot run and are plain HTML, use a static plan with that page as its entry.`
+}
+
+export function designPreviewPrompt(buildFiles: readonly string[] = []): string {
   return `You are running the Preview Setup phase of TasteCode Design Mode.
 
 Inspect the implemented project's real package scripts and configuration. Choose the existing development or preview command that serves the built page on 127.0.0.1 with an explicit port. Do not install dependencies, start the server yourself, use a shell string, or choose a remote URL. The command is an executable name and args is its argv array. cwd is relative to the current workspace.
+
+${previewTarget(buildFiles)}
 
 TasteCode automatically chooses another free port when the requested one is occupied and reports the actual preview URL. For package scripts, include the supported --port or -p option in args (and npm's -- separator); TasteCode updates that value and sets the PORT environment variable. A custom node server should read process.env.PORT. Do not hardcode the only usable port in a server script or require stopping another project's preview.
 
