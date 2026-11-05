@@ -262,6 +262,11 @@ const REAL_SYSTEM: SystemProbe = {
   auth: (provider) => signInChecks.read(provider),
 }
 
+/** The CLI command a built-in provider runs; undefined for one that runs none. */
+export function providerCommand(provider: string): string | undefined {
+  return PROBES.find((entry) => entry.id === provider)?.command
+}
+
 /**
  * The binary a provider's own model lists come from, so a list saved for one
  * CLI build is not shown for another. Undefined when it cannot be named.
