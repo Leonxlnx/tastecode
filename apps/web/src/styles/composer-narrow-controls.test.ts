@@ -53,7 +53,7 @@ describe('composer controls in a narrow chat column', () => {
   it('truncates the model name with an ellipsis', () => {
     const truncating = rule(
       triggerCss,
-      '.model-selector__trigger-model,\n.model-selector__trigger-name,\n.model-selector__trigger-effort',
+      '.model-selector__trigger-model,\n.model-selector__trigger-name,\n.model-selector__trigger-short,\n.model-selector__trigger-effort',
     )
     expect(truncating).toContain('overflow: hidden;')
     expect(truncating).toContain('text-overflow: ellipsis;')
@@ -70,7 +70,19 @@ describe('composer controls in a narrow chat column', () => {
     expect(effort).toContain('min-width: 3ch;')
   })
 
-  it('keeps the effort name, with no level dots, in a narrow column', () => {
+  // A ~300px composer showed "G L…"; there the button is the provider icon and "Luna".
+  it('shows the short model name and leaves the effort to the menu in a narrow column', () => {
+    const narrow =
+      /@container chat-stage \(max-width: 620px\) \{(?<body>[\s\S]*?)\n\}\n/.exec(triggerCss)
+        ?.groups?.['body'] ?? ''
+    expect(narrow).toMatch(
+      /\.model-selector__trigger-name,\s*\.model-selector__trigger-effort \{\s*display: none;/,
+    )
+    expect(narrow).toMatch(/\.model-selector__trigger-short \{\s*display: inline;/)
+    expect(rule(triggerCss, '.model-selector__trigger-short')).toContain('display: none;')
+  })
+
+  it('shows no effort level dots', () => {
     expect(appCss).not.toContain('model-selector__trigger-level')
     expect(triggerCss).not.toContain('model-selector__trigger-level')
     expect(triggerCss).not.toContain('model-selector__trigger-dot')
