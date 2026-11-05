@@ -65,13 +65,12 @@ The default Agent Skills are pinned to exact commits in `packages/default-skills
 and ship as real files in the app's `resources/default-skills` folder, each with its own
 `LICENSE`.
 
-`design-taste-frontend` (taste-skill v2.5.0) also ships third-party media that is not under its MIT
-license: photographs (Unsplash License, CC0, CC BY 2.0/3.0/4.0, CC BY-SA 2.0/3.0/3.0 AT/4.0,
-Public Domain Mark), tool and app icons (CC0-1.0, ISC, MIT) and demo images. Each file is listed
-with its author, source page and license in the credits file beside it, shipped unmodified:
-`assets/photos/photos.json`, `assets/layout/img/credits.json`, `assets/icons/demo/icons-credits.json`,
-`assets/ui/icons/icons-credits.json`, `assets/moments/_demo/credits.json` and
-`assets/scenes/_demo/credits.json`.
+`design-taste-frontend` (taste-skill v2.5.0) is shipped without its third-party media. The installer
+does not contain its photographs, its tool and app icons or the credits files that list them. When
+the skill's `scripts/photos.mjs` first runs, it downloads them from the same pinned commit on GitHub
+and checks them against the hashes in `packages/default-skills/skills.json`. It then keeps them, with
+their credits files, in the user's data folder. The images still in the installer are the skill's own
+fallback renders for its objects, which name no third-party source.
 
 The release gate requires a complete top-level Apache-2.0 `LICENSE`, a clean production install,
 and a license or notice file for every package in the resolved production graph. It emits only
