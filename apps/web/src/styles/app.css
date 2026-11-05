@@ -3351,7 +3351,6 @@
   text-align: center;
 }
 
-/* A narrow column broke "atlas-web" after its hyphen; the name moves to the next line whole. */
 .empty__project {
   white-space: nowrap;
 }
