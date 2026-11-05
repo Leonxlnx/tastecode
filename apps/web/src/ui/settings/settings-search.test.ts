@@ -87,13 +87,13 @@ describe('settings search', () => {
   it('keeps the catalog and row anchors in sync', () => {
     const ids = new Set<string>()
     // These are named entities, a loading placeholder, or live status, not fixed settings.
-    const exempt: Record<string, string[]> = {
-      'Settings.tsx': ['key={row}'],
-      'ModelLabSection.tsx': ['className="model-lab__head"'],
-      'ModelVisibilityControls.tsx': ['name={name}'],
-      'ProfileAccounts.tsx': ['key={status.id}', 'providerMark(account.provider)'],
-      'PhoneSettings.tsx': ['name="Reachable at"'],
-    }
+    const exempt = new Map([
+      ['Settings.tsx', ['key={row}']],
+      ['ModelLabSection.tsx', ['className="model-lab__head"']],
+      ['ModelVisibilityControls.tsx', ['name={name}']],
+      ['ProfileAccounts.tsx', ['key={status.id}', 'providerMark(account.provider)']],
+      ['PhoneSettings.tsx', ['name="Reachable at"']],
+    ])
     for (const file of files) {
       const text = source(file)
       const tree = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -105,7 +105,7 @@ describe('settings search', () => {
             ['searchId', 'data-settings-id'].includes(attr.name.getText(tree)),
           )
           if (node.tagName.getText(tree) === 'SettingsRow' && !anchor) {
-            const signature = (exempt[file] ?? []).find((value) =>
+            const signature = (exempt.get(file) ?? []).find((value) =>
               node.getText(tree).includes(value),
             )
             missing.push(signature ?? node.getText(tree))
@@ -117,7 +117,7 @@ describe('settings search', () => {
       }
       visit(tree)
       expect(missing.sort(), `${file}: unexpected row without a searchId`).toEqual(
-        [...(exempt[file] ?? [])].sort(),
+        [...(exempt.get(file) ?? [])].sort(),
       )
     }
     for (const entry of STATIC_SETTINGS) expect(ids.has(entry.id), entry.id).toBe(true)
