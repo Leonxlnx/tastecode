@@ -11,6 +11,7 @@ import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
 import { ONE_DESIGN_LANGUAGE } from './design-language.js'
 import { designTokenVariables } from './design-tokens.js'
+import { tasteskillWebsiteRules } from './tasteskill-web.js'
 import { designMotionGuidance } from './motion-guidance.js'
 import { websiteMotion } from './website-motion.js'
 import { gradientSetForBrand } from './gradients.js'
@@ -162,6 +163,8 @@ Use the existing project implementation and motion tools without invoking extern
 ${exactFiles ? `\nThe brief's deliverable boundary is exactly ${list(exactFiles)}. TasteCode validates the workspace before Preview; do not add helper or configuration files.` : ''}
 
 ${DESIGN_CONTENT_GUIDANCE}
+
+${dashboard ? '' : tasteskillWebsiteRules('build')}
 
 ${designMotionGuidance(brief, page)}
 

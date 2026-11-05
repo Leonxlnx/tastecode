@@ -7,6 +7,7 @@ import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
 import { DESIGN_CONSISTENCY_FINDING_IDS } from './design-consistency.js'
 import { ONE_DESIGN_LANGUAGE } from './design-language.js'
+import { tasteskillWebsiteRules } from './tasteskill-web.js'
 import { designMotionGuidance } from './motion-guidance.js'
 import { websiteMotion } from './website-motion.js'
 import type { PageBlueprint } from './page.js'
@@ -194,6 +195,8 @@ Treat these as major findings, or blocking when they prevent reading or operatio
 Do not edit files, redesign from preference, or praise the work. Report only visible, actionable discrepancies and prefer one root-cause repair over repeated local patches. This is a visual review, not a complete release audit: do not infer factual accuracy, working interactions, conversion performance, user comprehension, loading performance, or source provenance from screenshots. Use confidence "unknown" rather than inventing evidence. Use these checks and the actual reference images; do not invoke external design skills.
 
 ${DESIGN_CONTENT_GUIDANCE}
+
+${dashboard ? '' : tasteskillWebsiteRules('review')}
 
 ${designMotionGuidance(brief, page)}
 
@@ -396,6 +399,8 @@ ${appScreenRules(['13'])}`
 ${scope}
 
 ${DESIGN_CONTENT_GUIDANCE}
+
+${appDirection || (brief && isDashboardBrief(brief)) || isDashboardPageMode(page?.architecture?.mode) ? '' : tasteskillWebsiteRules('build')}
 
 ${designMotionGuidance(brief, page)}
 

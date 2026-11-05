@@ -157,7 +157,8 @@ describe('brand phase', () => {
 
   it('locks supplied identity before filling open brand decisions', () => {
     const prompt = designBrandPrompt(brief)
-    expect(prompt).toContain('Animate new websites by default')
+    expect(prompt).toContain('WEBSITE MOTION (TasteCode Design, hybrid)')
+    expect(prompt).toContain('TASTESKILL WEBSITE RULES')
     expect(prompt).toContain('Do not turn missing material into an invented requirement')
     expect(prompt).toContain('explicit user requirements')
     expect(prompt).toContain('Never replace a supplied logo, color, typeface')
@@ -172,7 +173,7 @@ describe('brand phase', () => {
     expect(prompt).toContain("project's established icon system")
     expect(prompt).toContain('Make motionDirection operational')
     expect(prompt).toContain('Return each motionDirection.principles entry as one string')
-    expect(prompt).toContain('Do not apply the same fade-up to every section')
+    expect(prompt).toContain('No card, row, tile, heading or photograph reveals')
     expect(prompt).toContain(
       'Use monospace or mixed-type label treatments only when the anchor itself uses them',
     )

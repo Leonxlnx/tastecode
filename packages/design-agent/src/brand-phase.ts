@@ -6,6 +6,7 @@ import { ONE_DESIGN_LANGUAGE } from './design-language.js'
 import { generatePalette, paletteColorRecords } from './palette.js'
 import { record } from './parse.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
+import { tasteskillWebsiteRules } from './tasteskill-web.js'
 import { designMotionGuidance } from './motion-guidance.js'
 import {
   appTypographyGuidance,
@@ -107,6 +108,8 @@ Make motionDirection operational using the motion requirements below. Return eac
 Use the selected reference images and existing project brand files. Do not invoke external design or brand skills. Derive signatureDevice from an observable composition in the anchor reference or an existing brand treatment; do not invent a motif to fill this field.
 
 ${DESIGN_CONTENT_GUIDANCE}
+
+${dashboard ? '' : tasteskillWebsiteRules('brand')}
 
 ${designMotionGuidance(brief)}
 

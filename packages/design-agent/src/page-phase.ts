@@ -6,6 +6,7 @@ import path from 'node:path'
 import { assertPageCopy } from './copywriting.js'
 import { DESIGN_CONTENT_GUIDANCE, LANDING_PAGE_GUIDANCE } from './content-guidance.js'
 import { ONE_DESIGN_LANGUAGE } from './design-language.js'
+import { tasteskillWebsiteRules } from './tasteskill-web.js'
 import { designMotionGuidance } from './motion-guidance.js'
 import { websiteMotion } from './website-motion.js'
 import { assertPageLayoutSelections, PAGE_LAYOUT_GUIDANCE } from './layout-guidance.js'
@@ -165,6 +166,8 @@ Map the user's data and tasks into the reference's chart, list, table, calendar 
 }
 
 ${DESIGN_CONTENT_GUIDANCE}
+
+${dashboard ? '' : tasteskillWebsiteRules('page')}
 
 ${designMotionGuidance(brief)}
 
