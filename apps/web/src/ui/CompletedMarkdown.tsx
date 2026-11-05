@@ -7,6 +7,7 @@ import {
   useMemo,
   useState,
   type ComponentPropsWithoutRef,
+  type ReactNode,
 } from 'react'
 import {
   Streamdown,
@@ -25,7 +26,11 @@ import {
   preservedRelativeLink,
   projectFileReference,
 } from '../project-file-link.js'
-import { isFileReference, isInlineFileReference } from './file-reference.js'
+import {
+  isFileReference,
+  isInlineFileReference,
+  isInlineFolderReference,
+} from './file-reference.js'
 import { FileTypeIcon } from './FileTypeIcon.js'
 import { shikiPlugin } from './highlighter.js'
 import { STREAMDOWN_ICONS } from './streamdown-icons.js'
@@ -42,15 +47,65 @@ import { normalizeMathDelimiters } from './math-delimiters.js'
 type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
 
 function InlineCode({ children, node: _node, ...props }: InlineCodeProps) {
-  const reference = typeof children === 'string' && isInlineFileReference(children)
+  const projectPath = useContext(ProjectPathContext)
+  const text = typeof children === 'string' ? children : undefined
+  const file = text !== undefined && isInlineFileReference(text)
+  const folder = text !== undefined && !file && isInlineFolderReference(text)
+  if (text === undefined || (!file && !folder)) return <code {...props}>{children}</code>
 
-  if (!reference) return <code {...props}>{children}</code>
+  // A path the reply names in code opens like a file link when it resolves inside the project.
+  const reference =
+    projectPath && canRevealProjectFile ? projectFileReference(text, projectPath) : undefined
+  if (projectPath && reference?.kind === 'safe') {
+    return (
+      <RevealProjectFileButton path={reference.path} projectPath={projectPath} iconPath={text}>
+        {text}
+      </RevealProjectFileButton>
+    )
+  }
+  if (folder) return <code {...props}>{children}</code>
 
   return (
     <span className="md-file-ref">
-      <FileTypeIcon path={children} />
-      {children}
+      <FileTypeIcon path={text} />
+      {text}
     </span>
+  )
+}
+
+type RevealProjectFileButtonProps = {
+  path: string
+  projectPath: string
+  /** The path as the reply wrote it, when that says more (a folder keeps its trailing slash). */
+  iconPath?: string
+  children: ReactNode
+}
+
+function RevealProjectFileButton({
+  path,
+  projectPath,
+  iconPath,
+  children,
+}: RevealProjectFileButtonProps) {
+  const [revealFailed, setRevealFailed] = useState(false)
+  return (
+    <button
+      className="md-file-link md-file-link--action"
+      type="button"
+      title={revealFailed ? `Try showing ${path} again` : `Show ${path} in its folder`}
+      onClick={() => {
+        setRevealFailed(false)
+        void revealProjectFile(path, projectPath).catch(() => setRevealFailed(true))
+      }}
+    >
+      <FileTypeIcon path={iconPath ?? path} />
+      {children}
+      {revealFailed ? (
+        <span className="md-file-link__reason" role="alert">
+          Could not show file
+        </span>
+      ) : null}
+    </button>
   )
 }
 
@@ -61,7 +116,6 @@ const ProjectPathContext = createContext<string | undefined>(undefined)
 function MarkdownLink({ children, href: source, node: _node, ...props }: MarkdownLinkProps) {
   const projectPath = useContext(ProjectPathContext)
   const images = useContext(MarkdownImageContext)
-  const [revealFailed, setRevealFailed] = useState(false)
   const href = images && source ? repositoryLink(source, images.normalize) : source
   const fileLink = href ? localFileLink(href) : undefined
   if (fileLink) {
@@ -70,27 +124,9 @@ function MarkdownLink({ children, href: source, node: _node, ...props }: Markdow
       const reference = projectFileReference(fileLink.href, projectPath)
       if (reference?.kind === 'safe' && canRevealProjectFile) {
         return (
-          <button
-            className="md-file-link md-file-link--action"
-            type="button"
-            title={
-              revealFailed
-                ? `Try showing ${reference.path} again`
-                : `Show ${reference.path} in its folder`
-            }
-            onClick={() => {
-              setRevealFailed(false)
-              void revealProjectFile(reference.path, projectPath).catch(() => setRevealFailed(true))
-            }}
-          >
-            <FileTypeIcon path={reference.path} />
+          <RevealProjectFileButton path={reference.path} projectPath={projectPath}>
             {children}
-            {revealFailed ? (
-              <span className="md-file-link__reason" role="alert">
-                Could not show file
-              </span>
-            ) : null}
-          </button>
+          </RevealProjectFileButton>
         )
       }
       if (reference?.kind === 'blocked') {
