@@ -39,6 +39,7 @@
   /* Rail colour behind everything in this row: it is what shows through the
      stage's rounded top-left corner, so the notch reads as part of the rail. */
   background: var(--bg-rail);
+  overflow-x: clip; /* the closed workspace panel rests 24px out */
 }
 
 :root[data-glass='on'][data-shell='desktop']:not([data-theme='light']) .shell__body {
