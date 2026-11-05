@@ -15,6 +15,9 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
+import { digestFiles, skillFiles } from './skill-media.mjs'
+
+export { digestFiles, isStray, skillFiles, tarEntries } from './skill-media.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 export const packageRoot = path.resolve(here, '..')
@@ -22,116 +25,10 @@ export const manifestPath = path.join(packageRoot, 'skills.json')
 export const bundleRoot = path.join(packageRoot, 'bundle')
 
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
-/** Files that only ever arrive by accident and have no business in a skill. */
-const STRAY = [/(^|\/)\.DS_Store$/, /(^|\/)Thumbs\.db$/, /(^|\/)__pycache__\//, /\.py[co]$/]
-
-export function isStray(relative) {
-  return STRAY.some((pattern) => pattern.test(relative))
-}
 
 /** The plugin manifest Claude Code reads; its name is the prefix skills show under. */
 export function pluginManifest(manifest) {
   return `${JSON.stringify(manifest.plugin, null, 2)}\n`
-}
-
-/**
- * Reads a tar archive (ustar with pax or GNU long names, as GitHub writes them).
- * Yields regular files only; links and devices are refused, not followed.
- */
-export function* tarEntries(archive) {
-  let offset = 0
-  let longName
-  let paxPath
-  while (offset + 512 <= archive.length) {
-    const header = archive.subarray(offset, offset + 512)
-    if (header.every((byte) => byte === 0)) break
-    const field = (start, length) => {
-      const raw = header.subarray(start, start + length)
-      const end = raw.indexOf(0)
-      return raw.subarray(0, end === -1 ? length : end).toString('utf8')
-    }
-    const size = Number.parseInt(field(124, 12).trim() || '0', 8)
-    if (!Number.isFinite(size) || size < 0) throw new Error('Corrupt tar header size')
-    const type = field(156, 1) || '0'
-    const prefix = field(257, 6).startsWith('ustar') ? field(345, 155) : ''
-    const body = archive.subarray(offset + 512, offset + 512 + size)
-    if (body.length !== size) throw new Error('Truncated tar archive')
-    offset += 512 + Math.ceil(size / 512) * 512
-    if (type === 'g') continue
-    if (type === 'x') {
-      paxPath = paxRecords(body).path
-      continue
-    }
-    if (type === 'L') {
-      longName = body.toString('utf8').replace(/\0+$/, '')
-      continue
-    }
-    const name = paxPath ?? longName ?? (prefix ? `${prefix}/${field(0, 100)}` : field(0, 100))
-    paxPath = undefined
-    longName = undefined
-    if (type === '5') continue
-    if (type !== '0' && type !== '7') throw new Error(`Refusing tar entry of type ${type}: ${name}`)
-    yield { name, body }
-  }
-}
-
-function paxRecords(body) {
-  const records = {}
-  let at = 0
-  const text = body.toString('utf8')
-  while (at < text.length) {
-    const space = text.indexOf(' ', at)
-    if (space === -1) break
-    const length = Number.parseInt(text.slice(at, space), 10)
-    if (!Number.isFinite(length) || length <= 0) break
-    const record = text.slice(space + 1, at + length - 1)
-    const equals = record.indexOf('=')
-    if (equals > 0) records[record.slice(0, equals)] = record.slice(equals + 1)
-    at += length
-  }
-  return records
-}
-
-/**
- * The files of one skill inside its repository archive, relative to the skill
- * folder. GitHub prefixes every entry with `<repo>-<commit>/`.
- */
-export function skillFiles(archive, skill) {
-  const files = new Map()
-  const base = skill.path ? `${skill.path.replace(/\/+$/, '')}/` : ''
-  let license
-  for (const entry of tarEntries(archive)) {
-    const parts = entry.name.split('/')
-    const inRepo = parts.slice(1).join('/')
-    if (!inRepo) continue
-    if (parts.some((part) => part === '..') || path.isAbsolute(inRepo))
-      throw new Error(`Unsafe path in archive: ${entry.name}`)
-    if (inRepo === skill.licenseFile) license = entry.body
-    if (!inRepo.startsWith(base)) continue
-    const relative = inRepo.slice(base.length)
-    if (!relative || isStray(relative) || (skill.exclude ?? []).includes(relative)) continue
-    files.set(relative, entry.body)
-  }
-  if (!files.has('SKILL.md')) throw new Error(`${skill.folder}: no SKILL.md under ${base || '/'}`)
-  if (!license) throw new Error(`${skill.folder}: licence file ${skill.licenseFile} not found`)
-  // Each shipped skill carries its own licence, whatever folder it came from.
-  files.set('LICENSE', license)
-  return files
-}
-
-/** Order-independent digest of a file set: relative path, size and content of each. */
-export function digestFiles(files) {
-  const hash = createHash('sha256')
-  let bytes = 0
-  const names = [...files.keys()].sort()
-  for (const name of names) {
-    const body = files.get(name)
-    bytes += body.length
-    hash.update(`${name}\0${body.length}\0`)
-    hash.update(createHash('sha256').update(body).digest('hex'))
-    hash.update('\n')
-  }
-  return { treeSha256: hash.digest('hex'), files: names.length, bytes }
 }
 
 async function readTree(root, relative = '', into = new Map()) {
