@@ -58,6 +58,12 @@ it('keeps the saved title until the page reports its own', () => {
   expect(titles()).toEqual(['One, renamed'])
 })
 
+it('does not take the address Chromium reports for an untitled page as a title', () => {
+  rememberBrowserVisit('http://127.0.0.1:3000/plain', '127.0.0.1:3000/plain')
+
+  expect(titles()).toEqual([''])
+})
+
 it('never stores a password from the address', () => {
   rememberBrowserVisit('https://me:hunter2@site.example/admin', 'Admin')
 

@@ -74,9 +74,12 @@ export function rememberBrowserVisit(url: string, title: string, now = Date.now(
   const key = pageKey(page)
   const visits = readBrowserHistory()
   const earlier = visits.find((visit) => pageKey(webPage(visit.url)) === key)
+  // Chromium names an untitled page after its address, which the row already shows.
+  const reported = title.trim()
+  const ownTitle = reported === browserVisitAddress(page.href) ? '' : reported
   const visit: BrowserVisit = {
     url: page.href,
-    title: title.trim().slice(0, MAX_TITLE_LENGTH) || (earlier?.title ?? ''),
+    title: ownTitle.slice(0, MAX_TITLE_LENGTH) || (earlier?.title ?? ''),
     visitedAt: now,
   }
   const next = [visit, ...visits.filter((other) => other !== earlier)]
