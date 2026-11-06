@@ -150,6 +150,8 @@ const EMPTY_RAIL_ENTRIES: readonly TurnRailEntry[] = []
 /** Space kept between a disclosure's summary and the viewport edge it moves toward. */
 const HEADER_MARGIN = 12
 
+type EditMessage = (text: string, attachments?: string[] | undefined) => void
+
 /**
  * The thread.
  *
@@ -181,7 +183,7 @@ export interface ThreadProps {
   revealRequest?: number | undefined
   checkpoints?: Checkpoint[] | undefined
   keyboardActive?: boolean | undefined
-  onEditMessage?: ((text: string) => void) | undefined
+  onEditMessage?: EditMessage | undefined
   onRevertCheckpoint?: ((checkpoint: Checkpoint) => void) | undefined
   onUndoChanges?:
     ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined
@@ -1998,7 +2000,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   /** A steered prompt the running turn has not answered yet. */
   steerPending: boolean
   projectPath: string | undefined
-  onEditMessage: ((text: string) => void) | undefined
+  onEditMessage: EditMessage | undefined
   checkpointIndex: CheckpointIndex<Checkpoint>
   onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
 }) {
@@ -2303,7 +2305,7 @@ const Row = memo(function Row({
   responseText: string | undefined
   finalResponse: boolean
   settling: boolean
-  onEditMessage: ((text: string) => void) | undefined
+  onEditMessage: EditMessage | undefined
   checkpoint: Checkpoint | undefined
   onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
   /** The answer of a turn the user stopped ends on the stopped marker. */
@@ -2366,7 +2368,7 @@ const Row = memo(function Row({
             {onEditMessage ? (
               <button
                 type="button"
-                onClick={() => onEditMessage(item.text!)}
+                onClick={() => onEditMessage(item.text!, item.attachments)}
                 aria-label="Edit as new prompt"
                 title="Edit as new prompt"
               >

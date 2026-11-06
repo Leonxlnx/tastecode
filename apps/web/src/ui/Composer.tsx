@@ -611,6 +611,8 @@ function ComposerComponent(props: {
     | {
         text: string
         attachments?: string[] | undefined
+        /** Screenshots of a sent prompt's comments, which Edit brings back with their chips. */
+        commentImages?: string[] | undefined
         resources?: ComposerResource[] | undefined
         /** Insert the text as one native edit, so Ctrl+Z brings back what it replaced. */
         undoable?: boolean | undefined
@@ -1273,7 +1275,7 @@ function ComposerComponent(props: {
         ? composerTextWithChips(
             props.draftRequest.text,
             rememberedChipTokens(),
-            props.draftRequest.attachments,
+            props.draftRequest.attachments ?? props.draftRequest.commentImages,
           )
         : composerTextWithCommentChips(props.draftRequest.text, props.draftRequest.attachments),
       legacyResources,

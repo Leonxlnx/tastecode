@@ -3365,6 +3365,20 @@ describe('browser annotation drafts', () => {
     expect(area.value).toBe('')
   })
 
+  it('brings a sent comment back with its screenshot, leaving other attachments alone', () => {
+    const onSend = vi.fn()
+    const sent = comment()
+    const block = browserCommentBlock(sent)
+    const view = renderComposer(onSend, {
+      draftRequest: { text: block, undoable: true, commentImages: [sent.image], request: 1 },
+    })
+    expect(view.container.querySelector('.composer__attachments')).toBeNull()
+    const area = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
+    expect(composerChips(area.value)).toHaveLength(1)
+    fireEvent.keyDown(area, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith(block, [sent.image])
+  })
+
   it('leaves typed tokens alone when editing a queued prompt', async () => {
     renderComposer(vi.fn(), {
       queuedTurns: [{ id: 'q1', text: '$cook this', attachments: [], createdAt: 1 }],

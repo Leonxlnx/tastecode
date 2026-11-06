@@ -2240,6 +2240,7 @@ describe('thread message actions', () => {
                 role: 'user',
                 status: 'completed',
                 text: 'Revise this prompt',
+                attachments: ['/images/shot.png'],
                 createdAt: 1,
               },
             ],
@@ -2252,7 +2253,7 @@ describe('thread message actions', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit as new prompt' }))
-    expect(onEditMessage).toHaveBeenCalledWith('Revise this prompt')
+    expect(onEditMessage).toHaveBeenCalledWith('Revise this prompt', ['/images/shot.png'])
   })
 
   it('opens the checkpoint attached to that exact prompt', () => {
