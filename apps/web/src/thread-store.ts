@@ -211,11 +211,14 @@ export function threadItems(state: ThreadState): Item[] {
  * action would open. Prompts are never streamed, so the structural items are
  * enough. Read on a key press only, never per delta.
  */
-export function lastSentPrompt(state: ThreadState): string | undefined {
+export function lastSentPrompt(
+  state: ThreadState,
+): { text: string; attachments: string[] | undefined } | undefined {
   const { items } = state
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]!
-    if (item.type === 'message' && item.role === 'user' && item.text) return item.text
+    if (item.type === 'message' && item.role === 'user' && item.text)
+      return { text: item.text, attachments: item.attachments }
   }
   return undefined
 }

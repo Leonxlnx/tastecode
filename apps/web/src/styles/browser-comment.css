@@ -1,0 +1,131 @@
+/* A comment pinned on a page, as a chip in a prompt and the card it opens. The
+   tint is painted without padding, so a composer chip keeps every glyph where
+   the textarea above it has them. */
+.composer-chip--browser,
+.prompt-chip--browser,
+.browser-comment-card {
+  --browser-comment-mark: #2f7bf6;
+}
+
+.composer-chip--browser,
+.prompt-chip--browser {
+  --browser-comment-tint: color-mix(in srgb, var(--attention) 13%, transparent);
+  background: var(--browser-comment-tint);
+  border-radius: var(--r-sm);
+  box-shadow: 0 0 0 2px var(--browser-comment-tint);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.composer-chip--browser {
+  pointer-events: auto;
+}
+
+.composer-chip--browser[data-active],
+.prompt-chip--browser:hover,
+.prompt-chip--browser:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--browser-comment-mark);
+}
+
+.prompt-chip--browser {
+  cursor: default;
+  white-space: normal;
+}
+
+.browser-comment-card {
+  position: fixed;
+  z-index: 60;
+  /* The card cannot scroll (it lets the pointer through), so it never outgrows the window
+     inside its 12px edges (BrowserCommentCard.tsx). */
+  max-height: calc(100vh - 24px);
+  overflow: hidden;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-popup);
+  box-shadow: var(--shadow-modal);
+  color: var(--text);
+  font-size: var(--t-sm);
+  pointer-events: none;
+  animation: browser-comment-card var(--dur-popup-in) var(--ease-popup);
+}
+
+.browser-comment-card__shot {
+  position: relative;
+  padding: 26px 12px 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--menu-line);
+}
+
+/* The crop is the element itself, so this frame is the element's outline. */
+.browser-comment-card__shot img {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  object-position: top left;
+  outline: 1px solid var(--browser-comment-mark);
+}
+
+.browser-comment-card__element {
+  position: absolute;
+  top: 10px;
+  left: 11.5px;
+  overflow: hidden;
+  max-width: calc(100% - 23px);
+  padding: 0 5px;
+  background: var(--browser-comment-mark);
+  border-radius: var(--r-xs) var(--r-xs) 0 0;
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-comment-card__body {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px 13px;
+  overflow-wrap: anywhere;
+}
+
+.browser-comment-card__body p {
+  margin: 0;
+}
+
+.browser-comment-card__title {
+  overflow: hidden;
+  color: var(--text-2);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-comment-card__comment {
+  /* A long comment keeps its line breaks but stops after eight lines. */
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+  white-space: pre-wrap;
+}
+
+.browser-comment-card__count {
+  color: var(--text-3);
+}
+
+@keyframes browser-comment-card {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-comment-card {
+    animation: none;
+  }
+}

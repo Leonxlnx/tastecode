@@ -166,6 +166,7 @@ function rememberAttachmentPreview(reference: string, attachment: PickedAttachme
 
 export const isDesktop = bridge?.isDesktop === true
 export const isStartupBenchmark = bridge?.reportStartupMilestone !== undefined
+export const canSavePastedFiles = bridge?.savePastedFile !== undefined
 export const canCapturePreview = bridge?.capturePreview !== undefined
 export const canRevealProjectFile = bridge?.revealProjectFile !== undefined
 export const canDropProjectFolders = bridge?.droppedFolderPaths !== undefined

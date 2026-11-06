@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { IconHourglass, IconLoader2, IconSparkles, IconX } from '@tabler/icons-react'
+import { IconHourglass, IconSparkles } from '@tabler/icons-react'
 import {
   appUpdateInstallState,
   cancelAppUpdateInstall,
@@ -11,6 +11,7 @@ import {
   subscribeAppUpdateInstall,
 } from '../app-update-install.js'
 import { appUpdateState, onAppUpdateState, type AppUpdateState } from '../bridge.js'
+import { NoticeBody } from './Notice.js'
 import { NoticePresence } from './NoticePresence.js'
 
 const DISMISSED_KEY = 'harness.appUpdate.dismissedVersion'
@@ -144,80 +145,74 @@ export function AppUpdateToast(props: {
   }
 
   const running = 'running' in install ? install.running : 0
+  const progress =
+    install.phase === 'checking' || install.phase === 'stopping' || install.phase === 'installing'
   return (
     <NoticePresence
       className="notice notice--app-update"
+      tone={!asking && progress ? 'progress' : 'info'}
       role="status"
       visible={styled && wanted}
       followComposer={false}
     >
       {asking ? (
-        <>
-          <IconHourglass size={16} stroke={1.7} aria-hidden />
-          <span className="notice__text">{runningLabel(running)}</span>
-          <button
-            className="app-update-toast__action app-update-toast__action--danger"
-            type="button"
-            onClick={() => void stopChatsAndInstall()}
-          >
-            Stop and update
-          </button>
-          <button
-            ref={waitButton}
-            className="app-update-toast__action"
-            type="button"
-            onClick={installWhenChatsFinish}
-          >
-            When they finish
-          </button>
-          <button
-            className="app-update-toast__close"
-            type="button"
-            aria-label="Cancel update"
-            onClick={closeQuestion}
-          >
-            <IconX size={15} stroke={1.7} aria-hidden />
-          </button>
-        </>
-      ) : install.phase === 'checking' ||
-        install.phase === 'stopping' ||
-        install.phase === 'installing' ? (
-        <>
-          <IconLoader2 size={16} stroke={1.7} className="spinner" aria-hidden />
-          <span className="notice__text">
-            {install.phase === 'stopping'
-              ? `Stopping ${chatCount(install.running)}…`
-              : 'Restarting TasteCode…'}
-          </span>
-        </>
+        <NoticeBody
+          tone="info"
+          icon={<IconHourglass className="notice-icon" size={16} stroke={1.7} aria-hidden />}
+          actions={
+            <>
+              <button
+                className="notice-action notice-action--danger"
+                type="button"
+                onClick={() => void stopChatsAndInstall()}
+              >
+                Stop and update
+              </button>
+              <button
+                ref={waitButton}
+                className="notice-action"
+                type="button"
+                onClick={installWhenChatsFinish}
+              >
+                When they finish
+              </button>
+            </>
+          }
+          onDismiss={closeQuestion}
+          dismissLabel="Cancel update"
+        >
+          {runningLabel(running)}
+        </NoticeBody>
+      ) : progress ? (
+        <NoticeBody tone="progress">
+          {install.phase === 'stopping'
+            ? `Stopping ${chatCount(running)}…`
+            : 'Restarting TasteCode…'}
+        </NoticeBody>
       ) : (
-        <>
-          <IconSparkles size={16} stroke={1.7} aria-hidden />
-          <span className="notice__text">
-            {version ? `TasteCode ${version} is ready` : 'A TasteCode update is ready'}
-          </span>
-          <button
-            className="app-update-toast__update"
-            type="button"
-            onClick={(event) => {
-              // This button gives way to the question, if there is one.
-              focusWait.current = document.activeElement === event.currentTarget
-              returnFocus.current = null
-              setEngaged(true)
-              void requestAppUpdateInstall()
-            }}
-          >
-            Update
-          </button>
-          <button
-            className="app-update-toast__close"
-            type="button"
-            aria-label="Dismiss update notice"
-            onClick={dismiss}
-          >
-            <IconX size={15} stroke={1.7} aria-hidden />
-          </button>
-        </>
+        <NoticeBody
+          tone="info"
+          icon={<IconSparkles className="notice-icon" size={16} stroke={1.7} aria-hidden />}
+          actions={
+            <button
+              className="notice-action notice-action--primary"
+              type="button"
+              onClick={(event) => {
+                // This button gives way to the question, if there is one.
+                focusWait.current = document.activeElement === event.currentTarget
+                returnFocus.current = null
+                setEngaged(true)
+                void requestAppUpdateInstall()
+              }}
+            >
+              Update
+            </button>
+          }
+          onDismiss={dismiss}
+          dismissLabel="Dismiss update notice"
+        >
+          {version ? `TasteCode ${version} is ready` : 'A TasteCode update is ready'}
+        </NoticeBody>
       )}
     </NoticePresence>
   )

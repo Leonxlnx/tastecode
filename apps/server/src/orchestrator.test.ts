@@ -11,6 +11,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
@@ -201,7 +202,6 @@ const CAPABILITIES: Capabilities = {
 class FakeSession implements AgentSession {
   /** Set before attach to model an agent that negotiated no session reload. */
   static nextResumable: boolean | undefined
-  readonly capabilities = CAPABILITIES
   readonly resumable = FakeSession.nextResumable
   emit: (event: DomainEvent) => void = () => {}
   disposed = false
@@ -250,7 +250,10 @@ class FakeSession implements AgentSession {
 
   #listeners: Array<(event: DomainEvent) => void> = []
 
-  constructor(readonly id: string) {}
+  constructor(
+    readonly id: string,
+    readonly capabilities = CAPABILITIES,
+  ) {}
 
   async sendTurn(
     _threadId: string,
@@ -431,12 +434,17 @@ const quietServices = {
 
 /** Codex's control process would start the installed CLI; this one has nothing to report. */
 class QuietCodexControl extends EventEmitter implements CodexControlAdapter {
+  readonly #models: readonly Model[]
+  constructor(models: readonly Model[] = []) {
+    super()
+    this.#models = models
+  }
   async start(): Promise<void> {}
   async dispose(): Promise<void> {}
   onUsageChanged(): void {}
   account = signedOut
   async listModels(): Promise<Model[]> {
-    return []
+    return [...this.#models]
   }
   async listMcpServers(): Promise<McpServer[]> {
     return []
@@ -489,6 +497,7 @@ function harness(
   stopSettleMs?: number,
 ) {
   const sessions: FakeSession[] = []
+  const sessionCapabilities: Capabilities[] = []
   const received: Array<{
     threadId: string
     event: DomainEvent
@@ -529,13 +538,15 @@ function harness(
       })),
   )
 
+  /** What every provider's model list reports. */
+  const models: Model[] = []
   const runtimeFor = (provider: ProviderId): ProviderRuntime => ({
     async start(workspacePath, options) {
       startedIn.push(workspacePath)
       startedOptions.push(options)
       const barrier = startBarriers.shift()
       if (barrier) await barrier
-      const session = new FakeSession(`s${sessions.length + 1}`)
+      const session = new FakeSession(`s${sessions.length + 1}`, sessionCapabilities.shift())
       sessions.push(session)
       return {
         thread: {
@@ -551,7 +562,7 @@ function harness(
       }
     },
     async listModels() {
-      return []
+      return models
     },
     ...(provider === 'codex' || provider === 'grok'
       ? {
@@ -561,7 +572,7 @@ function harness(
             resumedOptions.push(options)
             const barrier = resumeBarriers.shift()
             if (barrier) await barrier
-            const session = new FakeSession(`s${sessions.length + 1}`)
+            const session = new FakeSession(`s${sessions.length + 1}`, sessionCapabilities.shift())
             sessions.push(session)
             return {
               thread: {
@@ -620,14 +631,16 @@ function harness(
         return [provider, { ...quiet, ...providerServices?.[provider] }]
       }),
     ),
-    createCodex: () => new QuietCodexControl(),
+    createCodex: () => new QuietCodexControl(models),
     ...(worktreeRoot ? { worktreeRoot } : {}),
     ...(defaultSkillsRoot ? { defaultSkillsRoot } : {}),
   })
 
   return {
     store,
+    models,
     sessions,
+    sessionCapabilities,
     received,
     sideReceived,
     lifecycles,
@@ -652,6 +665,143 @@ function harness(
     capturePreview,
   }
 }
+
+describe('queue steering capability lifecycle', () => {
+  it.each(['new', 'persisted'] as const)(
+    'pushes steering availability for the first turn of a %s chat without queueing',
+    async (kind) => {
+      const { orchestrator, store, sessions, queueStates } = harness()
+      try {
+        let threadId: string
+        if (kind === 'persisted') {
+          store.addProject('/repo')
+          store.addThread({
+            id: 'persisted',
+            projectPath: '/repo',
+            provider: 'codex',
+            title: 'Old',
+          })
+          threadId = 'persisted'
+          expect(orchestrator.queue(threadId).canSteer).toBe(false)
+        } else {
+          threadId = (await orchestrator.startThread('codex', '/repo')).id
+        }
+        await orchestrator.submitTurn(threadId, 'First')
+
+        expect(orchestrator.queue(threadId)).toEqual({ items: [], canSteer: true })
+        expect(queueStates).toEqual([{ threadId, itemIds: [], canSteer: true }])
+        sessions[0]!.emit(turnStarted(threadId, 's1-turn'))
+        sessions[0]!.emit(message('Streaming', 's1-turn'))
+        expect(queueStates).toHaveLength(1)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+
+  it.each(['close', 'disconnect', 'idle', 'dispose'] as const)(
+    'pushes loss of steering availability on runtime %s',
+    async (reason) => {
+      const { orchestrator, store, sessions, queueStates } = harness(undefined, undefined, 1)
+      try {
+        const { id } = await orchestrator.startThread('codex', '/repo')
+        if (reason === 'idle') await orchestrator.startThread('codex', '/repo')
+        queueStates.length = 0
+        if (reason === 'close') await orchestrator.close(id)
+        else if (reason === 'disconnect') sessions[0]!.emitDisconnected()
+        else if (reason === 'dispose') await orchestrator.disposeAll()
+        else {
+          sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+          sessions[1]!.emit({ type: 'turn.completed', turnId: 's2-turn', status: 'completed' })
+        }
+
+        expect(orchestrator.queue(id).canSteer).toBe(false)
+        expect(queueStates).toEqual([{ threadId: id, itemIds: [], canSteer: false }])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+
+  it('publishes the replacement session capability when a chat moves providers', async () => {
+    const { orchestrator, store, sessionCapabilities, queueStates } = harness()
+    try {
+      const { id } = await orchestrator.startThread('codex', '/repo')
+      queueStates.length = 0
+      sessionCapabilities.push({ ...CAPABILITIES, steer: false })
+      await orchestrator.changeProvider(id, { provider: 'grok' })
+      expect(orchestrator.queue(id).canSteer).toBe(false)
+      expect(queueStates).toEqual([{ threadId: id, itemIds: [], canSteer: false }])
+
+      await orchestrator.changeProvider(id, { provider: 'codex', model: 'next-model' })
+      expect(orchestrator.queue(id).canSteer).toBe(true)
+      expect(queueStates.at(-1)).toEqual({ threadId: id, itemIds: [], canSteer: true })
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
+  it.each(['attach', 'close', 'disconnect', 'idle', 'dispose'] as const)(
+    'finishes runtime %s when the steering listener throws',
+    async (reason) => {
+      const { orchestrator, store, sessions, queueNotificationError } = harness(
+        undefined,
+        undefined,
+        1,
+      )
+      try {
+        if (reason === 'attach') queueNotificationError.current = new Error('listener failed')
+        const { id } = await orchestrator.startThread('codex', '/repo')
+        if (reason === 'idle') await orchestrator.startThread('codex', '/repo')
+        queueNotificationError.current = new Error('listener failed')
+
+        if (reason === 'close') await orchestrator.close(id)
+        else if (reason === 'disconnect') sessions[0]!.emitDisconnected()
+        else if (reason === 'idle') {
+          sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+          sessions[1]!.emit({ type: 'turn.completed', turnId: 's2-turn', status: 'completed' })
+        } else await orchestrator.disposeAll()
+
+        await vi.waitFor(() => expect(sessions[0]!.disposed).toBe(true))
+        expect(orchestrator.queue(id).canSteer).toBe(false)
+        // Cleanup must also let a later shutdown finish, including any remaining runtime.
+        await orchestrator.disposeAll()
+        expect(sessions.every((session) => session.disposed)).toBe(true)
+      } finally {
+        queueNotificationError.current = undefined
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+
+  it.each(['grok', 'api'] as const)(
+    'keeps unsupported %s sessions unavailable and refuses to steer their queued prompts',
+    async (provider) => {
+      const { orchestrator, store, sessions, sessionCapabilities, queueStates } = harness()
+      try {
+        sessionCapabilities.push({ ...CAPABILITIES, steer: false })
+        const { id } = await orchestrator.startThread(provider, '/repo')
+        await orchestrator.submitTurn(id, 'First')
+        const queued = await orchestrator.submitTurn(id, 'Next')
+        if (!queued.queued) throw new Error('expected queued prompt')
+        expect(queueStates).toEqual([
+          { threadId: id, itemIds: [queued.queuedTurn.id], canSteer: false },
+        ])
+        await expect(orchestrator.steerQueuedTurn(id, queued.queuedTurn.id)).rejects.toThrow(
+          'this agent does not support steering a running turn',
+        )
+        expect(sessions[0]!.steered).toEqual([])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+})
 
 describe('failed provider starts', () => {
   const cleanupFailure = (message: string, dispose: () => Promise<void>) => {
@@ -1256,11 +1406,13 @@ describe('idle thread runtime retention', () => {
     const store = new Store(':memory:')
     const { orchestrator, sessions } = harness(undefined, store, 8, 1_000)
     try {
-      const thread = await orchestrator.startThread('codex', process.cwd())
-      sessions[0]?.emit({
-        type: 'thread.error',
-        threadId: thread.id,
-        message: 'provider failed before the queued retry',
+      const thread = { id: 'persisted-queued' }
+      store.addProject(process.cwd())
+      store.addThread({
+        id: thread.id,
+        projectPath: process.cwd(),
+        provider: 'codex',
+        title: 'Queued retry',
       })
       store.enqueueQueuedTurn({
         id: 'queued',
@@ -1270,6 +1422,7 @@ describe('idle thread runtime retention', () => {
         options: {},
         createdAt: Date.now(),
       })
+      await orchestrator.setThreadApproval(thread.id, 'full')
 
       await vi.advanceTimersByTimeAsync(10_000)
       expect(sessions[0]?.disposed).toBe(false)
@@ -3788,7 +3941,11 @@ describe('provider-neutral design briefing', () => {
         expect(session.sent[1]).toContain('restrictions have ended')
         expect(session.sent[1]).not.toContain('must contain only the phase result')
         expect(session.sent[1]).not.toContain('<selected-reference-workflow')
-        expect(session.sentAttachments[1]).toEqual([reference])
+        // The briefing turn already gave the provider the reference; it is named, not sent again.
+        expect(session.sentAttachments[1]).toEqual([])
+        expect(session.sent[1]).toContain(
+          `attached earlier in this chat and still apply unchanged; they are not attached again: ${path.basename(reference)}.`,
+        )
         expect(session.sentOptions[1]).toEqual(options)
         session.emit(turnStarted(thread.id, 'answer'))
         session.emit(userMessage('internal-prompt', session.sent[1]!, 'answer', 'started'))
@@ -5427,7 +5584,12 @@ describe('provider-neutral design briefing', () => {
       const appScreen = dashboard && APP_SCREENS_ENABLED && !DASHBOARD_REFERENCES_ENABLED
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
       const referencePath = path.join(workspace, 'reference-home.png')
-      writeFileSync(referencePath, 'reference image bytes')
+      // One run carries a phone-sized reference, the size that overflowed Codex's request (#2240).
+      const largeReference = provider === 'codex' && !dashboard
+      writeFileSync(
+        referencePath,
+        largeReference ? Buffer.alloc(10 * 1024 * 1024) : 'reference image bytes',
+      )
       const { orchestrator, sessions, received, store, capturePreview } = harness()
       const stopCount = previewStops.count
       try {
@@ -5579,7 +5741,7 @@ describe('provider-neutral design briefing', () => {
         expect(brief.explicitAnswers).toEqual([])
         expect(sessions[0]?.userInputs).toHaveLength(1)
         expect(sessions[0]?.sent[1]).toContain('Brand phase')
-        expect(sessions[0]?.sentAttachments[1]).toEqual([referencePath])
+        expect(sessions[0]?.sentAttachments[1]).toEqual([])
 
         expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false)
         expect(
@@ -5637,8 +5799,7 @@ describe('provider-neutral design briefing', () => {
           expect(sessions[0]?.sent[2]).not.toContain('normally plan at least eight')
         }
         expect(sessions[0]?.sent[2]).toContain('user-reference-1')
-        expect(sessions[0]?.sentAttachments[2]?.[0]).toBe(referencePath)
-        expect(sessions[0]?.sentAttachments[2]).toEqual([referencePath])
+        expect(sessions[0]?.sentAttachments[2]).toEqual([])
 
         sessions[0]?.emit(
           message(
@@ -5693,7 +5854,7 @@ describe('provider-neutral design briefing', () => {
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(4))
         expect(sessions[0]?.sent[3]).toContain('Asset phase')
-        expect(sessions[0]?.sentAttachments[3]).toEqual([referencePath])
+        expect(sessions[0]?.sentAttachments[3]).toEqual([])
 
         sessions[0]?.emit(message(JSON.stringify({ version: 1, assets: [] }), 's1-turn'))
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
@@ -5706,7 +5867,7 @@ describe('provider-neutral design briefing', () => {
           expect(sessions[0]?.sent[4]).toContain('DASHBOARD INTERACTION AND MOTION')
           expect(sessions[0]?.sent[4]).not.toContain('<reference-reveal-source>')
         }
-        expect(sessions[0]?.sentAttachments[4]).toEqual([referencePath])
+        expect(sessions[0]?.sentAttachments[4]).toEqual([])
         mkdirSync(path.join(workspace, 'src'))
         writeFileSync(
           path.join(workspace, 'src', 'page.tsx'),
@@ -5749,8 +5910,11 @@ describe('provider-neutral design briefing', () => {
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(7))
         expect(sessions[0]?.sent[6]).toContain('visual Review phase')
         if (appScreen) expect(sessions[0]?.sent[6]).toContain('DASHBOARD INTERACTION AND MOTION')
-        expect(sessions[0]?.sentAttachments[6]).toHaveLength(3)
-        expect(sessions[0]?.sentAttachments[6]).toContain(referencePath)
+        // Only the new screenshots go out; the provider already holds the reference.
+        expect(sessions[0]?.sentAttachments[6]).toEqual([
+          path.join(os.tmpdir(), '1440x1000.png'),
+          path.join(os.tmpdir(), '390x844.png'),
+        ])
         sessions[0]?.emit(
           message(
             JSON.stringify({
@@ -5775,13 +5939,10 @@ describe('provider-neutral design briefing', () => {
         expect(sessions[0]?.sent[7]).toContain('repair attempt 1 of 2')
         if (appScreen) expect(sessions[0]?.sent[7]).toContain('DASHBOARD INTERACTION AND MOTION')
         expect(sessions[0]?.sent[7]).toContain('<screenshots>')
-        expect(sessions[0]?.sentAttachments[7]).toHaveLength(3)
-        expect(sessions[0]?.sentAttachments[7]).toContain(referencePath)
-        expect(sessions[0]?.sentAttachments[7]).toEqual(
-          expect.arrayContaining([
-            path.join(os.tmpdir(), '1440x1000.png'),
-            path.join(os.tmpdir(), '390x844.png'),
-          ]),
+        // Repair works from the screenshots Review already sent.
+        expect(sessions[0]?.sentAttachments[7]).toEqual([])
+        expect(sessions[0]?.sent[7]).toContain(
+          `not attached again: ${path.join(os.tmpdir(), '1440x1000.png')}, ${path.join(os.tmpdir(), '390x844.png')}, reference-home.png. If you no longer have them after a context compaction, open them from these paths.`,
         )
         sessions[0]?.emit(
           message(
@@ -5818,12 +5979,10 @@ describe('provider-neutral design briefing', () => {
             ),
           ).toBe(true),
         )
-        // Qualification and briefing run fast; every phase after the
-        // validated brief keeps the user's requested effort.
-        expect(sessions[0]?.sentOptions).toEqual([
-          ...Array.from({ length: 1 }, () => ({ model, effort: 'low' })),
-          ...Array.from({ length: 8 }, () => ({ model, effort: 'xhigh' })),
-        ])
+        // Every phase, the briefing included, keeps the user's requested effort (#2242).
+        expect(sessions[0]?.sentOptions).toEqual(
+          Array.from({ length: 9 }, () => ({ model, effort: 'xhigh' })),
+        )
         expect(readdirSync(path.join(workspace, '.taste')).sort()).toEqual([
           ...(appScreen ? ['app-kit'] : []),
           'assets.json',
@@ -5835,6 +5994,15 @@ describe('provider-neutral design briefing', () => {
         expect(store.designRun(thread.id)).toBeUndefined()
         expect(previewStops.count).toBe(stopCount)
         expect(capturePreview).toHaveBeenCalledTimes(2)
+        // The provider sends every image of the chat with each request, so each image goes out once.
+        const attached = sessions[0]!.sentAttachments.flat()
+        expect(attached.filter((file) => file === referencePath)).toHaveLength(1)
+        if (largeReference) {
+          const encoded = attached
+            .filter((file) => existsSync(file))
+            .reduce((total, file) => total + Math.ceil(statSync(file).size / 3) * 4, 0)
+          expect(encoded).toBeLessThan(64 * 1024 * 1024)
+        }
         expect(
           JSON.parse(readFileSync(path.join(workspace, '.taste', 'review.json'), 'utf8')),
         ).toMatchObject({ verdict: 'pass', findings: [] })
@@ -6141,7 +6309,14 @@ describe('provider-neutral design briefing', () => {
       session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
       await vi.waitFor(() => expect(session.sent).toHaveLength(3))
       expect(session.sent[2]).toContain('Page Blueprint phase')
-      expect(session.sentAttachments[2]).toEqual(Object.values(images))
+      // Page adds only the deck images Brand did not show; Brand's are named instead.
+      const brandImages = [images.hero, images.heroMobile, images.about, images.social]
+      expect(session.sentAttachments[2]).toEqual(
+        Object.values(images).filter((image) => !brandImages.includes(image)),
+      )
+      expect(session.sent[2]).toContain(
+        `not attached again: ${brandImages.map((image) => path.basename(image)).join(', ')}.`,
+      )
       for (const id of ['b-faq', 'a-footer']) expect(session.sent[2]).toContain(`"id": "${id}"`)
       expect(session.sent[2]).toContain(anchorLanguage)
     } finally {
@@ -7206,6 +7381,63 @@ describe('persisted threads', () => {
               (event.type === 'item.delta' && event.itemId === 'internal-brand-prompt'),
           ),
       ).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('runs a Design phase at the nearest effort the model lists', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-effort-'))
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'design-effort',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Design effort',
+    })
+    writeDesignBrief(workspace, {
+      originalRequest: 'Build a studio site.',
+      subject: 'Studio',
+      pageType: 'Marketing site',
+      scope: 'Single page',
+      primaryGoal: 'Generate enquiries',
+      audience: 'Prospective clients',
+      offer: 'Design services',
+      primaryAction: 'Start a project',
+      requiredContent: [],
+      constraints: [],
+      brandInputs: [],
+      creativeControl: 'Agent-led',
+      explicitAnswers: [],
+      assumptions: [],
+      unresolved: [],
+    })
+    store.setDesignRun('design-effort', {
+      approvedBrief: readDesignBrief(workspace),
+      workspacePath: workspace,
+      originalRequest: 'Build a studio site.',
+      // Saved while another model was chosen; this one offers no "xhigh".
+      options: { model: 'web-model', effort: 'xhigh' },
+      phase: 'brand',
+      askedQuestions: false,
+      finalAsked: false,
+      explicitAnswers: [],
+    })
+    const { orchestrator, sessions, models } = harness(undefined, store)
+    models.push({
+      id: 'web-model',
+      displayName: 'Web model',
+      isDefault: true,
+      reasoningEfforts: ['medium', 'high'],
+    } as Model)
+    try {
+      await orchestrator.listModels('codex')
+      await orchestrator.submitTurn('design-effort', 'Next.')
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+      expect(sessions[0]?.sentOptions[0]).toEqual({ model: 'web-model', effort: 'high' })
     } finally {
       await orchestrator.disposeAll()
       store.close()

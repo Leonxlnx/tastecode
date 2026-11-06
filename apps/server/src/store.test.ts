@@ -488,7 +488,9 @@ describe('durable queued turns', () => {
     seeded.deleteQueuedTurn('thread-1', 'submission-a')
     seeded.enqueueQueuedTurn(queued('submission-c', 'Third.'))
     expect(seeded.claimQueuedTurn('thread-1', 'submission-b', 'steer')?.intent).toBe('steer')
-    for (let index = 0; index < 1_000; index += 1) {
+    // A transcript beside the queue: replay must not parse it (two parses below, one per row).
+    // Each append commits to the file, which a busy Windows runner made take 20 s for 1,000.
+    for (let index = 0; index < 20; index += 1) {
       seeded.append('thread-1', message(`old transcript delta ${index}`))
     }
     seeded.close()

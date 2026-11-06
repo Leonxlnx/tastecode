@@ -11,17 +11,21 @@ import {
   IconRefresh as RefreshCw,
   IconDeviceMobile as Smartphone,
   IconDeviceTablet as Tablet,
+  IconMessagePlus as MessagePlus,
 } from '@tabler/icons-react'
 import type { BrowserCommand, BrowserConsoleEntry, BrowserResult } from '@harness/contracts'
 import {
   agentBrowserIsolated,
   isDesktop,
+  canSavePastedFiles,
   isMacOS,
   onBrowserShortcut,
   openExternalUrl,
   setAgentBrowserGuest,
   type BrowserShortcutAction,
 } from '../../bridge.js'
+import { BrowserAnnotations, type AnnotationGuest } from './BrowserAnnotations.js'
+import type { AnnotationDraft } from './browser-annotations.js'
 import { runAgentBrowserCommand } from './agent-browser-executor.js'
 import { errorMessage } from '../../boundary.js'
 import { IconMorph } from '../IconMorph.js'
@@ -35,6 +39,7 @@ import {
 import type { BrowserPageInfo } from './browser-page.js'
 import { browserShortcut, browserShortcutHints } from './browser-shortcuts.js'
 import { browserAddress } from './browser-url.js'
+import { scalePng } from './white-ground.js'
 import {
   BROWSER_VIEWPORTS,
   fitBrowserViewport,
@@ -57,7 +62,7 @@ type BrowserState = {
   canGoForward: boolean
 }
 
-type BrowserGuest = HTMLElement & {
+type BrowserGuest = AnnotationGuest & {
   canGoBack(): boolean
   canGoForward(): boolean
   getTitle(): string
@@ -90,28 +95,26 @@ const ConsoleMessageEventSchema = z.object({
   message: z.string().optional(),
 })
 
-/** Scales a PNG data URL down to a width and returns its base64. */
-async function scalePng(dataUrl: string, width: number): Promise<string> {
-  const image = new Image()
-  image.src = dataUrl
-  await image.decode()
-  if (image.naturalWidth <= width) return dataUrl.slice(dataUrl.indexOf(',') + 1)
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = Math.round((image.naturalHeight * width) / image.naturalWidth)
-  canvas.getContext('2d')?.drawImage(image, 0, 0, canvas.width, canvas.height)
-  const scaled = canvas.toDataURL('image/png')
-  return scaled.slice(scaled.indexOf(',') + 1)
-}
-
 declare global {
   interface HTMLElementTagNameMap {
     webview: BrowserGuest
   }
 }
 
+/** The same document, ignoring the fragment, so a reload is not a move to another page. */
+function samePage(next: string | undefined, current: string): boolean {
+  if (!next) return false
+  try {
+    const [a, b] = [new URL(next), new URL(current)]
+    return a.origin === b.origin && a.pathname === b.pathname && a.search === b.search
+  } catch {
+    return false
+  }
+}
+
 const NavigationEventSchema = z.object({
   isMainFrame: z.boolean().optional(),
+  isInPlace: z.boolean().optional(),
   url: z.string().optional(),
 })
 const PageTitleEventSchema = z.object({ title: z.string() })
@@ -145,9 +148,13 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   tabId,
   onPageInfo,
   onClose,
+  imagesSupported = false,
+  onAnnotationDraft,
   agent,
 }: {
   active: boolean
+  imagesSupported?: boolean | undefined
+  onAnnotationDraft?: ((draft: AnnotationDraft) => void) | undefined
   navigation?: BrowserNavigationRequest | undefined
   /** The user opened this tab to type a URL: focus the address once it mounts. */
   focusAddressOnOpen?: boolean | undefined
@@ -182,6 +189,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const [address, setAddress] = useState('')
   const [state, setState] = useState<BrowserState>(EMPTY_STATE)
   const [hasRenderedPage, setHasRenderedPage] = useState(false)
+  const [annotating, setAnnotating] = useState(false)
+  const [annotationRevision, setAnnotationRevision] = useState(0)
   const [viewport, setViewport] = useState<BrowserViewportId>('fluid')
   // A notice about the toolbar: an address it refused, a native call that failed.
   const [error, setError] = useState<string>()
@@ -263,6 +272,15 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       setState((current) => ({ ...current, loading: true }))
     }
     const onStop = () => syncGuestState(true)
+    const onNavigationStart = (event: Event) => {
+      const navigation = NavigationEventSchema.safeParse(event)
+      if (!navigation.success || navigation.data.isMainFrame === false) return
+      if (navigation.data.isInPlace) return
+      // A dev server reloads the page under an agent's edits: comments outlive that.
+      if (samePage(navigation.data.url, view.getURL())) return
+      setAnnotating(false)
+      setAnnotationRevision((revision) => revision + 1)
+    }
     const onNavigate = (event: Event) => {
       const navigation = NavigationEventSchema.safeParse(event)
       const url = webPageUrl(navigation.success ? navigation.data.url : undefined)
@@ -308,6 +326,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       syncGuestState()
     }
 
+    view.addEventListener('did-start-navigation', onNavigationStart)
     view.addEventListener('did-attach', onAttach)
     view.addEventListener('dom-ready', onReady)
     view.addEventListener('did-start-loading', onStart)
@@ -348,6 +367,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       guest.current = null
       readyGuest.current = null
       lastNavigationRequest.current = undefined
+      view.removeEventListener('did-start-navigation', onNavigationStart)
       view.removeEventListener('did-attach', onAttach)
       view.removeEventListener('dom-ready', onReady)
       view.removeEventListener('did-start-loading', onStart)
@@ -592,6 +612,11 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       onKeyDown={(event) => {
         if (event.defaultPrevented || event.nativeEvent.isComposing) return
         if (event.key === 'Escape') {
+          if (annotating) {
+            event.preventDefault()
+            setAnnotating(false)
+            return
+          }
           if (event.target !== addressInput.current || !editingAddress.current) return
           event.preventDefault()
           revertAddress()
@@ -684,6 +709,18 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           </button>
         </form>
 
+        {isDesktop && canSavePastedFiles && onAnnotationDraft ? (
+          <button
+            type="button"
+            aria-label="Annotate page"
+            title="Annotate page"
+            aria-pressed={annotating}
+            disabled={!state.url || state.loading || Boolean(failure)}
+            onClick={() => setAnnotating((value) => !value)}
+          >
+            <MessagePlus size={15} aria-hidden />
+          </button>
+        ) : null}
         <div className="workspace-browser__viewports" aria-label="Preview size">
           {BROWSER_VIEWPORTS.map((option) => {
             const Icon = VIEWPORT_ICONS[option.id]
@@ -717,6 +754,16 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           data-painted={hasRenderedPage}
           aria-hidden={!active}
         >
+          {guest.current && onAnnotationDraft ? (
+            <BrowserAnnotations
+              key={annotationRevision}
+              view={guest.current}
+              enabled={annotating && active}
+              imagesSupported={imagesSupported}
+              onDraft={onAnnotationDraft}
+              onExit={() => setAnnotating(false)}
+            />
+          ) : null}
           {loadingFirstPage ? (
             <SkeletonStatus label="Loading page…" className="workspace-browser__skeleton">
               <div className="workspace-browser__skeleton-header">

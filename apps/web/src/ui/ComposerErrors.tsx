@@ -8,6 +8,7 @@ import {
 } from '@tabler/icons-react'
 import { Menu, MenuItem } from './Menu.js'
 import '../styles/composer-provider-shelf.css'
+import '../styles/notice.css'
 
 export type ComposerError = {
   id: string
@@ -66,18 +67,19 @@ export function ComposerErrors({
       {visibleErrors.map((error) => (
         <div
           className={`composer__error-row${error.tone === 'info' ? ' composer__error-row--info' : ''}`}
+          data-notice-tone={error.tone === 'info' ? 'info' : 'error'}
           key={error.id}
         >
           {error.tone === 'info' ? (
-            <IconInfoCircle size={15} strokeWidth={1.8} aria-hidden />
+            <IconInfoCircle className="notice-icon" size={16} stroke={1.7} aria-hidden />
           ) : (
-            <IconAlertCircle size={15} strokeWidth={1.8} aria-hidden />
+            <IconAlertCircle className="notice-icon" size={16} stroke={1.7} aria-hidden />
           )}
-          <span className="composer__provider-message" role={error.role ?? 'alert'}>
+          <span className="composer__provider-message notice__text" role={error.role ?? 'alert'}>
             {error.message}
           </span>
           {error.action ? (
-            <button className="composer__provider-action" type="button" onClick={error.action.run}>
+            <button className="notice-action" type="button" onClick={error.action.run}>
               {error.action.label}
               <IconArrowRight size={13} aria-hidden />
             </button>
@@ -85,7 +87,7 @@ export function ComposerErrors({
             <Menu
               align="right"
               drop="up"
-              triggerClassName="composer__provider-action"
+              triggerClassName="notice-action"
               panelLabel={error.choices.label}
               trigger={() => (
                 <>
@@ -112,7 +114,7 @@ export function ComposerErrors({
           ) : null}
           {error.report && error.role !== 'status' ? (
             <button
-              className="composer__error-report"
+              className="notice-action notice-action--quiet"
               type="button"
               title="Send this error to the TasteCode team"
               onClick={error.report}
@@ -121,7 +123,7 @@ export function ComposerErrors({
             </button>
           ) : null}
           <button
-            className="composer__error-dismiss"
+            className="notice-close"
             type="button"
             aria-label={`Dismiss error: ${error.message}`}
             title="Dismiss error"
@@ -135,7 +137,7 @@ export function ComposerErrors({
               onDismiss?.()
             }}
           >
-            <IconX size={14} strokeWidth={1.8} aria-hidden />
+            <IconX size={15} stroke={1.7} aria-hidden />
           </button>
         </div>
       ))}

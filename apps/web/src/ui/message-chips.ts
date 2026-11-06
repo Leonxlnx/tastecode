@@ -1,4 +1,10 @@
 import {
+  browserCommentSegments,
+  newBrowserCommentId,
+  rememberBrowserComment,
+} from './browser-comments.js'
+import {
+  browserCommentChipText,
   composerChipText,
   hasComposerChips,
   type ComposerChipKind,
@@ -96,13 +102,54 @@ function chipKind(
  * A sent prompt put back into the composer (Edit, Arrow Up) with its tokens as
  * chips again. A draft that already holds chips is left as it is.
  */
-export function composerTextWithChips(text: string, known: KnownChipTokens): string {
+export function composerTextWithChips(
+  text: string,
+  known: KnownChipTokens,
+  attachments: readonly string[] = [],
+): string {
   if (hasComposerChips(text)) return text
+  if (holdsCommentBlock(text))
+    return commentBlocksAsChips(text, attachments, (part) => composerTextWithChips(part, known))
   const segments = messageChipSegments(text, known)
   if (segments.length === 1 && segments[0]!.type === 'text') return text
   return segments
     .map((segment) =>
       segment.type === 'chip' ? composerChipText(segment.token, segment.kind) : segment.text,
     )
+    .join('')
+}
+
+/**
+ * Text that was never sent, such as a queued prompt or a restored draft: its comment
+ * blocks come back as chips, and what the user typed stays exactly as typed.
+ */
+export function composerTextWithCommentChips(
+  text: string,
+  attachments: readonly string[] = [],
+): string {
+  if (hasComposerChips(text) || !holdsCommentBlock(text)) return text
+  return commentBlocksAsChips(text, attachments, (part) => part)
+}
+
+function holdsCommentBlock(text: string): boolean {
+  return (
+    text.includes('[Browser comment]') &&
+    browserCommentSegments(text).some((part) => part.type === 'comment')
+  )
+}
+
+function commentBlocksAsChips(
+  text: string,
+  attachments: readonly string[],
+  rest: (text: string) => string,
+): string {
+  return browserCommentSegments(text)
+    .map((segment) => {
+      if (segment.type === 'text') return rest(segment.text)
+      const image = attachments.find((path) => path.split(/[/\\]/).at(-1) === segment.imageName)
+      const comment = { ...segment.comment, id: newBrowserCommentId(), ...(image ? { image } : {}) }
+      rememberBrowserComment(comment)
+      return browserCommentChipText(comment)
+    })
     .join('')
 }

@@ -193,6 +193,19 @@ describe('Codex notifications', () => {
     })
     expect(mapCodexError({ ...capturedError, willRetry: true })).toBeUndefined()
   })
+
+  it('explains a request the API refused as too large instead of showing its JSON', () => {
+    const raw =
+      '{"error":{"message":"Encoded request body exceeds 67108864 bytes","type":"invalid_request_error","code":"invalid_request_error"}}'
+    expect(
+      mapCodexError({ ...capturedError, error: { ...capturedError.error, message: raw } }),
+    ).toEqual({
+      type: 'thread.error',
+      threadId: 'captured-thread',
+      message:
+        'This chat is too large for Codex to send: one request would pass its 64 MB limit, usually because of the images the chat holds. Continue in a new chat.',
+    })
+  })
 })
 
 describe('Codex auto-review', () => {
