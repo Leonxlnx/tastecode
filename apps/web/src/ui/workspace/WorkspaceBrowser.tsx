@@ -26,12 +26,14 @@ import { runAgentBrowserCommand } from './agent-browser-executor.js'
 import { errorMessage } from '../../boundary.js'
 import { IconMorph } from '../IconMorph.js'
 import { Skeleton, SkeletonLines, SkeletonStatus } from '../Skeleton.js'
+import { BrowserRecentPages } from './BrowserRecentPages.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import {
   browserLoadFailureView,
   loadRejectionFailure,
   type BrowserLoadFailureView,
 } from './browser-load-error.js'
+import { rememberBrowserVisit } from './browser-history.js'
 import type { BrowserPageInfo } from './browser-page.js'
 import { browserShortcut, browserShortcutHints } from './browser-shortcuts.js'
 import { browserAddress } from './browser-url.js'
@@ -142,6 +144,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   active,
   navigation,
   focusAddressOnOpen,
+  keepHistory,
   tabId,
   onPageInfo,
   onClose,
@@ -151,6 +154,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   navigation?: BrowserNavigationRequest | undefined
   /** The user opened this tab to type a URL: focus the address once it mounts. */
   focusAddressOnOpen?: boolean | undefined
+  /** Lists this tab's pages under Recently used: the user's own, not an agent's or a preview's. */
+  keepHistory?: boolean | undefined
   /** Passed back to onPageInfo, so one stable owner callback serves every tab. */
   tabId?: string | undefined
   /** The page's URL and title whenever either changes, for the tab label. */
@@ -213,6 +218,13 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     if (tabId === undefined) return
     pageInfoListener.current?.(tabId, { url: state.url, title: state.url ? state.title : '' })
   }, [tabId, state.url, state.title])
+
+  // Loading ends with what the guest really shows, so an address that failed is
+  // never listed; a title that arrives later updates the same row.
+  useEffect(() => {
+    if (!keepHistory || !state.url || state.loading || failure) return
+    rememberBrowserVisit(state.url, state.title)
+  }, [keepHistory, state.url, state.title, state.loading, failure])
 
   const syncGuestState = useCallback((pageReady = false) => {
     const view = guest.current
@@ -750,17 +762,19 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
             </WorkspaceEmptyState>
           </div>
         ) : !state.url ? (
-          <div className="workspace-browser__placeholder">
-            <WorkspaceEmptyState
-              kind="browser"
-              title={isDesktop ? 'Start browsing' : 'Desktop browser unavailable'}
-              detail={
-                isDesktop
-                  ? 'Enter a URL to open a page.'
-                  : 'The in-app browser runs in the desktop app.'
-              }
-            />
-          </div>
+          <BrowserRecentPages onOpen={navigate}>
+            <div className="workspace-browser__placeholder">
+              <WorkspaceEmptyState
+                kind="browser"
+                title={isDesktop ? 'Start browsing' : 'Desktop browser unavailable'}
+                detail={
+                  isDesktop
+                    ? 'Enter a URL to open a page.'
+                    : 'The in-app browser runs in the desktop app.'
+                }
+              />
+            </div>
+          </BrowserRecentPages>
         ) : null}
         {error ? (
           <div className="workspace-browser__error" role="alert">

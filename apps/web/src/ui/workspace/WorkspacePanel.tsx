@@ -817,6 +817,7 @@ function WorkspaceToolSurface(props: {
         active={props.active}
         navigation={props.browserNavigation}
         focusAddressOnOpen={props.tab.userOpened}
+        keepHistory={props.tab.userOpened}
         tabId={props.tab.id}
         onPageInfo={props.onBrowserPage}
         onClose={props.onCloseTab}
