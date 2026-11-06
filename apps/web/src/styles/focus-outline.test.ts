@@ -49,6 +49,10 @@ describe('focus outline', () => {
     expect(focusRingCss).toMatch(
       /\.navitem,[\s\S]*?\.sess,[\s\S]*?\.rail__foot \.menutrigger,[\s\S]*?\):focus-visible \{\s*outline-offset: var\(--focus-ring-inset\);/s,
     )
+    // The chat header's buttons sit 3px from the title, so their ring stays inside them.
+    expect(focusRingCss).toMatch(
+      /:is\(\.stagehead__menu-trigger, \.stagehead__action\):focus-visible \{\s*outline-offset: var\(--focus-ring-inset\);/s,
+    )
   })
 
   it('draws rows in menus, the model picker and settings with the same ring', () => {
