@@ -153,7 +153,7 @@ async function main() {
   assert.ok(shot!.capturedHeight && shot!.documentHeight === shot!.capturedHeight)
   const image = nativeImage.createFromPath(first.screenshots[0]!.path)
   assert.ok(!image.isEmpty() && image.getSize().height <= 12_000)
-  await copyFile(first.screenshots[0]!.path, path.join(report, 'preview.png'))
+  await copyFile(first.screenshots[0]!.path, path.join(report, 'preview.jpg'))
 
   const previewSession = session.fromPartition('preview-proof')
   const clearStorage = previewSession.clearStorageData.bind(previewSession)
@@ -216,7 +216,7 @@ async function main() {
         R3: 'PASS',
         observedPageMath,
         nativeRect,
-        png: image.getSize(),
+        image: image.getSize(),
         cacheAttempts,
         maximumActive,
         timeout,
