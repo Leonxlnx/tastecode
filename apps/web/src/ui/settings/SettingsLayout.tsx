@@ -8,12 +8,9 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  IconAlertCircle as AlertCircle,
-  IconArrowLeft as ArrowLeft,
-  IconInfoCircle as Info,
-  IconLoader2 as LoaderCircle,
-} from '@tabler/icons-react'
+import { IconArrowLeft as ArrowLeft } from '@tabler/icons-react'
+import { EmptyState } from '../EmptyState.js'
+import { NoticeBody } from '../Notice.js'
 import { Skeleton, SkeletonStatus } from '../Skeleton.js'
 import '../../styles/settings-system.css'
 
@@ -176,24 +173,24 @@ export function SettingsRow(props: {
   )
 }
 
-const NOTICE_ICONS = { info: Info, progress: LoaderCircle, error: AlertCircle } as const
-
 /** A page-level message above the rows it concerns. A row-level error stays a RowIssue. */
 export function SettingsNotice(props: {
-  tone: keyof typeof NOTICE_ICONS
+  tone: 'info' | 'progress' | 'error'
   action?: ReactNode
   children: ReactNode
 }) {
-  const Icon = NOTICE_ICONS[props.tone]
   return (
     <div
       className="set-notice"
-      data-tone={props.tone}
+      data-notice-tone={props.tone}
       role={props.tone === 'error' ? 'alert' : 'status'}
     >
-      <Icon className="set-notice__icon" size={14} aria-hidden />
-      <p className="set-notice__text">{props.children}</p>
-      {props.action ? <div className="set-notice__action">{props.action}</div> : null}
+      <NoticeBody
+        tone={props.tone}
+        actions={props.action ? <div className="set-notice__action">{props.action}</div> : null}
+      >
+        {props.children}
+      </NoticeBody>
     </div>
   )
 }
@@ -233,7 +230,7 @@ export function SettingsEntitySkeleton(props: { label: string; rows?: number | u
   )
 }
 
-/** Nothing to list yet: one plain line where the rows would start, never a centred card. */
+/** Nothing to list yet: the app's one empty state, where the rows would start. */
 export function SettingsEmpty(props: {
   icon?: ReactNode
   title: ReactNode
@@ -241,17 +238,8 @@ export function SettingsEmpty(props: {
   action?: ReactNode
 }) {
   return (
-    <div className="set-empty">
-      {props.icon ? (
-        <span className="set-empty__icon" aria-hidden>
-          {props.icon}
-        </span>
-      ) : null}
-      <div className="set-empty__copy">
-        <p className="set-empty__title">{props.title}</p>
-        {props.detail ? <p className="set-empty__detail">{props.detail}</p> : null}
-        {props.action ? <div className="set-empty__action">{props.action}</div> : null}
-      </div>
-    </div>
+    <EmptyState className="set-empty" icon={props.icon} title={props.title} detail={props.detail}>
+      {props.action}
+    </EmptyState>
   )
 }

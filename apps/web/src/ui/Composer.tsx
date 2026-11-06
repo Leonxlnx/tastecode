@@ -70,13 +70,16 @@ import {
   composerSelectionOverChips,
   composerSlashCanLead,
   composerTextWithoutPicks,
+  composerBrowserImages,
+  composerCopyText,
   composerWireText,
   createComposerChipTextStore,
   hasComposerChips,
   repairComposerChips,
   type ComposerChipKind,
 } from './composer-chips.js'
-import { composerTextWithChips } from './message-chips.js'
+import { browserCommentImages, browserCommentsAsPlainText } from './browser-comments.js'
+import { composerTextWithChips, composerTextWithCommentChips } from './message-chips.js'
 import { Menu, MenuItem } from './Menu.js'
 import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
@@ -387,8 +390,11 @@ export type SendAvailability =
   /** A new chat with no provider added under Settings › Providers. */
   | 'no-provider'
 
-function QueuedMediaPreview({ attachments }: { attachments: string[] }) {
-  const reference = attachments.find((attachment) => previewMediaType('', attachment))
+function QueuedMediaPreview({ attachments, text }: { attachments: string[]; text: string }) {
+  const commentImages = browserCommentImages(text, attachments)
+  const reference = attachments.find(
+    (attachment) => !commentImages.has(attachment) && previewMediaType('', attachment),
+  )
   return reference ? <QueuedMediaPreviewCard key={reference} reference={reference} /> : null
 }
 
@@ -605,6 +611,8 @@ function ComposerComponent(props: {
     | {
         text: string
         attachments?: string[] | undefined
+        /** Screenshots of a sent prompt's comments, which Edit brings back with their chips. */
+        commentImages?: string[] | undefined
         resources?: ComposerResource[] | undefined
         /** Insert the text as one native edit, so Ctrl+Z brings back what it replaced. */
         undoable?: boolean | undefined
@@ -1264,8 +1272,12 @@ function ComposerComponent(props: {
     const legacyResources = props.draftRequest.resources ?? []
     const text = draftTextWithResources(
       props.draftRequest.undoable
-        ? composerTextWithChips(props.draftRequest.text, rememberedChipTokens())
-        : props.draftRequest.text,
+        ? composerTextWithChips(
+            props.draftRequest.text,
+            rememberedChipTokens(),
+            props.draftRequest.attachments ?? props.draftRequest.commentImages,
+          )
+        : composerTextWithCommentChips(props.draftRequest.text, props.draftRequest.attachments),
       legacyResources,
     )
     // A draft that brings chips (restored, edited, recalled) starts loading
@@ -1283,7 +1295,8 @@ function ComposerComponent(props: {
       for (const attachment of attachments) releasePreview(attachment.previewUrl)
       setViewingMedia(undefined)
       attachmentsEdited.current = false
-      const paths = props.draftRequest.attachments
+      const linked = browserCommentImages(props.draftRequest.text, props.draftRequest.attachments)
+      const paths = props.draftRequest.attachments.filter((path) => !linked.has(path))
       setAttachments(
         paths.map((path) => {
           const name = basename(path)
@@ -1507,7 +1520,7 @@ function ComposerComponent(props: {
   const sendContent = (content: string, submission: RunningSubmission = 'queue') => {
     // Chips are only how the draft looks: the provider and TasteCode's own
     // commands read the tokens they stand for.
-    const prompt = composerWireText(content)
+    const prompt = composerWireText(content, { images: props.attachmentsSupported })
     const feedback = parseFeedbackCommand(prompt)
     if (feedback && props.onFeedbackCommand) {
       updateText('')
@@ -1540,10 +1553,16 @@ function ComposerComponent(props: {
       return true
     }
     const trimmed = prompt.trim()
-    const paths = attachments.flatMap((attachment) => attachment.path ?? [])
+    const pickedPaths = attachments.flatMap((attachment) => attachment.path ?? [])
+    const paths = [
+      ...new Set([
+        ...pickedPaths,
+        ...(props.attachmentsSupported ? composerBrowserImages(content) : []),
+      ]),
+    ]
     if (
       (trimmed === '' && paths.length === 0) ||
-      paths.length !== attachments.length ||
+      pickedPaths.length !== attachments.length ||
       props.disabled ||
       sendAvailabilityRef.current !== 'ready' ||
       (!props.attachmentsSupported && attachments.length > 0)
@@ -1626,8 +1645,10 @@ function ComposerComponent(props: {
       }
       // Preserve text typed while the deletion was in flight.
       const draft = textRef.current.trim()
-      setValue(draft === '' ? queuedTurn.text : `${queuedTurn.text}\n\n${draft}`)
-      addFiles(queuedTurn.attachments)
+      const recalled = composerTextWithCommentChips(queuedTurn.text, queuedTurn.attachments)
+      setValue(draft === '' ? recalled : `${recalled}\n\n${draft}`)
+      const linked = browserCommentImages(queuedTurn.text, queuedTurn.attachments)
+      addFiles(queuedTurn.attachments.filter((path) => !linked.has(path)))
     } catch (error) {
       if (mounted.current && draftRequestRef.current?.request === owner) {
         setQueueError(
@@ -1841,7 +1862,7 @@ function ComposerComponent(props: {
     return false
   }
 
-  /** Copy and cut hand out the tokens a selection's chips stand for. */
+  /** Copy and cut hand out what a selection's chips stand for, as text that reads on its own. */
   const copyChips = (event: ClipboardEvent<HTMLTextAreaElement>, cut: boolean) => {
     if (chipStore.get() === '') return
     const el = event.currentTarget
@@ -1849,7 +1870,7 @@ function ComposerComponent(props: {
     const selected = el.value.slice(from, to)
     if (!hasComposerChips(selected)) return
     event.preventDefault()
-    event.clipboardData.setData('text/plain', composerWireText(selected))
+    event.clipboardData.setData('text/plain', composerCopyText(selected))
     if (cut) deleteRange(from, to)
   }
 
@@ -1985,7 +2006,7 @@ function ComposerComponent(props: {
                     type="button"
                     className="queue-row__handle"
                     title="Drag to reorder"
-                    aria-label={`Drag ${queuedTurn.text} to reorder`}
+                    aria-label={`Drag ${browserCommentsAsPlainText(queuedTurn.text)} to reorder`}
                     onKeyDown={(event) => {
                       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
                       event.preventDefault()
@@ -1999,9 +2020,12 @@ function ComposerComponent(props: {
                   >
                     <GripVertical size={14} aria-hidden />
                   </button>
-                  <QueuedMediaPreview attachments={queuedTurn.attachments} />
-                  <span className="queue-row__text" title={queuedTurn.text}>
-                    {queuedTurn.text}
+                  <QueuedMediaPreview attachments={queuedTurn.attachments} text={queuedTurn.text} />
+                  <span
+                    className="queue-row__text"
+                    title={browserCommentsAsPlainText(queuedTurn.text)}
+                  >
+                    {browserCommentsAsPlainText(queuedTurn.text)}
                   </span>
                   {props.canSteerQueue ? (
                     <button
@@ -2019,7 +2043,7 @@ function ComposerComponent(props: {
                     className="queue-row__action"
                     onClick={() => void editQueuedTurn(queuedTurn)}
                     title="Edit prompt"
-                    aria-label={`Edit ${queuedTurn.text}`}
+                    aria-label={`Edit ${browserCommentsAsPlainText(queuedTurn.text)}`}
                   >
                     <Pencil size={14} aria-hidden />
                   </button>
@@ -2028,7 +2052,7 @@ function ComposerComponent(props: {
                     className="queue-row__action"
                     onClick={() => void removeQueuedTurn(queuedTurn.id)}
                     title="Remove from queue"
-                    aria-label={`Remove ${queuedTurn.text} from queue`}
+                    aria-label={`Remove ${browserCommentsAsPlainText(queuedTurn.text)} from queue`}
                   >
                     <Trash2 size={14} aria-hidden />
                   </button>

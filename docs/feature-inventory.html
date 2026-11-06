@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-11-06 dev 1792526e · includes main d5e45826</span>
+        <span class="meta">2026-11-06 dev ece034cc · includes main dd8f4264</span>
       </div>
     </div>
 
@@ -1388,7 +1388,9 @@
                   out turns Send off again; an Enter pressed while Send is still loading is sent
                   once Send is ready, unless the words or the chat changed meanwhile; on nightly a
                   shelf that holds only notes, such as where a chat continues, is drawn neutral with
-                  an info icon instead of red</span
+                  an info icon instead of red, and each row keeps its own tone; the rows use the one
+                  notice look (tone icon, text in normal ink, actions, Report and a close
+                  button)</span
                 ></span
               ></label
             >
@@ -1508,10 +1510,12 @@
                 <span class="d"
                   >Enter queues while an agent runs; Ctrl/Command+Enter and the visible Steer
                   control redirect the current turn; every queued row can also steer immediately,
-                  except while a Design run owns the chat: then queued prompts offer no Steer and
-                  wait until the run finishes; a prompt steered in after the turn's first response
-                  carries the transcript's spinner under it until the agent adds its next row, the
-                  turn ends, fails or is stopped</span
+                  and availability refreshes when a session attaches or leaves, including a chat's
+                  first turn, a restored chat and either pane in split view; except while a Design
+                  run owns the chat: then queued prompts offer no Steer and wait until the run
+                  finishes; a prompt steered in after the turn's first response carries the
+                  transcript's spinner under it until the agent adds its next row, the turn ends,
+                  fails or is stopped</span
                 ></span
               ></label
             >
@@ -1673,6 +1677,34 @@
             <label
               ><input type="checkbox" /><span
                 >Voice dictation with a recorder bar and explicit local discard</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Design runs at the effort chosen in the composer
+                <span class="d"
+                  >every phase, the briefing included, uses the composer's effort; an effort the
+                  chat's model does not list becomes the nearest one it does, the higher one on a
+                  tie; no provider names are checked</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Design sends each image to the provider once
+                <span class="d"
+                  >a provider keeps every image of a chat and sends them all with each request, so a
+                  reference or screenshot the provider session already holds is named by its path
+                  instead of attached again (relative inside the project, absolute outside), with a
+                  line telling the agent to open it again after a context compaction; a new provider
+                  session gets every image once; review screenshots are captured as JPEG; Codex
+                  refusing a request over its 64 MB limit shows a plain sentence instead of the raw
+                  JSON</span
+                ></span
               ></label
             >
           </li>
@@ -2238,6 +2270,21 @@
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Project and Files tab paths open their folder
+                <span class="d"
+                  >in the desktop app the project name and the open file's path in the Files tab
+                  toolbar are buttons that show them in Explorer or Finder, a right-click or the
+                  context-menu key on a Files tree row shows that file or folder, protected entries
+                  are not offered, an isolated chat shows its own checkout's copy, a path that
+                  cannot be shown says so above the tree, and a new chat's header menu also offers
+                  Open in Explorer</span
+                ></span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span
@@ -3184,6 +3231,35 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Empty states share one quiet look
+                <span class="d"
+                  >the workspace tools, Settings lists, the pull request list, detail and error
+                  states, and Review when the changes cannot be read (such as a folder without git,
+                  titled Changes could not be read with the reason under it) use one empty state: an
+                  icon, a one-line title, a short detail and an optional action; no results in
+                  search and the command palette read in the same muted detail text; the new-chat
+                  heading is unchanged</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Notices share one look in three tones
+                <span class="d"
+                  >the corner notices (reconnecting, action errors, confirmations), the deleted-chat
+                  and update toasts, Settings page notices and the composer shelf rows use one
+                  notice body: an icon coloured by its tone (info, success, error, or a spinner for
+                  progress), the message in normal ink, its actions and a close button named
+                  Dismiss; each notice keeps its place</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Theme preview: System, Light, Dark
                 <span class="d"
                   >Three previews starting at the column edge, each a miniature TasteCode window
@@ -3959,6 +4035,49 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Browser element annotations
+                <span class="d"
+                  >Desktop-only toolbar mode highlights elements and saves up to 20 numbered
+                  comments per round. Pins follow scrolling and resizing; comments can be edited or
+                  removed. Going to another page discards the round, while a reload of the same page
+                  keeps it. Add to chat puts each comment in the composer as a compact chip, also
+                  shown in the sent message, and hovering a chip shows the captured element, page
+                  title, comment and element count. The agent receives quoted, bounded page context
+                  and the crop through the normal send, queue and Steer flow, with honest text-only
+                  fallback for models without images, and removing a chip removes its screenshot.
+                  Chips survive a provider or project change, come back with their screenshots from
+                  Edit as new prompt, Arrow Up and an edited queued prompt, and copy as the
+                  comment's words. A comment keeps its line breaks and joined characters, and one of
+                  only invisible characters cannot be saved. A hung page or a selector it cannot
+                  read does not stall the mode. Frames and closed shadow roots target their host;
+                  open shadow roots include their path. The hover card stays inside the window and
+                  shows at most eight lines of the comment; switching models at a usage limit brings
+                  the request back with its screenshot; a hung page holds one page read instead of
+                  starting another every few seconds. Rectangle selection is not included.</span
+                >
+              </span></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >The agent's browser
+                <span class="d"
+                  >a chat with TasteCode's agent tools gets browser tools (open, navigate,
+                  screenshot, click, type, scroll, read text, console) that run in the chat's own
+                  Browser tab in the window that shows the chat, one command at a time, 30 s each;
+                  http and https only, local dev servers included; never typing into password,
+                  sign-in code or payment fields; no downloads or permission prompts; page text and
+                  console come back quoted as data, not instructions, and bounded; a bar says the
+                  agent is using the browser, with Stop, which refuses every further command until
+                  the turn ends; with no window showing the chat a call fails at once</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Sandboxed in-app browser previews through Electron &lt;webview&gt; guests
                 <span class="d"
                   >dedicated persistent site session, top-level HTTPS and loopback HTTP navigation,
@@ -3972,10 +4091,11 @@
                   stays in a separate hidden Electron window; the DOM-owned host follows workspace
                   layout, with 1280 × 800, 768 × 1024 and 390 × 844 presets scaled to fit without
                   stretching, plus an explicit system-browser handoff; the canvas takes the theme
-                  background; a failed load shows a calm view in the canvas with the host, one plain
-                  sentence, Retry and Edit address, reported once and not at all after Stop, while a
-                  refused address says why; loads after the first page keep it visible under a thin
-                  progress line</span
+                  background until a page paints, then a browser's white, and page captures for
+                  comments and the agent are put on white too; a failed load shows a calm view in
+                  the canvas with the host, one plain sentence, Retry and Edit address, reported
+                  once and not at all after Stop, while a refused address says why; loads after the
+                  first page keep it visible under a thin progress line</span
                 ></span
               ></label
             >

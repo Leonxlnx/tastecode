@@ -51,6 +51,7 @@ import {
 } from '@tabler/icons-react'
 import type { Transport } from '../../transport.js'
 import { AppSelect } from '../AppSelect.js'
+import { EmptyState } from '../EmptyState.js'
 import { IconMorph } from '../IconMorph.js'
 import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
@@ -248,16 +249,17 @@ export function PullRequestDetailPane(props: {
 
   if (error && !detail) {
     return (
-      <div className="pr-detail-error" role="alert">
-        <span className="pr-empty-emblem">
-          <CircleAlert size={20} aria-hidden />
-        </span>
-        <strong>Couldn't open this pull request</strong>
-        <p>{error}</p>
+      <EmptyState
+        className="pr-detail-error"
+        role="alert"
+        icon={<CircleAlert aria-hidden />}
+        title="Couldn't open this pull request"
+        detail={error}
+      >
         <button type="button" className="pr-button is-secondary" onClick={() => void load(true)}>
           Try again
         </button>
-      </div>
+      </EmptyState>
     )
   }
 
