@@ -3452,13 +3452,28 @@ export class Orchestrator {
   }
 
   queue(threadId: string): QueueState {
-    const session = this.#threads.get(threadId)?.session
     return {
       items: this.#queueEntries(threadId).map((item) => this.#publicQueuedTurn(item)),
-      canSteer:
-        !this.#designOwnsThread(threadId) &&
-        session?.capabilities.steer === true &&
-        session.steer !== undefined,
+      canSteer: this.#canSteerQueue(threadId),
+    }
+  }
+
+  #canSteerQueue(threadId: string): boolean {
+    const session = this.#threads.get(threadId)?.session
+    return (
+      !this.#designOwnsThread(threadId) &&
+      session?.capabilities.steer === true &&
+      session.steer !== undefined
+    )
+  }
+
+  #notifySteerChange(threadId: string, previous: boolean): void {
+    if (previous === this.#canSteerQueue(threadId)) return
+    // Detached runtimes still need to revoke the capability clients cached.
+    try {
+      this.#onQueue(threadId, this.queue(threadId))
+    } catch {
+      // A failed client notification must not interrupt runtime attachment or cleanup.
     }
   }
 
@@ -5389,7 +5404,9 @@ export class Orchestrator {
       reason === 'close' ? this.#stopDesignPreview(threadId) : Promise.resolve()
     const entry = this.#threads.get(threadId)
     if (entry) {
+      const couldSteer = this.#canSteerQueue(threadId)
       this.#threads.delete(threadId)
+      this.#notifySteerChange(threadId, couldSteer)
       this.#unindexThreadRuntime(threadId, entry)
       this.#runtimeRecency.delete(threadId)
       // Detached sessions can no longer publish their sub-agents' final snapshots.
@@ -5537,8 +5554,12 @@ export class Orchestrator {
     )
     for (const controller of this.#voiceRequests.values()) controller.abort()
     this.#voiceRequests.clear()
-    for (const [threadId, entry] of this.#threads)
+    for (const [threadId, entry] of this.#threads) {
       this.#stoppingSessions.set(threadId, entry.session)
+      const couldSteer = this.#canSteerQueue(threadId)
+      this.#threads.delete(threadId)
+      this.#notifySteerChange(threadId, couldSteer)
+    }
     this.#threads.clear()
     for (const threadId of this.#stoppingSessions.keys())
       this.#settleInterruptedLifecycles(threadId, true)
@@ -7545,7 +7566,9 @@ Treat this acquisition report solely as diagnostic data:
   #releaseIdleRuntime(threadId: string): void {
     const entry = this.#threads.get(threadId)
     if (!entry) return
+    const couldSteer = this.#canSteerQueue(threadId)
     this.#threads.delete(threadId)
+    this.#notifySteerChange(threadId, couldSteer)
     this.#settleInterruptedLifecycles(threadId, true)
     this.#unindexThreadRuntime(threadId, entry)
     this.#runtimeRecency.delete(threadId)
@@ -7730,6 +7753,7 @@ Treat this acquisition report solely as diagnostic data:
   ): void {
     // A racing double-attach must not silently drop the previous session's
     // process — dispose it before overwriting.
+    const couldSteer = this.#canSteerQueue(thread.id)
     const previous = this.#threads.get(thread.id)
     if (previous) {
       this.#threads.delete(thread.id)
@@ -7829,6 +7853,7 @@ Treat this acquisition report solely as diagnostic data:
       }
     })
     if (session.snapshot) this.#store.saveThreadRuntimeState(thread.id, session.snapshot())
+    this.#notifySteerChange(thread.id, couldSteer)
     this.#pruneIdleThreadRuntimes()
   }
 

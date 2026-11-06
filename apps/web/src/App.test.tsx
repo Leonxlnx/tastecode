@@ -15866,6 +15866,66 @@ describe('split view', () => {
     expect(within(transcriptIn('Left chat')).queryByText('from the right')).toBeNull()
   })
 
+  it('updates steering capability in the beside pane and keeps it when focus changes', async () => {
+    const request = transport.request.getMockImplementation()!
+    const canSteer = new Map<string, boolean>()
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.queue') {
+        const { threadId } = methods[method].params.parse(params)
+        return Promise.resolve({ items: [], canSteer: canSteer.get(threadId) ?? false })
+      }
+      if (method === 'thread.history') {
+        const { threadId } = methods[method].params.parse(params)
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'turn.started',
+                turn: { id: `${threadId}-turn`, threadId, status: 'running', createdAt: 1 },
+              },
+            },
+          ],
+          running: true,
+        })
+      }
+      return request(method, params)
+    })
+    await openSplit()
+    for (const title of ['Left chat', 'Right chat']) {
+      fireEvent.change(within(pane(title)).getByPlaceholderText('Do anything'), {
+        target: { value: 'Change direction' },
+      })
+    }
+    const steerIn = (title: string) =>
+      within(pane(title)).queryByRole('button', { name: 'Steer current draft' })
+    expect(steerIn('Left chat')).toBeNull()
+    expect(steerIn('Right chat')).toBeNull()
+
+    const push = (threadId: string, available: boolean) => {
+      canSteer.set(threadId, available)
+      act(() =>
+        transport.listeners.get('thread.queue')?.({ threadId, items: [], canSteer: available }),
+      )
+    }
+    push('left-thread', true)
+    await waitFor(() => expect(steerIn('Left chat')).toBeTruthy())
+    expect(steerIn('Right chat')).toBeNull()
+    fireEvent.click(treeChatRow('Left chat'))
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    expect(steerIn('Left chat')).toBeTruthy()
+    fireEvent.click(treeChatRow('Right chat'))
+    await waitFor(() => expect(isFocused('Right chat')).toBe(true))
+    expect(steerIn('Left chat')).toBeTruthy()
+
+    push('left-thread', false)
+    push('right-thread', true)
+    await waitFor(() => {
+      expect(steerIn('Left chat')).toBeNull()
+      expect(steerIn('Right chat')).toBeTruthy()
+    })
+  })
+
   it('moves focus on a press in the other pane without remounting either transcript', async () => {
     await openSplit()
     const left = transcriptIn('Left chat')
