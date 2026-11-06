@@ -61,6 +61,8 @@ export type DemoServerOptions = {
   timing?: Partial<DemoTiming>
   platform?: DemoPlatform
   now?: () => number
+  /** Opt-in usage-limit scenario for exercising the real recovery UI. */
+  usageResetMs?: number
 }
 
 type Handler<M extends MethodName> = (params: ParamsOf<M>) => ResultOf<M> | Promise<ResultOf<M>>
@@ -125,6 +127,7 @@ export class DemoServer {
   readonly home: string
   #push: DemoPush
   #now: () => number
+  #usageResetAt: number | undefined
   #timing: DemoTiming
   #projects: DemoProjectState[] = []
   #threads = new Map<string, DemoThread>()
@@ -142,10 +145,48 @@ export class DemoServer {
   constructor(options: DemoServerOptions) {
     this.#push = options.push
     this.#now = options.now ?? Date.now
+    this.#usageResetAt =
+      options.usageResetMs === undefined ? undefined : this.#now() + options.usageResetMs
     this.#timing = { ...DEMO_TIMING, ...options.timing }
     this.platform = options.platform ?? detectDemoPlatform()
     this.home = demoHome(this.platform)
     this.#seed()
+    if (this.#usageResetAt !== undefined) {
+      const thread = this.#thread('demo-focus-ring')
+      const turnId = 'demo-usage-limited'
+      this.#append(thread, {
+        type: 'turn.started',
+        turn: {
+          id: turnId,
+          threadId: thread.id,
+          status: 'running',
+          createdAt: this.#now() - 1000,
+        },
+      })
+      this.#append(thread, {
+        type: 'item.completed',
+        item: {
+          id: 'demo-usage-request',
+          turnId,
+          type: 'message',
+          role: 'user',
+          status: 'completed',
+          text: 'Finish checking the keyboard focus states and run the tests.',
+          createdAt: this.#now() - 1000,
+        },
+      })
+      this.#append(thread, {
+        type: 'thread.error',
+        threadId: thread.id,
+        message: 'You have reached your usage limit.',
+      })
+      this.#append(thread, {
+        type: 'turn.completed',
+        turnId,
+        status: 'failed',
+        completedAt: this.#now(),
+      })
+    }
     this.#handlers = this.#createHandlers()
   }
 
@@ -871,7 +912,16 @@ export class DemoServer {
 
       'usage.summary': (params) => {
         const id = 'threadId' in params ? this.#thread(params.threadId).provider : params.provider
-        const limits = demoProvider(id)?.limits(now()) ?? []
+        const limits =
+          this.#usageResetAt !== undefined && id === 'claude-code'
+            ? [
+                {
+                  label: 'Session',
+                  usedPercent: now() < this.#usageResetAt ? 100 : 0,
+                  resetsAt: this.#usageResetAt,
+                },
+              ]
+            : (demoProvider(id)?.limits(now()) ?? [])
         const tokens = {
           inputTokens: 184_000,
           cachedInputTokens: 131_000,

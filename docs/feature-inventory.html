@@ -1305,6 +1305,26 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Resume at usage reset
+                <span class="d"
+                  >In review,
+                  <a href="https://github.com/Leonxlnx/tastecode/pull/2239">PR #2239</a>: a failed
+                  chat at a reported usage limit offers Resume at reset. The chat snoozes until
+                  every exhausted window with a known deadline resets, then continues its previous
+                  request on the same provider, account and model. A neutral scheduled notice shows
+                  the reset time and Cancel auto-resume. Schedules survive reloads; TasteCode must
+                  be open, or reopened after the deadline. A manual continuation, provider/model
+                  change, settlement or early wake cancels the schedule. Unknown reset times stay
+                  unavailable rather than guessing; refreshed later limits postpone the resume. The
+                  shared flow also supports direct API sources when limits are supplied, without a
+                  vendor CLI dependency.</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Switch an open chat to another provider: in an open chat the model picker lists the
                 chat's own models first, then every other provider's, then every other signed-in
                 account of a provider as a source of its own, named after the account (Claude Code

@@ -5640,6 +5640,93 @@ describe('new chats', () => {
     await waitFor(() => expect(offered()).toEqual(['work-plan-model', 'personal-plan-model']))
   })
 
+  it('snoozes a limited chat and resumes it at reset even after another chat is opened', async () => {
+    const resetAt = Date.now() + 60_000
+    serverProjects[0]!.sessions = [
+      { id: 'chat-limited', title: 'Limited chat', provider: 'codex', createdAt: 1 },
+      { id: 'chat-other', title: 'Other chat', provider: 'codex', createdAt: 2 },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'usage.summary')
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [{ label: 'Session', usedPercent: 100, resetsAt: resetAt }],
+        }))
+      if (
+        method === 'thread.history' &&
+        (params as { threadId: string }).threadId === 'chat-limited'
+      ) {
+        return Promise.resolve({
+          running: false,
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'item.completed',
+                item: {
+                  id: 'ask-limited',
+                  turnId: 'failed-turn',
+                  type: 'message',
+                  role: 'user',
+                  status: 'completed',
+                  text: 'Finish the tests',
+                  createdAt: 1,
+                },
+              },
+            },
+            {
+              seq: 2,
+              event: {
+                type: 'thread.error',
+                threadId: 'chat-limited',
+                message: 'Usage limit reached',
+              },
+            },
+            { seq: 3, event: { type: 'turn.completed', turnId: 'failed-turn', status: 'failed' } },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Limited chat')))
+    const recovery = await waitFor(() => {
+      const row = composerProps().errors?.find((error) => error.usageReset)
+      expect(row?.usageReset?.resetsAt).toBe(resetAt)
+      return row!.usageReset!
+    })
+    expect(
+      transport.request.mock.calls.filter(([method]) => method === 'thread.sendTurn'),
+    ).toHaveLength(0)
+    await act(async () => recovery.schedule())
+    expect(transport.request).toHaveBeenCalledWith('thread.snooze', {
+      threadId: 'chat-limited',
+      wakeAt: resetAt,
+    })
+    await waitFor(() =>
+      expect(composerProps().errors?.find((error) => error.usageReset)?.usageReset?.scheduled).toBe(
+        true,
+      ),
+    )
+    expect(localStorage.getItem('harness.usage-resumes')).toContain('ask-limited')
+    fireEvent.click(await waitFor(() => treeChatRow('Other chat')))
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(resetAt + 1000)
+      await act(async () => setConnectionState('open'))
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith(
+          'thread.sendTurn',
+          expect.objectContaining({ threadId: 'chat-limited' }),
+        ),
+      )
+      expect(localStorage.getItem('harness.usage-resumes')).toBe('[]')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('offers to continue a chat at its plan limit on another signed-in account', async () => {
     const codex = serverProviders[0]!
     serverProviders = [

@@ -165,6 +165,7 @@ import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 import { pollUsageLimits, UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
 import { sameAccount } from './usage-summary-state.js'
+import { UsageResetController, usageResetAt } from './usage-reset.js'
 import { poolsOf, recommendedAccounts } from './account-pool.js'
 import {
   AccountLabelContext,
@@ -1176,6 +1177,20 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const reportError = useCallback((message: string) => {
     setActionError({ id: crypto.randomUUID(), message })
   }, [])
+  const usageResumes = useMemo(
+    () =>
+      new UsageResetController(
+        transport,
+        {
+          read: () => readSetting('harness.usage-resumes'),
+          write: (value) => localStorage.setItem('harness.usage-resumes', value),
+        },
+        reportError,
+      ),
+    [transport, reportError],
+  )
+  const scheduledResumes = useSyncExternalStore(usageResumes.subscribe, usageResumes.snapshot)
+  useEffect(() => usageResumes.start(), [usageResumes])
   const feedback = useFeedbackStatus(transport)
   const refreshFeedback = feedback.refresh
   const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>()
@@ -5569,6 +5584,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       const earlierId = activeIdRef.current
       const found = findSession(projectsRef.current, earlierId)
       if (!earlierId || !found) return
+      usageResumes.cancel(earlierId)
       const { project, session: earlier } = found
       const choice =
         selectedModelChoice?.provider === earlier.provider &&
@@ -5630,6 +5646,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       selectSession,
       refreshProjects,
       reportError,
+      usageResumes,
     ],
   )
 
@@ -7374,6 +7391,38 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     () => (activeId ? continuedIn(projects, activeId) : undefined),
     [activeId, projects],
   )
+  const scheduledResume = scheduledResumes.find((entry) => entry.threadId === activeId)
+  const resetSummary =
+    activeSession &&
+    usageState.find(
+      (state) =>
+        state.provider === activeSession.provider &&
+        sameAccount(state.accountId, activeSession.accountId),
+    )?.summary
+  const resetLimits = resetSummary?.limitSource
+    ? resetSummary.limitSource.status === 'ready'
+      ? resetSummary.limitSource.limits
+      : []
+    : (resetSummary?.limits ?? [])
+  const resetAt = scheduledResume?.resetsAt ?? usageResetAt(resetLimits, Date.now())
+  const resetRequest =
+    thread.error && !thread.running
+      ? thread.items.findLast((item) => item.type === 'message' && item.role === 'user')
+      : undefined
+  const usageReset: ComposerError['usageReset'] =
+    activeSession &&
+    resetRequest &&
+    !continuedChat &&
+    (scheduledResume ||
+      accountAtLimit(usageState, activeSession.provider, activeSession.accountId, Date.now()))
+      ? {
+          resetsAt: resetAt,
+          source: `${providerName(activeSession.provider)}${selectedModelChoice ? ` · ${formatModelName(selectedModelChoice.model.displayName)}` : ''}`,
+          scheduled: Boolean(scheduledResume),
+          schedule: () => usageResumes.schedule(activeSession, resetRequest.id, resetAt!),
+          cancel: () => usageResumes.cancel(activeSession.id),
+        }
+      : undefined
   const continueOptions = useMemo(() => {
     if (
       !activeSession ||
@@ -7499,6 +7548,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   // Once continued, the failed turn's row leads to the chat that carries it on.
   /** Sets the chat up to switch, with the request that failed back in the composer. */
   const switchAtLimit = (choice: ModelChoice) => {
+    if (activeId) usageResumes.cancel(activeId)
     commitModelChoice(choice)
     const request = lastRequest(thread.items)
     if (request) editMessage(request.text, request.attachments)
@@ -7563,7 +7613,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     ...(thread.error && activeId
       ? [
           reportable(
-            { ...thread.error, id: `chat:${activeId}:${thread.error.id}`, ...continueOffer },
+            {
+              ...thread.error,
+              id: `chat:${activeId}:${thread.error.id}`,
+              ...continueOffer,
+              usageReset,
+              ...(scheduledResume ? { dismiss: () => usageResumes.cancel(activeId) } : {}),
+            },
             'turn',
           ),
         ]
