@@ -1,60 +1,119 @@
 /* ---------- inbox sidebar ---------- */
 
+/*
+ * One column inside the resizable rail (240-420px, 256px by default). The rail
+ * body insets 10px on the left and 4px on the right. Row padding puts tiles
+ * and group labels at 22px, with titles 40px after the tiles. The toolbar
+ * uses the same body insets and optically aligns its search mark at 20px.
+ *
+ * The chrome holds no hue. A row's one hue sits on its state mark and its
+ * state label; the user's pictures are the only other colour.
+ */
+
+/* Every rail control keeps a 44px box for touch. Negative margins let the boxes
+   overlap so the rail stays as dense as its rows, and the pill a person sees
+   is the ::before, drawn at the control's real size inside that box. */
+.inbox-toolbar .inbox-toolbar__icon,
+.inbox-toolbar__pulls,
+.inbox-search > button,
+.inbox-shelf__toggle {
+  position: relative;
+  isolation: isolate;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+:is(
+  .inbox-toolbar__icon,
+  .inbox-toolbar__pulls,
+  .inbox-search > button,
+  .inbox-shelf__toggle
+)::before {
+  position: absolute;
+  z-index: -1;
+  inset: var(--inbox-pill-inset, 0);
+  background: var(--inbox-pill-bg, transparent);
+  border-radius: var(--r-md);
+  content: '';
+  transition: background-color var(--dur-hover) var(--ease-out);
+}
+
+:is(
+  .inbox-toolbar__icon,
+  .inbox-toolbar__pulls,
+  .inbox-search > button,
+  .inbox-shelf__toggle
+):focus-visible {
+  outline: none;
+}
+
+:is(
+    .inbox-toolbar__icon,
+    .inbox-toolbar__pulls,
+    .inbox-search > button,
+    .inbox-shelf__toggle
+  ):focus-visible::before {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
 .inbox-toolbar {
   display: grid;
-  gap: 5px;
-  padding: 10px 10px 9px;
+  gap: 2px;
+  padding: 10px 4px 8px 10px;
   border-bottom: 1px solid var(--line);
 }
 
 .inbox-toolbar__primary {
-  display: grid;
-  gap: 3px;
-}
-
-.inbox-toolbar__projects {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 5px;
-  margin-top: 1px;
+  gap: 2px;
+  min-width: 0;
 }
 
 .inbox-search {
   display: flex;
+  flex: 1;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
-  height: 32px;
-  padding: 0 9px;
-  background: var(--chrome-recessed);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-xl);
-  box-shadow: none;
+  height: 36px;
+  padding: 0 8px 0 10px;
+  border-radius: var(--r-md);
   color: var(--text-3);
   transition:
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+    background-color var(--dur-hover) var(--ease-out),
+    color var(--dur-hover) var(--ease-out);
+}
+
+.inbox-search > svg {
+  flex: none;
 }
 
 .inbox-search:hover {
-  border-color: color-mix(in srgb, var(--text-3) 35%, var(--chrome-border));
+  background: var(--control-hover);
 }
 
 .inbox-search:focus-within {
-  border-color: var(--text-3);
+  background: var(--chrome-raised);
+  color: var(--text-2);
 }
 
 .inbox-search input {
   flex: 1;
   min-width: 0;
+  height: 44px;
+  margin-block: -4px;
   padding: 0;
   background: none;
   border: 0;
   color: var(--text);
   font: inherit;
-  font-size: var(--t-sm);
+  font-size: var(--t-md);
   outline: none;
+  text-overflow: ellipsis;
 }
 
 .inbox-search input::placeholder {
@@ -62,199 +121,165 @@
 }
 
 .inbox-search > button {
+  --inbox-pill-inset: 11px;
   display: grid;
+  flex: none;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 44px;
+  height: 44px;
+  margin: -11px;
   padding: 0;
-  background: none;
-  border: 0;
-  border-radius: var(--r-sm);
   color: var(--text-3);
-  cursor: pointer;
 }
 
 .inbox-search > button:hover {
-  background: var(--surface-3);
+  --inbox-pill-bg: var(--surface-3);
   color: var(--text);
 }
 
-.inbox-toolbar__new {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  width: 100%;
-  height: 34px;
-  padding: 0 8px;
-  background: var(--composer-action-bg);
-  border: 1px solid var(--composer-action-border);
-  border-radius: var(--r-xl);
-  box-shadow: var(--composer-action-shadow);
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-md);
-  white-space: nowrap;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-
-.inbox-toolbar__new svg {
+/* Scoped to the toolbar so it outranks the shared .menutrigger padding. */
+.inbox-toolbar .inbox-toolbar__icon {
+  --inbox-pill-inset: 4px 6px;
+  display: grid;
   flex: none;
-  color: var(--text-2);
-}
-
-.inbox-toolbar__add {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 29px;
-  padding: 0 8px;
-  background: none;
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  box-shadow: none;
+  place-items: center;
+  width: 44px;
+  max-width: none;
+  height: 44px;
+  margin: -4px -6px;
+  padding: 0;
   color: var(--text-3);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-xs);
-  white-space: nowrap;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-hover) var(--ease-out);
 }
 
-.inbox-toolbar__new:is(:hover, :focus-visible) {
-  background: var(--composer-action-bg-hover);
-  border-color: var(--composer-action-border-hover);
-  box-shadow: var(--composer-action-shadow-hover);
-}
-
-.inbox-toolbar__add:is(:hover, :focus-visible) {
-  border-color: color-mix(in srgb, var(--text-3) 40%, var(--chrome-border));
+.inbox-toolbar .inbox-toolbar__icon:hover,
+.inbox-toolbar .inbox-toolbar__icon[aria-expanded='true'] {
+  --inbox-pill-bg: var(--control-hover);
   color: var(--text);
+}
+
+.inbox-toolbar .inbox-toolbar__icon:active {
+  --inbox-pill-bg: var(--control-pressed);
+}
+
+/* A project filter is on: a small ink dot on the filter icon, never a hue. */
+.inbox-toolbar .inbox-toolbar__icon.is-filtered {
+  color: var(--text);
+}
+
+.inbox-toolbar .inbox-toolbar__icon.is-filtered::after {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 5px;
+  height: 5px;
+  background: currentColor;
+  border-radius: var(--r-circle);
+  content: '';
 }
 
 .inbox-toolbar__pulls {
-  position: relative;
+  --inbox-pill-inset: 5px 0;
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 30px;
-  padding: 0 8px;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
+  height: 44px;
+  margin-block: -5px;
+  padding: 0 10px;
   color: var(--text-2);
-  cursor: pointer;
   font: inherit;
   font-size: var(--t-sm);
   text-align: left;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-hover) var(--ease-out);
 }
 
 .inbox-toolbar__pulls:is(:hover, :focus-visible) {
-  background: var(--control-hover);
+  --inbox-pill-bg: var(--control-hover);
   color: var(--text);
 }
 
 .inbox-toolbar__pulls.is-active {
-  background: var(--chrome-raised);
-  border-color: var(--chrome-border);
-  box-shadow: var(--chrome-shadow);
+  --inbox-pill-bg: var(--chrome-raised);
   color: var(--text);
 }
 
 .inbox-toolbar__pulls svg {
-  color: var(--text-3);
   flex: none;
+  color: var(--text-3);
 }
 
 .inbox-toolbar__pulls.is-active svg {
-  color: var(--success);
+  color: var(--text-2);
 }
 
 .inbox__body {
-  padding-top: 8px;
+  padding-top: 4px;
 }
 
 .inbox {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  container-type: inline-size;
 }
 
-.inbox__scope {
-  display: block;
-  min-width: 0;
-}
-
-.inbox__scope .app-select {
-  width: 100%;
-  min-width: 0;
-}
-
-.inbox__scope .app-select__trigger {
-  height: 29px;
-  padding: 0 6px 0 8px;
-  background: var(--chrome-recessed);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--t-sm);
-  box-shadow: none;
-}
-
-.inbox__scope .app-select__trigger:hover {
-  border-color: color-mix(in srgb, var(--text-3) 40%, var(--chrome-border));
-  color: var(--text);
-}
-
-.inbox__scope .app-select__trigger:focus-visible {
-  border-color: var(--text-3);
-  outline: none;
-}
-
+/* The group's name and count on the left; on the right, how many threads wait
+   on the person, in ink. The hue stays on the rows' rings, where it points at
+   the thread itself. */
 .inbox__heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 0;
-  padding: 3px 8px 5px;
+  gap: 8px;
+  min-height: 28px;
+  padding: 8px 10px 4px 12px;
   color: var(--text-3);
   font-size: var(--t-xs);
+}
+
+.inbox__heading > p {
+  margin: 0;
   font-weight: 500;
+}
+
+.inbox__heading-count {
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
+.inbox__need-you {
+  min-height: 28px;
+  margin-block: -6px;
+  padding: 0 2px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-xs);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.inbox__need-you:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .inbox__list,
 .inbox-shelf__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.inbox__list {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
 .inbox__empty {
   margin: 0 0 8px;
-  padding: 7px 8px 10px;
+  padding: 6px 10px 10px;
   color: var(--text-3);
   font-size: var(--t-sm);
 }
@@ -266,223 +291,452 @@
 
 .inbox__selection-count {
   margin: 0 0 2px;
-  padding: 4px 8px;
+  padding: 4px 10px;
   color: var(--text-2);
   font-size: var(--t-xs);
 }
 
-.inbox-card {
+/* ---------- thread rows ---------- */
+
+/* Rows are open at rest: no fill, no rule. Hover takes one tone step and the
+   open thread a second, so the two never read alike. */
+.inbox-card,
+.inbox-shelf__row {
   --inbox-card-bg: transparent;
   position: relative;
-  min-height: 76px;
   background: var(--inbox-card-bg);
-  border: 1px solid transparent;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   transition:
-    border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out);
+    background-color var(--dur-hover) var(--ease-out),
+    box-shadow var(--dur-hover) var(--ease-out);
 }
 
-.inbox-card:hover,
-.inbox-card:focus-within {
-  --inbox-card-bg: var(--chrome-raised);
-  box-shadow: var(--chrome-shadow);
+:is(.inbox-card, .inbox-shelf__row):is(:hover, :focus-within) {
+  --inbox-card-bg: var(--control-hover);
 }
 
-.inbox-card.is-selected {
-  --inbox-card-bg: var(--chrome-raised);
-  border-color: var(--chrome-border);
-  box-shadow: var(--chrome-shadow);
+:is(.inbox-card, .inbox-shelf__row).is-selected {
+  --inbox-card-bg: var(--surface-3);
 }
 
-.inbox-card.is-multi-selected {
-  --inbox-card-bg:
-    linear-gradient(
-      color-mix(in oklab, var(--attention) 7%, transparent),
-      color-mix(in oklab, var(--attention) 7%, transparent)
-    ),
-    var(--chrome-raised);
-  border-color: color-mix(in oklab, var(--attention) 35%, var(--chrome-border));
+/* On dark the open thread steps well past hover, and its grey details move
+   up a tier so they keep 4.5:1 on the brighter fill. */
+:root:not([data-theme='light']) :is(.inbox-card, .inbox-shelf__row).is-selected {
+  --inbox-card-bg: color-mix(in oklab, var(--text) 15%, var(--bg-rail));
 }
 
-.inbox-card__main {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+.is-selected :is(.inbox-card__meta, .inbox-time, .inbox-state.is-quiet, .inbox-card__source) {
+  color: var(--text-2);
+}
+
+:is(.inbox-card, .inbox-shelf__row).is-multi-selected {
+  --inbox-card-bg: color-mix(in oklab, var(--attention) 8%, var(--chrome-raised));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--attention) 35%, var(--chrome-border));
+}
+
+/* The tile spans both lines; the title leads, and the second line says the
+   state in words before the project and branch. At the default 256px rail:
+   10 inset + 12 padding + 28 tile + 12 gap + 180 text + 10 padding + 4 inset
+   = 256. A classic scrollbar's gutter comes out of the text column. */
+.inbox-card__main,
+.inbox-shelf__main {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 2px;
+  align-items: center;
   width: 100%;
   min-width: 0;
-  padding: 8px 9px 9px;
+  padding: 10px 10px 10px 12px;
   background: none;
   border: 0;
+  border-radius: inherit;
   color: var(--text);
   cursor: pointer;
   font: inherit;
   text-align: left;
 }
 
-.inbox-card__topline,
+.inbox-card__line,
 .inbox-card__meta {
+  grid-column: 2;
   display: flex;
   align-items: center;
   min-width: 0;
 }
 
-.inbox-card__topline {
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-}
-
-.inbox-card__project {
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: 10.5px;
-  font-weight: 520;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.inbox-card__state {
-  flex: none;
-  transition: opacity var(--dur-fast) var(--ease-out);
-}
-
-.inbox-card__title {
-  display: block;
-  width: 100%;
-  overflow: hidden;
-  font-size: var(--t-sm);
-  font-weight: 530;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.inbox-card__line {
+  gap: 6px;
+  align-items: flex-start;
+  min-height: 20px;
 }
 
 .inbox-card__meta {
-  gap: 5px;
-  max-width: calc(100% - 2px);
-  overflow: hidden;
+  height: 18px;
   color: var(--text-3);
   font-size: var(--t-xs);
   white-space: nowrap;
 }
 
-.inbox-card__meta > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+.inbox-card__pin {
+  flex: none;
+  margin-top: 4px;
+  color: var(--text-3);
+}
+
+.inbox-card__unread {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 7px;
+  background: var(--text);
+  border-radius: var(--r-circle);
+}
+
+/* A title wraps to a second line before it is cut, so threads started from
+   similar prompts still read apart; the full title is in the tooltip. */
+.inbox-card__title,
+.inbox-shelf__title {
+  display: -webkit-box;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 400;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* Finished work recedes a step; an unread reply brings it back to ink. */
+.inbox-shelf__title {
+  color: var(--text-2);
+}
+
+.is-emphasized :is(.inbox-card__title, .inbox-shelf__title) {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.inbox-card__state {
+  flex: none;
+  padding-left: 6px;
+}
+
+/* The provider's mark alone, in grey, pushes the time to the row's right
+   edge; hue on a row always means state. Its name is in the tooltip and the
+   row's label. */
+.inbox-card__meta > .inbox-card__source {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--text-3);
+}
+
+.inbox-time {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The project gives way after the branch, and the state word never does. */
+.inbox-card__project {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.inbox-card__project:not(:first-child)::before {
+  margin: 0 5px;
+  content: '·';
+}
+
+/* A worktree's branch follows the project when the rail has room for it, and
+   stays in the row's tooltip when it does not. */
 .inbox-card__branch {
-  max-width: 52%;
+  display: none;
+  flex: 0 4 auto;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: 40%;
+  margin-left: 8px;
 }
 
-.inbox-card__woke {
-  margin-left: auto;
+.inbox-card__branch svg {
   flex: none;
-  color: var(--warning);
 }
 
-.inbox-status {
+.inbox-card__branch > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@container (min-width: 300px) {
+  .inbox-card__branch {
+    display: inline-flex;
+  }
+}
+
+/* ---------- the state in words ---------- */
+
+.inbox-state {
   flex: none;
-  padding: 1px 5px;
-  border-radius: var(--r-pill);
   color: var(--text-3);
-  font-size: 10.5px;
-  font-weight: 520;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.inbox-status.is-working {
+.inbox-state.is-working {
   color: var(--running);
+  font-weight: 500;
 }
 
-.inbox-status.is-attention,
-.inbox-status.is-woke {
-  color: var(--warning);
-  background: color-mix(in oklab, var(--warning) 10%, transparent);
+/* What needs the person reads in ink; its hue is the ring's alone, so a
+   failed thread carries one red mark, not two. */
+.inbox-state.is-attention,
+.inbox-state.is-failed {
+  color: var(--text);
+  font-weight: 500;
 }
 
-.inbox-status.is-failed {
-  color: var(--error);
-  background: color-mix(in oklab, var(--error) 10%, transparent);
-}
-
-.inbox-status.is-done {
+.inbox-state.is-done {
   color: var(--success);
-  background: color-mix(in oklab, var(--success) 10%, transparent);
 }
 
+/* ---------- the tile and its ring ---------- */
+
+/* A tile without a picture shows its project's initial on the rail's raised
+   tone. The only hue on a row is its state, around the tile. */
+.thread-tile {
+  position: relative;
+  grid-row: 1 / span 2;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+}
+
+/* A hairline holds dark logos against a dark rail and pale ones on light. */
+.thread-tile::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 10%, transparent);
+  content: '';
+  pointer-events: none;
+}
+
+/* A light logo on a clear ground stands on a dark plate in the light theme,
+   and a dark one on a pale plate in the dark theme. */
+:root[data-theme='light'] .thread-tile.has-light-ink {
+  background: color-mix(in oklab, var(--text) 82%, var(--bg-rail));
+}
+
+:root:not([data-theme='light']) .thread-tile.has-dark-ink {
+  background: color-mix(in oklab, var(--text) 86%, var(--bg-rail));
+}
+
+.thread-tile__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.thread-tile__initial {
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* The state sits outside the picture, 2px clear of it. */
+.thread-tile__ring {
+  position: absolute;
+  inset: -4px;
+  width: 36px;
+  height: 36px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+/* Working: a short arc travels the ring for as long as the agent runs. */
+.thread-tile.is-working .thread-tile__ring {
+  color: var(--running);
+  stroke-dasharray: 24 76;
+  stroke-linecap: round;
+  animation: thread-tile-travel 1600ms linear infinite;
+}
+
+.thread-tile.is-attention .thread-tile__ring {
+  color: var(--warning);
+}
+
+.thread-tile.is-failed .thread-tile__ring {
+  color: var(--error);
+}
+
+/* Queued: a dotted ring, waiting its turn. */
+.thread-tile.is-queued .thread-tile__ring {
+  color: var(--text-3);
+  stroke-dasharray: 0.01 6.24;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+/* A new state or a new picture fades in place; a row that mounts shows its
+   state at once, so nothing animates on load. */
+.thread-tile:not(.is-working) .thread-tile__ring.is-entering,
+:is(.thread-tile__image, .thread-tile__initial).is-entering {
+  animation: thread-tile-fade-in var(--dur-fast) var(--ease-out) both;
+}
+
+@keyframes thread-tile-travel {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+@keyframes thread-tile-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---------- row actions ---------- */
+
+/* On hover or focus a row's actions take the place of its provider mark and
+   time at the end of the second line, so the title is never covered. They
+   stand on the row's own fill, and each is one 24px button that only gains a
+   tone step under the pointer. */
 .inbox-card__quick {
   position: absolute;
-  z-index: 1;
-  top: 5px;
-  right: 6px;
+  z-index: 2;
+  right: 8px;
+  bottom: 7px;
   display: flex;
   align-items: center;
-  gap: 1px;
-  min-height: 25px;
-  padding-left: 8px;
+  gap: 2px;
+  padding-left: 4px;
   background: var(--inbox-card-bg);
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-fast) var(--ease-out);
+  transition: opacity var(--dur-hover) var(--ease-out);
 }
 
+.inbox-shelf__row:focus-within .inbox-card__quick,
+.inbox-shelf__row:has(.menutrigger[aria-expanded='true']) .inbox-card__quick,
+.inbox-card:has(.menutrigger[aria-expanded='true']) .inbox-card__quick,
 .inbox-card:focus-within .inbox-card__quick {
   opacity: 1;
   pointer-events: auto;
 }
 
-.inbox-card:focus-within .inbox-card__state {
-  opacity: 0;
-}
-
 @media (hover: hover) and (pointer: fine) {
+  .inbox-shelf__row:hover .inbox-card__quick,
   .inbox-card:hover .inbox-card__quick {
     opacity: 1;
     pointer-events: auto;
   }
+}
 
-  .inbox-card:hover .inbox-card__state {
-    opacity: 0;
+/* While the actions show, the provider mark and time step aside and the
+   second line ends where the actions begin: 32px for the menu alone, 92px
+   with a word action beside it. */
+@media (min-width: 701px) {
+  :is(.inbox-card, .inbox-shelf__row):is(:focus-within, :has(.menutrigger[aria-expanded='true']))
+    .inbox-card__meta
+    > :is(.inbox-card__source, .inbox-card__state) {
+    display: none;
   }
 
-  .inbox-shelf__row:hover > .menuwrap {
-    opacity: 1;
-    pointer-events: auto;
+  :is(.inbox-card, .inbox-shelf__row):is(:focus-within, :has(.menutrigger[aria-expanded='true']))
+    .inbox-card__meta {
+    padding-right: 32px;
+  }
+
+  :is(.inbox-card, .inbox-shelf__row):is(
+      :focus-within,
+      :has(.menutrigger[aria-expanded='true'])
+    ):has(.inbox-card__action)
+    .inbox-card__meta {
+    padding-right: 92px;
   }
 }
 
-.inbox-card__quick > button,
-.inbox-card__quick .menutrigger,
-.inbox-shelf__action,
-.inbox-shelf__row > .menuwrap .menutrigger {
+@media (hover: hover) and (pointer: fine) {
+  :is(.inbox-card, .inbox-shelf__row):hover
+    .inbox-card__meta
+    > :is(.inbox-card__source, .inbox-card__state) {
+    display: none;
+  }
+
+  :is(.inbox-card, .inbox-shelf__row):hover .inbox-card__meta {
+    padding-right: 32px;
+  }
+
+  :is(.inbox-card, .inbox-shelf__row):hover:has(.inbox-card__action) .inbox-card__meta {
+    padding-right: 92px;
+  }
+}
+
+/* Scoped with :is() and :not() so it outranks the shared .menutrigger hover. */
+.inbox-card__quick :is(button, .menutrigger) {
   display: grid;
+  flex: none;
   place-items: center;
-  width: 23px;
-  height: 23px;
+  width: 24px;
+  max-width: none;
+  height: 24px;
+  margin: 0;
   padding: 0;
   background: none;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   color: var(--text-3);
   cursor: pointer;
+  transition:
+    background-color var(--dur-hover) var(--ease-out),
+    color var(--dur-hover) var(--ease-out);
 }
 
-.inbox-card__quick > button:hover,
-.inbox-card__quick .menutrigger:hover,
-.inbox-shelf__action:hover,
-.inbox-shelf__row > .menuwrap .menutrigger:hover {
+.inbox-card__quick :is(button, .menutrigger):hover:not(:disabled),
+.inbox-card__quick .menutrigger[aria-expanded='true'] {
   background: var(--surface-3);
   color: var(--text);
 }
 
-.inbox-card__menu {
-  width: 23px;
-  height: 23px;
+/* Settle, Wake now and Un-settle say what they do, in ink. */
+.inbox-card__quick .inbox-card__action {
+  width: auto;
+  padding: 0 7px;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.inbox-card__quick :is(button, .menutrigger):active:not(:disabled) {
+  background: var(--control-pressed);
+}
+
+.inbox-card__quick :is(button, .menutrigger):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
 }
 
 .inbox-menu__selection {
@@ -491,37 +745,50 @@
   font-size: var(--t-xs);
 }
 
+.inbox-card.is-renaming {
+  padding: 8px;
+}
+
+.inbox-shelf__row > .rename--chat {
+  width: calc(100% - 16px);
+  height: 32px;
+  margin: 8px;
+  padding: 0 8px;
+}
+
+/* ---------- snoozed and settled ---------- */
+
 .inbox-shelf {
-  margin-top: 5px;
+  margin-top: 10px;
+  padding-top: 6px;
   border-top: 1px solid var(--line);
-  padding-top: 3px;
 }
 
 .inbox-shelf__toggle {
+  --inbox-pill-inset: 7px 0;
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 5px 8px;
-  background: none;
-  border: 0;
-  border-radius: var(--r-md);
+  min-height: 44px;
+  margin-block: -7px;
+  padding: 0 10px;
   color: var(--text-3);
-  cursor: pointer;
   font: inherit;
   font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
   text-align: left;
+  transition: color var(--dur-hover) var(--ease-out);
 }
 
 .inbox-shelf__toggle:hover {
-  background: var(--surface);
+  --inbox-pill-bg: var(--control-hover);
   color: var(--text-2);
 }
 
 .inbox-shelf__toggle svg {
-  transition:
-    transform var(--dur-fast) var(--ease-out),
-    rotate var(--dur-fast) var(--ease-out);
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
 .inbox-shelf__toggle[aria-expanded='true'] svg {
@@ -532,117 +799,101 @@
   margin-left: auto;
 }
 
-.inbox-shelf__row {
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  min-width: 0;
-  min-height: 30px;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
+/* A thread that just changed group settles into its new place. Rows that mount
+   for any other reason never animate. */
+:is(.inbox-card, .inbox-shelf__row).is-arriving {
+  animation: inbox-row-arrive var(--dur-fast) var(--ease-out) both;
 }
 
-.inbox-shelf__row:hover,
-.inbox-shelf__row.is-selected {
-  background: var(--surface);
+@keyframes inbox-row-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
 }
 
-.inbox-shelf__row.is-multi-selected {
-  background: color-mix(in oklab, var(--attention) 7%, var(--surface));
-  border-color: color-mix(in oklab, var(--attention) 30%, transparent);
-}
-
-.inbox-shelf__main {
-  display: flex;
-  flex: 1;
-  align-items: baseline;
-  gap: 7px;
-  min-width: 0;
-  padding: 6px 8px;
+.inbox__more {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
   background: none;
   border: 0;
-  color: var(--text-2);
+  border-radius: var(--r-md);
+  color: var(--text-3);
   cursor: pointer;
   font: inherit;
   font-size: var(--t-xs);
   text-align: left;
 }
 
-.inbox-shelf__main span,
-.inbox-shelf__main small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.inbox-shelf__main span {
-  flex: 1;
-}
-
-.inbox-shelf__main small {
-  flex: none;
-  max-width: 45%;
-  color: var(--text-3);
-  font-size: 10.5px;
-}
-
-.inbox-shelf__row > .menuwrap {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.inbox-shelf__row:focus-within > .menuwrap {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.inbox-shelf__row > .rename {
-  flex: 1;
-  margin: 2px 4px;
-}
-
-.inbox-shelf__row > .rename--chat {
-  height: 28px;
-  margin: 0;
-  padding: 0 8px;
-  font-size: var(--t-xs);
-}
-
-.inbox__more {
-  width: 100%;
-  padding: 6px 8px;
-  background: none;
-  border: 0;
-  color: var(--text-3);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-xs);
+.inbox__more:hover {
+  background: var(--control-hover);
+  color: var(--text-2);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .inbox-shelf__toggle svg {
+  .inbox-shelf__toggle svg,
+  .thread-tile.is-working .thread-tile__ring,
+  .thread-tile .is-entering,
+  :is(.inbox-card, .inbox-shelf__row).is-arriving {
+    animation: none;
     transition: none;
   }
 }
 
+/* Touch-sized controls where the rail is the whole window. */
 @media (max-width: 700px) {
-  .inbox-card__quick,
-  .inbox-shelf__row > .menuwrap {
+  .shell .rail-slot .rail[data-sidebar-mode='inbox'] {
+    width: 100vw;
+  }
+
+  .shell:has(.rail-slot:not(.is-collapsed) .rail[data-sidebar-mode='inbox']) > .panel-toggles {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .inbox-card__quick {
+    right: 2px;
+    bottom: -2px;
     opacity: 1;
     pointer-events: auto;
   }
 
-  .inbox-card__quick {
-    top: auto;
-    bottom: 4px;
-  }
-
   .inbox-card__meta {
-    padding-right: 72px;
+    padding-right: 48px;
   }
 
-  .inbox-card:hover .inbox-card__state,
-  .inbox-card:focus-within .inbox-card__state {
-    opacity: 1;
+  .inbox-card__branch {
+    display: none;
+  }
+
+  /* The row keeps one trailing button; its menu holds snooze, settle and wake. */
+  .inbox-card__quick > :not(:last-child) {
+    display: none;
+  }
+
+  .inbox-search {
+    height: 44px;
+  }
+
+  .inbox-search input {
+    margin-block: 0;
+  }
+
+  .inbox-toolbar .inbox-toolbar__icon {
+    --inbox-pill-inset: 4px;
+    margin: 0;
+  }
+
+  .inbox-card__quick :is(button, .menutrigger) {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* The touch target grows, while the visible mark keeps its desktop size. */
+  .inbox-card__quick .menutrigger:hover:not(:disabled),
+  .inbox-card__quick .menutrigger:active:not(:disabled),
+  .inbox-card__quick .menutrigger[aria-expanded='true'] {
+    background: none;
   }
 }

@@ -29,6 +29,11 @@ import {
   IconPinnedOff as PinOff,
   IconSearch as Search,
   IconEdit as SquarePen,
+  IconFilter2 as Filter,
+  IconFolder as Folder,
+  IconPhoto as Photo,
+  IconPhotoOff as PhotoOff,
+  IconPhotoPlus as PhotoPlus,
   IconTrash as Trash2,
   IconX as X,
 } from '@tabler/icons-react'
@@ -45,12 +50,13 @@ import {
   type InboxEntryGroups,
   type ProjectMetadata,
 } from '../inbox-order.js'
-import { AppSelect } from './AppSelect.js'
 import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { Project, Session } from './Sidebar.js'
-import { SourceIdentity } from './SourceIdentity.js'
 import { InboxCardsSkeleton } from './SurfaceSkeletons.js'
+import { SourceIdentity } from './SourceIdentity.js'
+import { ThreadTile, threadTileMark } from './ThreadTile.js'
+import { THREAD_IMAGE_ACCEPT } from '../thread-image.js'
 
 const PAGE_SIZE = 25
 const INITIAL_ACTIVE_LIMIT = 12
@@ -58,6 +64,8 @@ const INITIAL_SETTLED_LIMIT = 10
 const ACTIVE_PAGE_IDLE_TIMEOUT_MS = 500
 const ACTIVE_PAGE_FALLBACK_DELAY_MS = 100
 const NARROW_VIEWPORT_QUERY = '(max-width: 700px)'
+/** How long after a lifecycle change a newly mounted row counts as arriving. */
+const ARRIVAL_WINDOW_MS = 700
 const InboxSecondNowContext = createContext(Date.now())
 const InboxMinuteNowContext = createContext(Date.now())
 const InboxDayNowContext = createContext(Date.now())
@@ -163,6 +171,8 @@ function InboxSidebarComponent(props: {
   onSelectSession: (id: string) => void
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin?: (id: string) => void
+  /** Sets a thread's picture from a picked file, or removes it. Absent hides the actions. */
+  onSetSessionImage?: ((id: string, file: File | undefined) => void) | undefined
   onArchiveSession: (id: string) => void
   onArchiveSessions?: ((ids: string[]) => void) | undefined
   pullRequestsActive?: boolean | undefined
@@ -180,6 +190,9 @@ function InboxSidebarComponent(props: {
     () => globalThis.matchMedia?.(NARROW_VIEWPORT_QUERY).matches ?? false,
   )
   const rowRefs = useRef(new Map<string, HTMLButtonElement>())
+  const searchInput = useRef<HTMLInputElement>(null)
+  const imageInput = useRef<HTMLInputElement>(null)
+  const imageTarget = useRef<string | undefined>(undefined)
 
   useEffect(() => {
     const media = globalThis.matchMedia?.(NARROW_VIEWPORT_QUERY)
@@ -222,9 +235,9 @@ function InboxSidebarComponent(props: {
     ['starting', 'working'].includes(entry.session.status),
   )
   const nextRelativeTimes: number[] = []
+  // Every row that is not running shows how long ago its state changed.
   for (const { session } of visibleActive) {
-    const woke = session.lifecycle.state === 'active' && session.lifecycle.wokeAt !== undefined
-    if (session.status === 'idle' && !woke) {
+    if (session.status !== 'starting' && session.status !== 'working') {
       nextRelativeTimes.push(session.statusSince ?? session.createdAt)
     }
   }
@@ -355,6 +368,32 @@ function InboxSidebarComponent(props: {
   )
   const unsnooze = useCallback((id: string) => props.actions.onUnsnooze(id), [props.actions])
   const unsettle = useCallback((id: string) => props.actions.onUnsettle(id), [props.actions])
+  // Rebuilt only when the active group changes, never on a streamed delta.
+  const finding = useMemo(() => activeFinding(active), [active])
+  const openFirst = useCallback(
+    (id: string) => {
+      setSelectedIds(new Set())
+      setSelectionAnchor(id)
+      props.onSelectSession(id)
+      rowRefs.current.get(id)?.focus()
+    },
+    [props.onSelectSession],
+  )
+  const setSessionImage = props.onSetSessionImage
+  const chooseImage = useMemo(
+    () =>
+      setSessionImage
+        ? (id: string) => {
+            imageTarget.current = id
+            imageInput.current?.click()
+          }
+        : undefined,
+    [setSessionImage],
+  )
+  const removeImage = useMemo(
+    () => (setSessionImage ? (id: string) => setSessionImage(id, undefined) : undefined),
+    [setSessionImage],
+  )
   const preferredProject =
     props.scope ||
     props.activeProjectPath ||
@@ -367,10 +406,12 @@ function InboxSidebarComponent(props: {
       hasSnoozedThread={snoozedExpanded && visibleSnoozed.length > 0}
     >
       <div className="inbox-toolbar">
+        <h1 className="visually-hidden">Threads</h1>
         <div className="inbox-toolbar__primary">
           <label className="inbox-search">
-            <Search size={14} aria-hidden />
+            <Search size={16} stroke={1.5} aria-hidden />
             <input
+              ref={searchInput}
               value={query}
               onChange={(event) => setQuery(event.currentTarget.value)}
               onKeyDown={(event) => {
@@ -384,48 +425,48 @@ function InboxSidebarComponent(props: {
                 event.preventDefault()
                 focusBoundary(event.key === 'ArrowDown' ? 1 : -1)
               }}
-              placeholder="Search threads"
+              placeholder="Search"
               aria-label="Search threads"
               spellCheck={false}
             />
             {query ? (
-              <button type="button" aria-label="Clear thread search" onClick={() => setQuery('')}>
+              <button
+                type="button"
+                aria-label="Clear thread search"
+                onClick={() => {
+                  setQuery('')
+                  searchInput.current?.focus()
+                }}
+              >
                 <X size={12} aria-hidden />
               </button>
             ) : null}
           </label>
+          <ProjectFilter
+            projects={props.projects}
+            scope={props.scope}
+            onScopeChange={props.onScopeChange}
+          />
           <button
-            className="inbox-toolbar__new"
+            className="inbox-toolbar__icon"
             type="button"
+            aria-label="Add project"
+            title="Add project"
+            onClick={props.onAddProject}
+          >
+            <FolderPlus size={16} stroke={1.5} aria-hidden />
+          </button>
+          <button
+            className="inbox-toolbar__icon"
+            type="button"
+            aria-label="New thread"
+            title="New thread"
             onClick={() => {
               if (props.projects.length === 0) props.onAddProject()
               else props.onNewSession(preferredProject || undefined, props.projects.length > 1)
             }}
           >
-            <SquarePen size={16} aria-hidden />
-            <span>New chat</span>
-          </button>
-        </div>
-
-        <div className="inbox-toolbar__projects">
-          <label className="inbox__scope">
-            <span className="visually-hidden">Project filter</span>
-            <AppSelect
-              ariaLabel="Sidebar project filter"
-              value={props.scope}
-              onChange={props.onScopeChange}
-              options={[
-                { value: '', label: 'All projects' },
-                ...props.projects.map((project) => ({
-                  value: project.path,
-                  label: projectName(project),
-                })),
-              ]}
-            />
-          </label>
-          <button className="inbox-toolbar__add" type="button" onClick={props.onAddProject}>
-            <FolderPlus size={13} aria-hidden />
-            <span>Add Project</span>
+            <SquarePen size={16} stroke={1.5} aria-hidden />
           </button>
         </div>
         {props.onOpenPullRequests ? (
@@ -435,11 +476,29 @@ function InboxSidebarComponent(props: {
             aria-current={props.pullRequestsActive ? 'page' : undefined}
             onClick={props.onOpenPullRequests}
           >
-            <GitPullRequest size={14} aria-hidden />
+            <GitPullRequest size={16} stroke={1.5} aria-hidden />
             <span>Pull requests</span>
           </button>
         ) : null}
       </div>
+      {setSessionImage ? (
+        <input
+          ref={imageInput}
+          className="inbox__image-input"
+          type="file"
+          accept={THREAD_IMAGE_ACCEPT}
+          tabIndex={-1}
+          aria-hidden
+          hidden
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0]
+            const id = imageTarget.current
+            event.currentTarget.value = ''
+            imageTarget.current = undefined
+            if (file && id) setSessionImage(id, file)
+          }}
+        />
+      ) : null}
 
       <div className="rail__body inbox__body">
         {props.loading && props.projects.length === 0 ? (
@@ -452,7 +511,7 @@ function InboxSidebarComponent(props: {
 
             {!normalizedQuery || active.length > 0 ? (
               <>
-                <SectionHeading title="Active" count={active.length} />
+                <ActiveHeading count={active.length} finding={finding} onOpen={openFirst} />
                 {active.length > 0 ? (
                   <ul className="inbox__list" aria-label="Active threads">
                     {visibleActive.map((entry) => {
@@ -474,6 +533,8 @@ function InboxSidebarComponent(props: {
                           onNavigate={focusResult}
                           onRename={props.onRenameSession}
                           onTogglePin={props.onToggleSessionPin}
+                          onChooseImage={chooseImage}
+                          onRemoveImage={removeImage}
                           onArchive={props.onArchiveSession}
                           onArchiveMany={archiveSessions}
                           onClearSelection={clearSelection}
@@ -517,7 +578,6 @@ function InboxSidebarComponent(props: {
                         eagerActions={eagerRowActions}
                         menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
                         action="Wake now"
-                        actionIcon="wake"
                         actions={props.actions}
                         onChoose={chooseEntry}
                         onContextMenu={prepareContextMenu}
@@ -525,6 +585,8 @@ function InboxSidebarComponent(props: {
                         onNavigate={focusResult}
                         onRename={props.onRenameSession}
                         onTogglePin={props.onToggleSessionPin}
+                        onChooseImage={chooseImage}
+                        onRemoveImage={removeImage}
                         onArchive={props.onArchiveSession}
                         onArchiveMany={archiveSessions}
                         onAction={unsnooze}
@@ -566,7 +628,6 @@ function InboxSidebarComponent(props: {
                         eagerActions={eagerRowActions}
                         menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
                         action="Un-settle"
-                        actionIcon="unsettle"
                         actions={props.actions}
                         onChoose={chooseEntry}
                         onContextMenu={prepareContextMenu}
@@ -574,6 +635,8 @@ function InboxSidebarComponent(props: {
                         onNavigate={focusResult}
                         onRename={props.onRenameSession}
                         onTogglePin={props.onToggleSessionPin}
+                        onChooseImage={chooseImage}
+                        onRemoveImage={removeImage}
                         onArchive={props.onArchiveSession}
                         onArchiveMany={archiveSessions}
                         onAction={unsettle}
@@ -608,12 +671,115 @@ function InboxSidebarComponent(props: {
   )
 }
 
-function SectionHeading(props: { title: string; count: number }) {
+type ActiveFinding = {
+  failed: number
+  firstFailed: string | undefined
+  waiting: number
+  firstWaiting: string | undefined
+  working: number
+}
+
+/** What the active group needs from the person, counted from its rows. */
+export function activeFinding(entries: readonly Entry[]): ActiveFinding {
+  const finding: ActiveFinding = {
+    failed: 0,
+    firstFailed: undefined,
+    waiting: 0,
+    firstWaiting: undefined,
+    working: 0,
+  }
+  for (const { session } of entries) {
+    if (session.status === 'failed') {
+      finding.failed += 1
+      finding.firstFailed ??= session.id
+    } else if (session.status === 'input' || session.status === 'approval') {
+      finding.waiting += 1
+      finding.firstWaiting ??= session.id
+    } else if (session.status === 'starting' || session.status === 'working') {
+      finding.working += 1
+    }
+  }
+  return finding
+}
+
+/**
+ * The active group's heading: its name and count, and on the right how many
+ * threads wait on the person (failed or asking), which opens the first of them.
+ */
+function ActiveHeading(props: {
+  count: number
+  finding: ActiveFinding
+  onOpen: (id: string) => void
+}) {
+  const { failed, firstFailed, waiting, firstWaiting } = props.finding
+  const needYou = failed + waiting
+  const first = firstFailed ?? firstWaiting
   return (
-    <p className="inbox__heading">
-      <span>{props.title}</span>
-      <span>{props.count}</span>
-    </p>
+    <div className="inbox__heading">
+      <p>
+        Active <span className="inbox__heading-count">{props.count}</span>
+      </p>
+      {first ? (
+        <button
+          type="button"
+          className="inbox__need-you"
+          title="Open the first thread that needs you"
+          onClick={() => props.onOpen(first)}
+        >
+          {needYou} {needYou === 1 ? 'needs' : 'need'} you
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function ProjectFilter(props: {
+  projects: Project[]
+  scope: string
+  onScopeChange: (path: string) => void
+}) {
+  const current = props.scope
+    ? props.projects.find((project) => project.path === props.scope)
+    : undefined
+  const label = current ? `Filter by project: ${projectName(current)}` : 'Filter by project'
+  return (
+    <Menu
+      drop="down"
+      align="right"
+      label={label}
+      triggerTitle={label}
+      triggerClassName={`inbox-toolbar__icon${current ? ' is-filtered' : ''}`}
+      panelClassName="menu--sidebar"
+      trigger={() => <Filter size={16} stroke={1.5} aria-hidden />}
+    >
+      {(close) => (
+        <>
+          <MenuItem
+            title="All projects"
+            icon={<Folder size={13} aria-hidden />}
+            active={!current}
+            checked={!current}
+            onClick={() => {
+              props.onScopeChange('')
+              close()
+            }}
+          />
+          {props.projects.map((project) => (
+            <MenuItem
+              key={project.path}
+              title={projectName(project)}
+              icon={<Folder size={13} aria-hidden />}
+              active={project.path === props.scope}
+              checked={project.path === props.scope}
+              onClick={() => {
+                props.onScopeChange(project.path)
+                close()
+              }}
+            />
+          ))}
+        </>
+      )}
+    </Menu>
   )
 }
 
@@ -633,6 +799,8 @@ const ActiveRow = memo(function ActiveRow(
     onNavigate: (id: string, direction: -1 | 1) => void
     onRename: (id: string, title: string) => void
     onTogglePin: ((id: string) => void) | undefined
+    onChooseImage: ((id: string) => void) | undefined
+    onRemoveImage: ((id: string) => void) | undefined
     onArchive: (id: string) => void
     onArchiveMany: (ids: string[]) => void
     onClearSelection: () => void
@@ -640,6 +808,7 @@ const ActiveRow = memo(function ActiveRow(
 ) {
   const [renaming, setRenaming] = useState(false)
   const [actionsRequested, setActionsRequested] = useState(false)
+  const [arriving] = useState(() => justArrived(props.session, Date.now()))
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
   const lifecycle =
     props.session.lifecycle.state === 'active'
@@ -668,10 +837,15 @@ const ActiveRow = memo(function ActiveRow(
     props.onRegister(props.session.id, node)
   }
   const initialNow = Date.now()
+  const name = projectName(props.project)
+  const mark = threadTileMark(props.session.status)
+  const woke = lifecycle.wokeAt !== undefined && props.session.status !== 'idle'
+  const emphasis = props.session.unread || (mark !== 'none' && mark !== 'done' && mark !== 'queued')
 
   return (
     <li
-      className={`inbox-card${props.current ? ' is-selected' : ''}${props.selected ? ' is-multi-selected' : ''}`}
+      className={`inbox-card${props.current ? ' is-selected' : ''}${props.selected ? ' is-multi-selected' : ''}${emphasis ? ' is-emphasized' : ''}${arriving ? ' is-arriving' : ''}`}
+      data-thread-id={props.session.id}
       onPointerEnter={() => setActionsRequested(true)}
       onFocusCapture={() => setActionsRequested(true)}
     >
@@ -688,8 +862,21 @@ const ActiveRow = memo(function ActiveRow(
         aria-label={rowLabel(props.project, props.session, initialNow)}
         title={threadSummary(props.project, props.session, initialNow)}
       >
-        <span className="inbox-card__topline">
-          <span className="inbox-card__project">{projectName(props.project)}</span>
+        <ThreadTile image={props.session.image} name={name} mark={mark} />
+        <span className="inbox-card__line">
+          <RowMarks session={props.session} />
+          <span className="inbox-card__title">{props.session.title}</span>
+        </span>
+        <span className="inbox-card__meta">
+          <StateWord session={props.session} woke={woke} />
+          <span className="inbox-card__project">{name}</span>
+          {props.session.worktreeBranch ? (
+            <span className="inbox-card__branch">
+              <GitBranch size={12} aria-hidden />
+              <span>{props.session.worktreeBranch}</span>
+            </span>
+          ) : null}
+          <RowSource session={props.session} />
           <span className="inbox-card__state">
             <ActiveRowClock
               project={props.project}
@@ -699,49 +886,18 @@ const ActiveRow = memo(function ActiveRow(
             />
           </span>
         </span>
-        <span className="inbox-card__title">{props.session.title}</span>
-        <span className="inbox-card__meta">
-          {props.session.worktreeBranch ? (
-            <span className="inbox-card__branch">
-              <GitBranch size={10} aria-hidden />
-              {props.session.worktreeBranch}
-            </span>
-          ) : (
-            <span>Default checkout</span>
-          )}
-          <span aria-hidden>·</span>
-          <SourceIdentity
-            presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
-            density="compact"
-          />
-          {props.session.pinned ? (
-            <>
-              <span aria-hidden>·</span>
-              <span>Pinned</span>
-            </>
-          ) : null}
-          {lifecycle.wokeAt && props.session.status !== 'idle' ? (
-            <span className="inbox-card__woke">Woke</span>
-          ) : null}
-        </span>
       </button>
 
       <span className="inbox-card__quick">
         {eligible && actionsReady ? (
-          <>
-            <SnoozeMenu
-              label={`Snooze ${props.session.title}`}
-              onSnooze={(wakeAt) => props.actions.onSnooze(props.session.id, wakeAt)}
-            />
-            <button
-              type="button"
-              title="Settle"
-              aria-label={`Settle ${props.session.title}`}
-              onClick={() => props.actions.onSettle(props.session.id)}
-            >
-              <CheckCheck size={13} aria-hidden />
-            </button>
-          </>
+          <button
+            className="inbox-card__action"
+            type="button"
+            aria-label={`Settle ${props.session.title}`}
+            onClick={() => props.actions.onSettle(props.session.id)}
+          >
+            Settle
+          </button>
         ) : null}
         <ThreadMenu
           entry={{ project: props.project, session: props.session }}
@@ -751,6 +907,8 @@ const ActiveRow = memo(function ActiveRow(
           triggerReady={actionsReady}
           onRename={() => setRenaming(true)}
           onTogglePin={() => props.onTogglePin?.(props.session.id)}
+          onChooseImage={props.onChooseImage}
+          onRemoveImage={props.onRemoveImage}
           onArchive={() => props.onArchive(props.session.id)}
           onArchiveMany={props.onArchiveMany}
           onClearSelection={props.onClearSelection}
@@ -760,6 +918,65 @@ const ActiveRow = memo(function ActiveRow(
   )
 })
 
+/** What sits before the title: the pin and an unread reply's dot. */
+function RowMarks(props: { session: Session }) {
+  return (
+    <>
+      {props.session.pinned ? <Pin className="inbox-card__pin" size={12} aria-hidden /> : null}
+      {props.session.unread && props.session.status !== 'ready' ? (
+        <span className="inbox-card__unread" aria-hidden />
+      ) : null}
+    </>
+  )
+}
+
+/**
+ * The state in words, first on the row's second line, in the same semantic
+ * colours as the classic sidebar's status dot: green for done, red for
+ * failed, amber for what waits on the person. Working stays in ink and queued
+ * in grey; the ring around the tile tells them apart.
+ */
+function StateWord(props: { session: Session; woke: boolean }) {
+  const word = stateWord(props.session, props.woke)
+  if (!word) return null
+  return <span className={`inbox-state is-${word.tone}`}>{word.label}</span>
+}
+
+function stateWord(
+  session: Session,
+  woke: boolean,
+): { label: string; tone: 'working' | 'attention' | 'failed' | 'done' | 'quiet' } | undefined {
+  switch (session.status) {
+    case 'starting':
+    case 'working':
+      return { label: 'Working', tone: 'working' }
+    case 'input':
+      return { label: 'Needs input', tone: 'attention' }
+    case 'approval':
+      return { label: 'Approval', tone: 'attention' }
+    case 'failed':
+      return { label: 'Failed', tone: 'failed' }
+    case 'queued':
+      return { label: 'Queued', tone: 'quiet' }
+    case 'ready':
+      return { label: 'Done', tone: 'done' }
+    default:
+      return woke ? { label: 'Woke', tone: 'attention' } : undefined
+  }
+}
+
+/** The provider's mark, quiet at the end of the second line; its name stays for assistive tech. */
+function RowSource(props: { session: Session }) {
+  return (
+    <SourceIdentity
+      className="inbox-card__source"
+      presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
+      density="compact"
+      label="hidden"
+    />
+  )
+}
+
 function ActiveRowClock(props: {
   project: ProjectMetadata
   session: Session
@@ -767,11 +984,7 @@ function ActiveRowClock(props: {
   initialNow: number
 }) {
   const running = props.session.status === 'starting' || props.session.status === 'working'
-  const woke =
-    props.session.lifecycle.state === 'active' && props.session.lifecycle.wokeAt !== undefined
-  if (running) return <SecondActiveRowClock {...props} />
-  if (props.session.status === 'idle' && !woke) return <MinuteActiveRowClock {...props} />
-  return <Status session={props.session} now={props.initialNow} />
+  return running ? <SecondActiveRowClock {...props} /> : <MinuteActiveRowClock {...props} />
 }
 
 function SecondActiveRowClock(props: {
@@ -804,7 +1017,7 @@ function ClockedActiveRow(props: {
     target.setAttribute('aria-label', rowLabel(props.project, props.session, props.now))
     target.title = threadSummary(props.project, props.session, props.now)
   }, [props.now, props.project, props.session, props.target])
-  return <Status session={props.session} now={props.now} />
+  return <RowTime session={props.session} now={props.now} />
 }
 
 function Shelf(props: {
@@ -839,7 +1052,6 @@ const ShelfRow = memo(function ShelfRow(
     eagerActions: boolean
     menuEntries: Entry[] | undefined
     action: string
-    actionIcon: 'wake' | 'unsettle'
     actions: InboxActions
     onChoose: (event: ReactMouseEvent, id: string) => void
     onContextMenu: (id: string) => void
@@ -847,6 +1059,8 @@ const ShelfRow = memo(function ShelfRow(
     onNavigate: (id: string, direction: -1 | 1) => void
     onRename: (id: string, title: string) => void
     onTogglePin: ((id: string) => void) | undefined
+    onChooseImage: ((id: string) => void) | undefined
+    onRemoveImage: ((id: string) => void) | undefined
     onArchive: (id: string) => void
     onArchiveMany: (ids: string[]) => void
     onAction: (id: string) => void
@@ -855,6 +1069,7 @@ const ShelfRow = memo(function ShelfRow(
 ) {
   const [renaming, setRenaming] = useState(false)
   const [actionsRequested, setActionsRequested] = useState(false)
+  const [arriving] = useState(() => justArrived(props.session, Date.now()))
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
   const setTarget = (node: HTMLButtonElement | null) => {
     contextMenuTarget.current = node
@@ -863,9 +1078,13 @@ const ShelfRow = memo(function ShelfRow(
   const initialNow = Date.now()
   const actionsReady = props.eagerActions || actionsRequested
 
+  const name = projectName(props.project)
+  const mark = threadTileMark(props.session.status)
+
   return (
     <li
-      className={`inbox-shelf__row${props.current ? ' is-selected' : ''}${props.selected ? ' is-multi-selected' : ''}`}
+      className={`inbox-shelf__row${props.current ? ' is-selected' : ''}${props.selected ? ' is-multi-selected' : ''}${props.session.unread ? ' is-emphasized' : ''}${arriving ? ' is-arriving' : ''}`}
+      data-thread-id={props.session.id}
       onPointerEnter={() => setActionsRequested(true)}
       onFocusCapture={() => setActionsRequested(true)}
     >
@@ -889,41 +1108,50 @@ const ShelfRow = memo(function ShelfRow(
           onKeyDown={(event) =>
             navigateRows(event, (direction) => props.onNavigate(props.session.id, direction))
           }
+          aria-label={shelfRowLabel(props.project, props.session, initialNow)}
           title={threadSummary(props.project, props.session, initialNow)}
         >
-          <span>{props.session.title}</span>
-          <ShelfRowClock
-            project={props.project}
-            session={props.session}
-            target={contextMenuTarget}
-          />
+          <ThreadTile image={props.session.image} name={name} mark={mark} />
+          <span className="inbox-card__line">
+            <RowMarks session={props.session} />
+            <span className="inbox-shelf__title">{props.session.title}</span>
+          </span>
+          <span className="inbox-card__meta">
+            <ShelfRowClock
+              project={props.project}
+              session={props.session}
+              target={contextMenuTarget}
+            />
+            <span className="inbox-card__project">{name}</span>
+            <RowSource session={props.session} />
+          </span>
         </button>
       )}
-      <button
-        className="inbox-shelf__action"
-        type="button"
-        aria-label={`${props.action} ${props.session.title}`}
-        onClick={() => props.onAction(props.session.id)}
-      >
-        {props.actionIcon === 'wake' ? (
-          <Bell size={13} aria-hidden />
-        ) : (
-          <CheckCheck size={13} aria-hidden />
-        )}
-      </button>
       {!renaming ? (
-        <ThreadMenu
-          entry={{ project: props.project, session: props.session }}
-          entries={props.menuEntries ?? [{ project: props.project, session: props.session }]}
-          actions={props.actions}
-          contextMenuTarget={contextMenuTarget}
-          triggerReady={actionsReady}
-          onRename={() => setRenaming(true)}
-          onTogglePin={() => props.onTogglePin?.(props.session.id)}
-          onArchive={() => props.onArchive(props.session.id)}
-          onArchiveMany={props.onArchiveMany}
-          onClearSelection={props.onClearSelection}
-        />
+        <span className="inbox-card__quick">
+          <button
+            className="inbox-card__action"
+            type="button"
+            aria-label={`${props.action} ${props.session.title}`}
+            onClick={() => props.onAction(props.session.id)}
+          >
+            {props.action}
+          </button>
+          <ThreadMenu
+            entry={{ project: props.project, session: props.session }}
+            entries={props.menuEntries ?? [{ project: props.project, session: props.session }]}
+            actions={props.actions}
+            contextMenuTarget={contextMenuTarget}
+            triggerReady={actionsReady}
+            onRename={() => setRenaming(true)}
+            onTogglePin={() => props.onTogglePin?.(props.session.id)}
+            onChooseImage={props.onChooseImage}
+            onRemoveImage={props.onRemoveImage}
+            onArchive={() => props.onArchive(props.session.id)}
+            onArchiveMany={props.onArchiveMany}
+            onClearSelection={props.onClearSelection}
+          />
+        </span>
       ) : null}
     </li>
   )
@@ -967,13 +1195,16 @@ function ClockedShelfRow(props: {
 }) {
   useLayoutEffect(() => {
     const target = props.target.current
-    if (target) target.title = threadSummary(props.project, props.session, props.now)
+    if (!target) return
+    target.setAttribute('aria-label', shelfRowLabel(props.project, props.session, props.now))
+    target.title = threadSummary(props.project, props.session, props.now)
   }, [props.now, props.project, props.session, props.target])
-  const detail =
-    props.session.lifecycle.state === 'snoozed'
-      ? formatWakeTime(wakeAt(props.session), props.now)
-      : `${projectName(props.project)} · ${relativeTime(settledAt(props.session), props.now)}`
-  return <small>{detail}</small>
+  const detail = shelfDetail(props.session, props.now)
+  return (
+    <span className="inbox-state is-quiet">
+      {props.session.lifecycle.state === 'snoozed' ? detail : `Settled ${detail}`}
+    </span>
+  )
 }
 
 function ThreadMenu(props: {
@@ -984,6 +1215,8 @@ function ThreadMenu(props: {
   triggerReady: boolean
   onRename: () => void
   onTogglePin: () => void
+  onChooseImage: ((id: string) => void) | undefined
+  onRemoveImage: ((id: string) => void) | undefined
   onArchive: (id?: string) => void
   onArchiveMany: (ids: string[]) => void
   onClearSelection: () => void
@@ -1124,6 +1357,30 @@ function ThreadMenu(props: {
                   }
                   onClick={() => finish(close, props.onTogglePin)}
                 />
+                {props.onChooseImage ? (
+                  <MenuItem
+                    title={props.entry.session.image ? 'Replace image' : 'Add thread image'}
+                    icon={
+                      props.entry.session.image ? (
+                        <Photo size={13} aria-hidden />
+                      ) : (
+                        <PhotoPlus size={13} aria-hidden />
+                      )
+                    }
+                    onClick={() =>
+                      finish(close, () => props.onChooseImage?.(props.entry.session.id))
+                    }
+                  />
+                ) : null}
+                {props.onRemoveImage && props.entry.session.image ? (
+                  <MenuItem
+                    title="Remove image"
+                    icon={<PhotoOff size={13} aria-hidden />}
+                    onClick={() =>
+                      finish(close, () => props.onRemoveImage?.(props.entry.session.id))
+                    }
+                  />
+                ) : null}
                 <MenuItem
                   title="Copy project path"
                   icon={<Copy size={13} aria-hidden />}
@@ -1162,35 +1419,7 @@ function ThreadMenu(props: {
   )
 }
 
-const threadMenuTrigger = () => <Ellipsis size={13} aria-hidden />
-
-function SnoozeMenu(props: { label: string; onSnooze: (wakeAt: number) => void }) {
-  return (
-    <Menu
-      drop="down"
-      align="right"
-      label={props.label}
-      panelClassName="menu--sidebar"
-      trigger={() => <Clock3 size={13} aria-hidden />}
-    >
-      {(close) => (
-        <>
-          {snoozePresets(Date.now()).map((preset) => (
-            <MenuItem
-              key={preset.label}
-              title={preset.label}
-              icon={<Clock3 size={13} aria-hidden />}
-              onClick={() => {
-                props.onSnooze(preset.at)
-                close()
-              }}
-            />
-          ))}
-        </>
-      )}
-    </Menu>
-  )
-}
+const threadMenuTrigger = () => <Ellipsis size={16} aria-hidden />
 
 function Rename(props: { value: string; onCommit: (value: string) => void; onCancel: () => void }) {
   const [value, setValue] = useState(props.value)
@@ -1218,14 +1447,23 @@ function Rename(props: { value: string; onCommit: (value: string) => void; onCan
   )
 }
 
-function Status(props: { session: Session; now: number }) {
-  const status = statusPresentation(props.session, props.now)
-  return <span className={`inbox-status is-${status.tone}`}>{status.label}</span>
+/**
+ * The time at the end of the title line: how long a running thread has worked,
+ * otherwise how long ago its state last changed.
+ */
+function RowTime(props: { session: Session; now: number }) {
+  const since = props.session.statusSince ?? props.session.createdAt
+  const running = props.session.status === 'starting' || props.session.status === 'working'
+  return (
+    <span className="inbox-time">
+      {running ? elapsedTime(since, props.now) : relativeTime(since, props.now).replace(' ago', '')}
+    </span>
+  )
 }
 
 type StatusPresentation = {
   label: string
-  tone: 'quiet' | 'working' | 'attention' | 'failed' | 'done' | 'woke'
+  tone: 'quiet' | 'working' | 'attention' | 'queued' | 'failed' | 'done' | 'woke'
 }
 
 function statusPresentation(session: Session, now: number): StatusPresentation {
@@ -1234,7 +1472,7 @@ function statusPresentation(session: Session, now: number): StatusPresentation {
   if (session.status === 'input') return { label: 'Needs input', tone: 'attention' }
   if (session.status === 'failed') return { label: 'Failed', tone: 'failed' }
   if (session.status === 'ready') return { label: 'Done', tone: 'done' }
-  if (session.status === 'queued') return { label: 'Queued', tone: 'attention' }
+  if (session.status === 'queued') return { label: 'Queued', tone: 'queued' }
   if (session.status === 'starting' || session.status === 'working') {
     return {
       label: `Working · ${elapsedTime(session.statusSince ?? session.createdAt, now)}`,
@@ -1243,6 +1481,18 @@ function statusPresentation(session: Session, now: number): StatusPresentation {
   }
   if (woke) return { label: 'Woke', tone: 'woke' }
   return { label: relativeTime(session.statusSince ?? session.createdAt, now), tone: 'quiet' }
+}
+
+/** True when a row mounts because its thread just moved group, not because the list loaded. */
+function justArrived(session: Session, now: number): boolean {
+  const { lifecycle } = session
+  const movedAt =
+    lifecycle.state === 'settled'
+      ? lifecycle.settledAt
+      : lifecycle.state === 'snoozed'
+        ? lifecycle.snoozedAt
+        : lifecycle.wokeAt
+  return movedAt !== undefined && now - movedAt >= 0 && now - movedAt < ARRIVAL_WINDOW_MS
 }
 
 function canHide(session: Session): boolean {
@@ -1648,7 +1898,7 @@ function staticThreadPresentation(
   const provider = providerName(session)
   const presentation = {
     project: projectMetadata(project),
-    rowLabelPrefix: `${session.title}, ${projectLabel}, ${provider}`,
+    rowLabelPrefix: `${session.title}, ${projectLabel}, ${provider}, ${session.worktreeBranch ?? 'Default checkout'}`,
     summaryPrefix: [
       session.title,
       `Project: ${projectLabel}`,
@@ -1665,6 +1915,21 @@ function staticThreadPresentation(
 function rowLabel(project: ProjectMetadata, session: Session, now: number): string {
   const presentation = staticThreadPresentation(project, session)
   return `${presentation.rowLabelPrefix}, ${statusPresentation(session, now).label}`
+}
+
+function shelfDetail(session: Session, now: number): string {
+  return session.lifecycle.state === 'snoozed'
+    ? formatWakeTime(wakeAt(session), now)
+    : relativeTime(settledAt(session), now)
+}
+
+function shelfRowLabel(project: ProjectMetadata, session: Session, now: number): string {
+  const presentation = staticThreadPresentation(project, session)
+  const when =
+    session.lifecycle.state === 'snoozed'
+      ? `back ${shelfDetail(session, now)}`
+      : `finished ${shelfDetail(session, now)}`
+  return `${presentation.rowLabelPrefix}, ${when}`
 }
 
 function threadSummary(project: ProjectMetadata, session: Session, now: number): string {

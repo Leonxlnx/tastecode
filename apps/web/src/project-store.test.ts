@@ -362,6 +362,28 @@ describe('project session updates', () => {
 })
 
 describe('server project snapshot reconciliation', () => {
+  it('replaces only the chat whose picture changed', () => {
+    const image = 'data:image/png;base64,AAAA'
+    const snapshot = serverProjects(1, 2)
+    snapshot[0]!.sessions[0] = { ...snapshot[0]!.sessions[0]!, image }
+    const current = reconcileProjectList([], snapshot, [], {}, 100)
+    expect(current[0]!.sessions[0]!.image).toBe(image)
+    expect(current[0]!.sessions[1]!.image).toBeUndefined()
+    expect(reconcileProjectList(current, snapshot, [], {}, 200)).toBe(current)
+
+    const { image: _removed, ...withoutImage } = snapshot[0]!.sessions[0]!
+    const next = reconcileProjectList(
+      current,
+      [{ ...snapshot[0]!, sessions: [withoutImage, snapshot[0]!.sessions[1]!] }],
+      [],
+      {},
+      300,
+    )
+    expect(next[0]!.sessions[0]!.image).toBeUndefined()
+    expect('image' in next[0]!.sessions[0]!).toBe(false)
+    expect(next[0]!.sessions[1]).toBe(current[0]!.sessions[1])
+  })
+
   it('retains the API connection identity and reconciles source changes', () => {
     const snapshot = serverProjects(1, 2)
     snapshot[0]!.sessions[0] = {

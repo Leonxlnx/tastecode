@@ -10,8 +10,17 @@ import type {
   ProviderLimit,
   ProviderStatus,
   Skill,
+  ThreadInboxStatus,
   Usage,
 } from '@harness/contracts'
+// Thread pictures for the inbox rail, inlined as the PNG data URLs the server
+// stores. harbor-site and field-notes are CC0 photographs from Wikimedia Commons
+// (File:Boats-port-sailing-ships-harbor_(24243651191).jpg by Ed Gregory and
+// File:A_notebook.jpg by Jan Kahánek), cropped to 64px squares; tastecode is
+// the app's own icon. They stand in for logos a user would add.
+import harborSiteImage from './thread-images/harbor-site.png?inline'
+import fieldNotesImage from './thread-images/field-notes.png?inline'
+import tastecodeImage from './thread-images/tastecode.png?inline'
 
 /**
  * The made-up world the design sandbox shows: three signed-in providers,
@@ -125,7 +134,8 @@ const GROK_CAPABILITIES: Capabilities = {
   context: { windows: [256_000], compaction: true, compactionOff: false, defaultCompactAt: 80 },
 }
 
-const HOUR = 60 * 60_000
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR
 
 function noTools(): Pick<McpServer, 'resources' | 'resourceTemplates'> {
@@ -396,6 +406,15 @@ export type DemoChat = {
   approval: ApprovalMode
   pinned?: boolean
   unread?: boolean
+  /** The state the inbox shows until the chat's first turn in the sandbox. */
+  status?: ThreadInboxStatus
+  /** When the chat started, for a chat with no finished turns. */
+  createdAgoMs?: number
+  worktreeBranch?: string
+  /** The chat's picture, a PNG data URL. */
+  image?: string
+  /** Where the inbox files it: snoozed until 09:00 tomorrow, or settled a while ago. */
+  lifecycle?: { state: 'snoozed' } | { state: 'settled'; agoMs: number }
   turns: DemoTurn[]
 }
 
@@ -493,8 +512,22 @@ export const DEMO_PROJECTS: ReadonlyArray<DemoProject> = [
     ],
     chats: [
       {
+        id: 'demo-thread-images',
+        title: 'Add thread images to the sidebar',
+        provider: 'claude-code',
+        model: 'claude-opus-5-5',
+        approval: 'auto',
+        status: 'working',
+        createdAgoMs: 6 * MINUTE,
+        worktreeBranch: 'feat/thread-images',
+        image: tastecodeImage,
+        turns: [],
+      },
+      {
         id: 'demo-focus-ring',
         title: 'Soften the prompt bar focus ring',
+        status: 'ready',
+        unread: true,
         provider: 'claude-code',
         model: 'claude-opus-5-5',
         effort: 'high',
@@ -575,6 +608,7 @@ export const DEMO_PROJECTS: ReadonlyArray<DemoProject> = [
       {
         id: 'demo-sidebar-audit',
         title: 'Audit sidebar spacing',
+        lifecycle: { state: 'settled', agoMs: 21 * HOUR },
         provider: 'codex',
         model: 'gpt-5.6-sol',
         effort: 'medium',
@@ -644,6 +678,7 @@ export const DEMO_PROJECTS: ReadonlyArray<DemoProject> = [
       {
         id: 'demo-transcript-jump',
         title: 'Why does the transcript jump on resize?',
+        lifecycle: { state: 'settled', agoMs: DAY },
         provider: 'grok',
         model: 'grok-4.7',
         approval: 'full',
@@ -669,6 +704,7 @@ export const DEMO_PROJECTS: ReadonlyArray<DemoProject> = [
       {
         id: 'demo-release-notes',
         title: 'Release notes for v0.5.0',
+        lifecycle: { state: 'snoozed' },
         provider: 'claude-code',
         model: 'claude-sonnet-5-5',
         effort: 'medium',
@@ -710,6 +746,7 @@ export const DEMO_PROJECTS: ReadonlyArray<DemoProject> = [
       {
         id: 'demo-token-audit',
         title: 'Dark mode token audit',
+        status: 'queued',
         provider: 'codex',
         model: 'gpt-5.6-terra',
         effort: 'medium',
@@ -736,6 +773,7 @@ export const DEMO_PROJECTS: ReadonlyArray<DemoProject> = [
       {
         id: 'demo-radius-scale',
         title: 'Radius scale proposal',
+        lifecycle: { state: 'settled', agoMs: 2 * DAY },
         provider: 'claude-code',
         model: 'claude-opus-5-5',
         effort: 'high',
@@ -770,6 +808,7 @@ export const DEMO_PROJECTS: ReadonlyArray<DemoProject> = [
       {
         id: 'demo-hero-copy',
         title: 'Hero copy variations',
+        status: 'approval',
         provider: 'grok',
         model: 'grok-4.7',
         approval: 'auto',
@@ -790,7 +829,123 @@ export const DEMO_PROJECTS: ReadonlyArray<DemoProject> = [
       },
     ],
   },
+  // Three projects with no transcripts, so the inbox shows every state a
+  // thread can be in: running, failed and waiting on the person.
+  {
+    name: 'harbor-site',
+    branch: 'main',
+    branches: ['main'],
+    pinned: false,
+    createdAgoMs: 12 * DAY,
+    files: [],
+    chats: [
+      {
+        id: 'demo-gallery-grid',
+        title: 'Rebuild the gallery grid',
+        provider: 'codex',
+        model: 'gpt-5.6-sol',
+        approval: 'auto',
+        status: 'working',
+        createdAgoMs: 9 * MINUTE,
+        worktreeBranch: 'feat/gallery-grid',
+        image: harborSiteImage,
+        turns: [],
+      },
+      {
+        id: 'demo-checkout-validation',
+        title: 'Fix checkout form validation',
+        provider: 'claude-code',
+        model: 'claude-sonnet-5-5',
+        approval: 'ask',
+        status: 'failed',
+        createdAgoMs: 34 * MINUTE,
+        image: harborSiteImage,
+        turns: [],
+      },
+    ],
+  },
+  {
+    name: 'field-notes',
+    branch: 'main',
+    branches: ['main'],
+    pinned: false,
+    createdAgoMs: 4 * DAY,
+    files: [],
+    chats: [
+      {
+        id: 'demo-pricing-layout',
+        title: 'Choose a pricing page layout',
+        provider: 'claude-code',
+        model: 'claude-opus-5-5',
+        approval: 'ask',
+        status: 'input',
+        createdAgoMs: 18 * MINUTE,
+        image: fieldNotesImage,
+        turns: [],
+      },
+    ],
+  },
+  {
+    name: 'ledger-api',
+    branch: 'main',
+    branches: ['main'],
+    pinned: false,
+    createdAgoMs: 2 * DAY,
+    files: [],
+    chats: [
+      {
+        id: 'demo-webhook-retries',
+        title: 'Write webhook retry tests',
+        provider: 'api',
+        model: 'claude-sonnet-5-5',
+        approval: 'auto',
+        status: 'working',
+        createdAgoMs: MINUTE,
+        turns: [],
+      },
+    ],
+  },
 ]
+
+/** Where a chat lands in the inbox, the way the inbox files it. */
+export function demoInboxGroup(chat: DemoChat): 'active' | 'snoozed' | 'settled' {
+  return chat.lifecycle?.state ?? 'active'
+}
+
+// The inbox sample must add up: every chat in exactly one group, every state
+// the rail draws present once in the active group, and four pictures.
+{
+  const chats = DEMO_PROJECTS.flatMap((project) => project.chats)
+  const active = chats.filter((chat) => demoInboxGroup(chat) === 'active')
+  const snoozed = chats.filter((chat) => demoInboxGroup(chat) === 'snoozed')
+  const settled = chats.filter((chat) => demoInboxGroup(chat) === 'settled')
+  const count = (status: ThreadInboxStatus) =>
+    active.filter((chat) => chat.status === status).length
+  console.assert(
+    active.length + snoozed.length + settled.length === chats.length,
+    'every sandbox chat is in one inbox group',
+  )
+  console.assert(
+    chats.length === 12 && active.length === 8 && snoozed.length === 1 && settled.length === 3,
+    'the inbox sample is 8 active, 1 snoozed and 3 settled chats',
+  )
+  console.assert(
+    count('working') === 3 &&
+      count('failed') === 1 &&
+      count('input') + count('approval') === 2 &&
+      count('queued') === 1 &&
+      count('ready') === 1,
+    'the active sample has 3 working, 1 failed, 2 waiting, 1 queued and 1 done',
+  )
+  console.assert(
+    chats.filter((chat) => chat.image).length === 4,
+    'four sample chats carry a picture',
+  )
+  console.assert(
+    chats.every((chat) => chat.status !== 'working' || chat.createdAgoMs !== undefined),
+    'a sample chat shown as working says when it started',
+  )
+}
 
 /**
  * The dummy answer a live turn streams. It names what the sandbox is so a

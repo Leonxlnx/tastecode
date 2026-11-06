@@ -204,6 +204,27 @@ describe('limit snapshot', () => {
 })
 
 describe('sidebar thread snapshots', () => {
+  it('keeps a thread picture across restart and persists its removal', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-thread-image-'))
+    const file = path.join(dir, 'test.db')
+    let saved = new Store(file)
+    try {
+      saved.addProject('/repo')
+      saved.addThread({ id: 'pictured', projectPath: '/repo', provider: 'codex', title: 'Logo' })
+      saved.setThreadImage('pictured', 'data:image/png;base64,AAAA')
+      saved.close()
+      saved = new Store(file)
+      expect(saved.sidebarThreads()[0]?.image).toBe('data:image/png;base64,AAAA')
+      saved.setThreadImage('pictured', undefined)
+      saved.close()
+      saved = new Store(file)
+      expect(saved.sidebarThreads()[0]).not.toHaveProperty('image')
+    } finally {
+      saved.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('keeps earlier snapshots immutable across a batch and a mid-batch read', () => {
     store.addProject('/repo')
     store.addThread({ id: 'first', projectPath: '/repo', provider: 'codex', title: 'First' })
@@ -242,7 +263,12 @@ describe('sidebar thread snapshots', () => {
 
     store.renameThread('main', 'Renamed')
     store.setThreadPinned('main', true)
+    store.setThreadImage('main', 'data:image/png;base64,AAAA')
     store.touchThread('main', true, 10)
+    expect(store.sidebarThreads()[0]?.image).toBe('data:image/png;base64,AAAA')
+    store.setThreadImage('main', undefined)
+    expect(store.sidebarThreads()[0]?.image).toBeUndefined()
+    store.setThreadImage('main', 'data:image/png;base64,BBBB')
     expect(initial[0]).toMatchObject({ title: 'Main', pinned: false, unread: false })
     expect(store.sidebarThreads()).toEqual([
       expect.objectContaining({

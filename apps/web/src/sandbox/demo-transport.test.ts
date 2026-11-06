@@ -181,7 +181,10 @@ describe('DemoTransport', () => {
     }
     for (const session of projects.flatMap((project) => project.sessions)) {
       const history = await call(transport.request('thread.history', { threadId: session.id }))
-      expect(history.events.at(-1)?.event.type).toBe('turn.completed')
+      // Inbox samples that only show a state have no turns yet.
+      if (history.events.length > 0) {
+        expect(history.events.at(-1)?.event.type).toBe('turn.completed')
+      }
     }
     await call(transport.request('usage.history', { range: '30d' }))
     await call(transport.request('backgroundModel.settings', {}))
@@ -198,5 +201,31 @@ describe('DemoTransport', () => {
     transport.close()
     await expect(pending).rejects.toThrow('closed')
     await expect(transport.request('providers.list', {})).rejects.toThrow('closed')
+  })
+
+  it('keeps a thread picture and lists the inbox sample in every state', async () => {
+    const { projects } = await call(transport.request('projects.list', {}))
+    const sessions = projects.flatMap((project) => project.sessions)
+    expect(new Set(sessions.map((session) => session.status))).toEqual(
+      new Set(['working', 'failed', 'input', 'approval', 'queued', 'ready', 'idle']),
+    )
+    expect(sessions.filter((session) => session.image)).toHaveLength(4)
+    expect(sessions.find((session) => session.id === 'demo-gallery-grid')?.worktreeBranch).toBe(
+      'feat/gallery-grid',
+    )
+
+    const image = 'data:image/png;base64,AAAA'
+    await call(transport.request('thread.setImage', { threadId: 'demo-hero-copy', image }))
+    let listed = await call(transport.request('projects.list', {}))
+    let hero = listed.projects
+      .flatMap((project) => project.sessions)
+      .find((session) => session.id === 'demo-hero-copy')
+    expect(hero?.image).toBe(image)
+    await call(transport.request('thread.setImage', { threadId: 'demo-hero-copy', image: null }))
+    listed = await call(transport.request('projects.list', {}))
+    hero = listed.projects
+      .flatMap((project) => project.sessions)
+      .find((session) => session.id === 'demo-hero-copy')
+    expect(hero?.image).toBeUndefined()
   })
 })

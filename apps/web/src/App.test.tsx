@@ -26,6 +26,7 @@ import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
 import { composerWireText } from './ui/composer-chips.js'
+import * as threadImages from './thread-image.js'
 
 const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
 const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
@@ -9491,6 +9492,55 @@ describe('new chats', () => {
     })
   })
 
+  it('keeps the latest picture choice when an older file finishes decoding later', async () => {
+    serverProjects = [serverProject('/work/project', 'project', [{ id: 'pictured' }])]
+    let finishOlder!: (image: string) => void
+    vi.spyOn(threadImages, 'readThreadImage')
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishOlder = resolve
+          }),
+      )
+      .mockResolvedValueOnce('data:image/png;base64,BBBB')
+    render(<App />)
+    await waitFor(() => expect(sidebarProps().projects[0]?.sessions[0]?.id).toBe('pictured'))
+    const file = new File(['png'], 'logo.png', { type: 'image/png' })
+    let older!: Promise<void>
+    await act(async () => {
+      older = Promise.resolve(sidebarProps().onSetSessionImage?.('pictured', file))
+      await sidebarProps().onSetSessionImage?.('pictured', file)
+    })
+    await act(async () => {
+      finishOlder('data:image/png;base64,AAAA')
+      await older
+    })
+    expect(sidebarProps().projects[0]?.sessions[0]?.image).toBe('data:image/png;base64,BBBB')
+    expect(transport.request.mock.calls.filter(([method]) => method === 'thread.setImage')).toEqual(
+      [['thread.setImage', { threadId: 'pictured', image: 'data:image/png;base64,BBBB' }]],
+    )
+  })
+
+  it('restores a thread picture when its removal is refused', async () => {
+    const image = 'data:image/png;base64,AAAA'
+    serverProjects = [serverProject('/work/project', 'project', [{ id: 'pictured', image }])]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.setImage'
+        ? Promise.reject(new Error('Could not save thread image'))
+        : request(method, params),
+    )
+    render(<App />)
+    await waitFor(() => expect(sidebarProps().projects[0]?.sessions[0]?.image).toBe(image))
+    await act(async () => {
+      await sidebarProps().onSetSessionImage?.('pictured', undefined)
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('Could not save thread image'),
+    )
+    expect(sidebarProps().projects[0]?.sessions[0]?.image).toBe(image)
+  })
+
   it('persists chat pinning from the sidebar menu', async () => {
     serverProjects = [
       {
@@ -12344,9 +12394,9 @@ describe('inbox lifecycle', () => {
     ]
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('combobox', { name: 'Sidebar project filter' }))
-    fireEvent.click(screen.getByRole('option', { name: 'Beta' }))
-    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Filter by project' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Beta' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New thread' }))
 
     const picker = await screen.findByRole('dialog', {
       name: 'Choose a project for the new thread',
@@ -12382,9 +12432,17 @@ describe('inbox lifecycle', () => {
     ]
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Ready chat, project, Codex, Done' }))
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Ready chat, project, Codex, Default checkout, Done',
+      }),
+    )
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: 'Ready chat, project, Codex, Done' })).toBeNull()
+      expect(
+        screen.queryByRole('button', {
+          name: 'Ready chat, project, Codex, Default checkout, Done',
+        }),
+      ).toBeNull()
       expect(screen.getByRole('button', { name: /^Ready chat, project,/ })).toBeTruthy()
       expect(screen.queryByText('Woke')).toBeNull()
     })

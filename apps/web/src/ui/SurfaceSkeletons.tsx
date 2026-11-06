@@ -47,26 +47,28 @@ export function SidebarTreeSkeleton() {
   )
 }
 
-const INBOX_CARDS: readonly { project: number; title: string; meta: string }[] = [
-  { project: 64, title: '82%', meta: '46%' },
-  { project: 52, title: '64%', meta: '58%' },
-  { project: 72, title: '74%', meta: '40%' },
-  { project: 58, title: '56%', meta: '52%' },
+const INBOX_CARDS: readonly { project: number; title: string }[] = [
+  { project: 64, title: '82%' },
+  { project: 52, title: '64%' },
+  { project: 72, title: '74%' },
+  { project: 58, title: '56%' },
 ]
 
-/** Inbox thread cards: project and state, a title, one line of detail. */
+/** Inbox thread rows: the tile across both lines, the title and its time, then the state and project. */
 export function InboxCardsSkeleton() {
   return (
     <SkeletonStatus label="Loading threads…" className="inbox-skeleton">
       <Skeleton className="inbox-skeleton__heading" width={34} />
       {INBOX_CARDS.map((card, index) => (
         <div className="inbox-skeleton__card" key={index}>
-          <span className="inbox-skeleton__topline">
-            <Skeleton width={card.project} />
-            <Skeleton width={30} />
+          <Skeleton className="inbox-skeleton__tile" />
+          <span className="inbox-skeleton__line">
+            <Skeleton className="inbox-skeleton__title" width={card.title} />
+            <Skeleton className="inbox-skeleton__time" width={18} />
           </span>
-          <Skeleton className="inbox-skeleton__title" width={card.title} />
-          <Skeleton className="inbox-skeleton__meta" width={card.meta} />
+          <span className="inbox-skeleton__line">
+            <Skeleton className="inbox-skeleton__meta" width={card.project} />
+          </span>
         </div>
       ))}
     </SkeletonStatus>
@@ -78,11 +80,11 @@ export function InboxRailSkeleton(props: { pullRequests: boolean }) {
   return (
     <>
       <SkeletonGroup className="inbox-skeleton-toolbar">
-        <Skeleton className="inbox-skeleton-toolbar__search" />
-        <Skeleton className="inbox-skeleton-toolbar__new" />
-        <span className="inbox-skeleton-toolbar__projects">
-          <Skeleton className="inbox-skeleton-toolbar__scope" />
-          <Skeleton className="inbox-skeleton-toolbar__add" />
+        <span className="inbox-skeleton-toolbar__primary">
+          <Skeleton className="inbox-skeleton-toolbar__search" />
+          <Skeleton className="inbox-skeleton-toolbar__icon" />
+          <Skeleton className="inbox-skeleton-toolbar__icon" />
+          <Skeleton className="inbox-skeleton-toolbar__icon" />
         </span>
         {props.pullRequests ? <Skeleton className="inbox-skeleton-toolbar__pulls" /> : null}
       </SkeletonGroup>

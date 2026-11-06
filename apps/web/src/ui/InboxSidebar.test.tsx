@@ -338,11 +338,11 @@ describe('InboxSidebar', () => {
         />,
       )
 
-      expect(screen.getByText('2d ago')).toBeTruthy()
+      expect(screen.getByText('2d')).toBeTruthy()
       act(() => vi.advanceTimersByTime(nextChange - 1))
-      expect(screen.getByText('2d ago')).toBeTruthy()
+      expect(screen.getByText('2d')).toBeTruthy()
       act(() => vi.advanceTimersByTime(1))
-      expect(screen.getByText('3d ago')).toBeTruthy()
+      expect(screen.getByText('3d')).toBeTruthy()
     } finally {
       vi.useRealTimers()
     }
@@ -530,21 +530,24 @@ describe('InboxSidebar', () => {
         />,
       )
 
-      expect(screen.getByText('Working · 1s')).toBeTruthy()
-      expect(screen.getByText('1m ago')).toBeTruthy()
-      expect(screen.getByText('Large · 1m ago')).toBeTruthy()
+      const timeOf = (title: string) =>
+        screen.getByText(title).closest('li')?.querySelector('.inbox-time')?.textContent
+      // The idle row and the settled row each show their own minute label.
+      expect(timeOf('Working thread')).toBe('1s')
+      expect(timeOf('Idle thread')).toBe('1m')
+      expect(screen.getByText('Settled 1m ago')).toBeTruthy()
 
       act(() => vi.advanceTimersByTime(1_000))
-      expect(screen.getByText('Working · 2s')).toBeTruthy()
-      expect(screen.getByText('1m ago')).toBeTruthy()
-      expect(screen.getByText('Large · 1m ago')).toBeTruthy()
+      expect(timeOf('Working thread')).toBe('2s')
+      expect(timeOf('Idle thread')).toBe('1m')
+      expect(screen.getByText('Settled 1m ago')).toBeTruthy()
 
       for (let second = 0; second < 59; second++) {
         act(() => vi.advanceTimersByTime(1_000))
       }
-      expect(screen.getByText('Working · 1m')).toBeTruthy()
-      expect(screen.getByText('2m ago')).toBeTruthy()
-      expect(screen.getByText('Large · 2m ago')).toBeTruthy()
+      expect(timeOf('Working thread')).toBe('1m')
+      expect(timeOf('Idle thread')).toBe('2m')
+      expect(screen.getByText('Settled 2m ago')).toBeTruthy()
       expect(container.querySelectorAll('.inbox-card')).toHaveLength(2)
     } finally {
       vi.useRealTimers()
@@ -626,12 +629,17 @@ describe('InboxSidebar', () => {
       [...container.querySelectorAll('.inbox-card__title')].map((node) => node.textContent),
     ).toEqual(['New Alpha', 'Beta approval', 'Older Alpha'])
 
-    fireEvent.click(screen.getByRole('combobox', { name: 'Sidebar project filter' }))
-    fireEvent.click(screen.getByRole('option', { name: 'Alpha' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Filter by project' }))
+    expect(
+      screen.getByRole('menuitemradio', { name: 'All projects' }).getAttribute('aria-checked'),
+    ).toBe('true')
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Alpha' }))
     expect(onScopeChange).toHaveBeenCalledWith('/alpha')
 
     rerender(<InboxSidebar {...props(projects)} scope="/alpha" />)
     expect(screen.queryByText('Beta approval')).toBeNull()
+    const filter = screen.getByRole('button', { name: 'Filter by project: Alpha' })
+    expect(filter.classList.contains('is-filtered')).toBe(true)
     expect(
       [...container.querySelectorAll('.inbox-card__title')].map((node) => node.textContent),
     ).toEqual(['New Alpha', 'Older Alpha'])
@@ -676,7 +684,7 @@ describe('InboxSidebar', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /Snoozed/ }))
-    const shelfTitles = [...container.querySelectorAll('.inbox-shelf__row button:first-child span')]
+    const shelfTitles = [...container.querySelectorAll('.inbox-shelf__title')]
     expect(shelfTitles.slice(0, 2).map((node) => node.textContent)).toEqual([
       'Earlier snooze',
       'Later snooze',
@@ -701,9 +709,9 @@ describe('InboxSidebar', () => {
       <InboxSidebar {...props([project])} activeProjectPath="/alpha" onNewSession={onNewSession} />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New thread' }))
     expect(onNewSession).toHaveBeenCalledWith('/alpha', false)
-    expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Add project' })).toBeTruthy()
 
     expect(screen.queryByRole('button', { name: 'Thread options for Alpha task' })).toBeNull()
     fireEvent.focusIn(screen.getByText('Alpha task').closest('button')!)
@@ -771,7 +779,7 @@ describe('InboxSidebar', () => {
       target: { value: 'result' },
     })
     expect(
-      [...container.querySelectorAll('.inbox-card__title, .inbox-shelf__row > button span')].map(
+      [...container.querySelectorAll('.inbox-card__title, .inbox-shelf__title')].map(
         (node) => node.textContent,
       ),
     ).toEqual(['Active result', 'Snoozed result', 'Settled result'])
@@ -825,5 +833,125 @@ describe('InboxSidebar', () => {
       expect(identity?.querySelector('svg')).toBeTruthy()
       expect(identity?.closest('button')?.getAttribute('aria-label')).toContain(label)
     }
+  })
+
+  it('counts what needs the person and opens the first such thread', () => {
+    const sessions: Session[] = [
+      active('done', 'Done task', 60, 'ready'),
+      active('waiting', 'Waiting task', 50, 'input'),
+      active('broken', 'Broken task', 40, 'failed'),
+      active('approve', 'Approve task', 30, 'approval'),
+      active('running', 'Running task', 20, 'working'),
+      active('queued', 'Queued task', 10, 'queued'),
+    ]
+    const onSelectSession = vi.fn()
+    const { container, rerender } = render(
+      <InboxSidebar
+        {...props([{ path: '/alpha', name: 'Alpha', sessions }])}
+        onSelectSession={onSelectSession}
+      />,
+    )
+
+    // Failed and waiting threads count together; the first failed one opens first.
+    fireEvent.click(screen.getByRole('button', { name: '3 need you' }))
+    expect(onSelectSession).toHaveBeenLastCalledWith('broken')
+    expect(document.activeElement).toBe(screen.getByText('Broken task').closest('button'))
+
+    // The tile's ring follows the state; done threads carry none.
+    const rows = [...container.querySelectorAll('.inbox-card')].map((row) => ({
+      title: row.querySelector('.inbox-card__title')?.textContent,
+      tile: row.querySelector('.thread-tile')?.className.match(/is-(\w+)/)?.[1],
+      ring: row.querySelector('.thread-tile__ring') !== null,
+      state: row.querySelector('.inbox-state')?.textContent,
+    }))
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        { title: 'Done task', tile: 'done', ring: false, state: 'Done' },
+        { title: 'Waiting task', tile: 'attention', ring: true, state: 'Needs input' },
+        { title: 'Broken task', tile: 'failed', ring: true, state: 'Failed' },
+        { title: 'Approve task', tile: 'attention', ring: true, state: 'Approval' },
+        { title: 'Running task', tile: 'working', ring: true, state: 'Working' },
+        { title: 'Queued task', tile: 'queued', ring: true, state: 'Queued' },
+      ]),
+    )
+
+    // With only waiting threads, the first waiting one opens.
+    rerender(
+      <InboxSidebar
+        {...props([{ path: '/alpha', name: 'Alpha', sessions: sessions.slice(0, 2) }])}
+        onSelectSession={onSelectSession}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '1 needs you' }))
+    expect(onSelectSession).toHaveBeenLastCalledWith('waiting')
+
+    // Searching narrows the count with the rows, and a quiet group has none.
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search threads' }), {
+      target: { value: 'done' },
+    })
+    expect(container.querySelector('.inbox__need-you')).toBeNull()
+  })
+
+  it('names the checkout and the state in a row label', () => {
+    const sessions: Session[] = [
+      { ...active('branch', 'Branch task', 2, 'failed'), worktreeBranch: 'feat/tiles' },
+      active('default', 'Default task', 1),
+    ]
+    render(<InboxSidebar {...props([{ path: '/alpha', name: 'Alpha', sessions }])} />)
+
+    expect(screen.getByText('Branch task').closest('button')?.getAttribute('aria-label')).toBe(
+      'Branch task, Alpha, Codex, feat/tiles, Failed',
+    )
+    expect(screen.getByText('Default task').closest('button')?.getAttribute('aria-label')).toMatch(
+      /^Default task, Alpha, Codex, Default checkout, /,
+    )
+    expect(screen.getByText('feat/tiles')).toBeTruthy()
+    expect(screen.queryByText('Default checkout')).toBeNull()
+  })
+
+  it('adds, replaces and removes a thread picture from the thread menu', () => {
+    const image = 'data:image/png;base64,AAAA'
+    const sessions: Session[] = [
+      active('plain', 'Plain task', 2),
+      { ...active('pictured', 'Pictured task', 1), image },
+    ]
+    const onSetSessionImage = vi.fn()
+    const { container } = render(
+      <InboxSidebar
+        {...props([{ path: '/alpha', name: 'Alpha', sessions }])}
+        onSetSessionImage={onSetSessionImage}
+      />,
+    )
+    const input = container.querySelector<HTMLInputElement>('.inbox__image-input')!
+    const pick = vi.spyOn(input, 'click').mockImplementation(() => undefined)
+
+    expect(screen.getByText('Pictured task').closest('li')?.querySelector('img')?.src).toBe(image)
+    expect(
+      screen.getByText('Plain task').closest('li')?.querySelector('.thread-tile__initial')
+        ?.textContent,
+    ).toBe('A')
+
+    fireEvent.contextMenu(screen.getByText('Plain task').closest('button')!)
+    expect(screen.queryByRole('menuitem', { name: 'Remove image' })).toBeNull()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add thread image' }))
+    expect(pick).toHaveBeenCalledOnce()
+    const file = new File(['png'], 'logo.png', { type: 'image/png' })
+    fireEvent.change(input, { target: { files: [file] } })
+    expect(onSetSessionImage).toHaveBeenLastCalledWith('plain', file)
+
+    fireEvent.contextMenu(screen.getByText('Pictured task').closest('button')!)
+    expect(screen.getByRole('menuitem', { name: 'Replace image' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove image' }))
+    expect(onSetSessionImage).toHaveBeenLastCalledWith('pictured', undefined)
+
+    // A picture that cannot be decoded falls back to the initials.
+    fireEvent.error(screen.getByText('Pictured task').closest('li')!.querySelector('img')!)
+    expect(screen.getByText('Pictured task').closest('li')?.querySelector('img')).toBeNull()
+  })
+
+  it('hides the picture actions when the host cannot store one', () => {
+    render(<InboxSidebar {...props([{ path: '/alpha', sessions: [active('a', 'A task', 1)] }])} />)
+    fireEvent.contextMenu(screen.getByText('A task').closest('button')!)
+    expect(screen.queryByRole('menuitem', { name: 'Add thread image' })).toBeNull()
   })
 })

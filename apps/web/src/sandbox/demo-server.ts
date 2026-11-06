@@ -15,6 +15,7 @@ import {
   type SessionSearchResult,
   type SidebarSettings,
   type SubagentSettings,
+  type ThreadInboxStatus,
   type ThreadLifecycle,
   type ThreadSettings,
   type UsageHistoryRange,
@@ -29,6 +30,7 @@ import {
   demoProvider,
   demoReply,
   detectDemoPlatform,
+  type DemoChat,
   type DemoFile,
   type DemoItem,
   type DemoPlatform,
@@ -61,6 +63,8 @@ export type DemoServerOptions = {
   timing?: Partial<DemoTiming>
   platform?: DemoPlatform
   now?: () => number
+  /** Which sidebar the sandbox opens with. The real app's default is classic. */
+  sidebarMode?: SidebarSettings['mode']
 }
 
 type Handler<M extends MethodName> = (params: ParamsOf<M>) => ResultOf<M> | Promise<ResultOf<M>>
@@ -78,6 +82,10 @@ type DemoThread = {
   pinned: boolean
   unread: boolean
   lifecycle: ThreadLifecycle
+  /** A state the sample shows until the chat runs a turn here. */
+  seededStatus?: ThreadInboxStatus
+  worktreeBranch?: string
+  image?: string
   approval: ApprovalMode
   settings: ThreadSettings
   log: Array<{ seq: number; event: DomainEvent }>
@@ -111,6 +119,20 @@ type Run = {
 const DAY = 24 * 60 * 60_000
 const ACTIVE: ThreadLifecycle = { state: 'active', keepActive: false }
 
+/** A sample chat's inbox lifecycle: snoozed until 09:00 tomorrow, or settled a while ago. */
+function demoLifecycle(chat: DemoChat, now: number): ThreadLifecycle {
+  if (chat.lifecycle?.state === 'settled') {
+    return { state: 'settled', settledAt: now - chat.lifecycle.agoMs, reason: 'manual' }
+  }
+  if (chat.lifecycle?.state === 'snoozed') {
+    const wake = new Date(now)
+    wake.setDate(wake.getDate() + 1)
+    wake.setHours(9, 0, 0, 0)
+    return { state: 'snoozed', snoozedAt: now - 60 * 60_000, wakeAt: wake.getTime() }
+  }
+  return ACTIVE
+}
+
 function randomId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}${Math.random()}`
 }
@@ -143,6 +165,7 @@ export class DemoServer {
     this.#push = options.push
     this.#now = options.now ?? Date.now
     this.#timing = { ...DEMO_TIMING, ...options.timing }
+    if (options.sidebarMode) this.#sidebar = { ...this.#sidebar, mode: options.sidebarMode }
     this.platform = options.platform ?? detectDemoPlatform()
     this.home = demoHome(this.platform)
     this.#seed()
@@ -191,7 +214,10 @@ export class DemoServer {
         files: project.files,
       })
       for (const chat of project.chats) {
-        const createdAt = now - (chat.turns[0]?.agoMs ?? 0) - 1_000
+        const createdAt =
+          chat.createdAgoMs === undefined
+            ? now - (chat.turns[0]?.agoMs ?? 0) - 1_000
+            : now - chat.createdAgoMs
         const thread: DemoThread = {
           id: chat.id,
           projectPath: path,
@@ -201,7 +227,11 @@ export class DemoServer {
           lastActiveAt: createdAt,
           pinned: chat.pinned ?? false,
           unread: chat.unread ?? false,
-          lifecycle: ACTIVE,
+          lifecycle: demoLifecycle(chat, now),
+          // An unread chat already reads as ready; the seed only adds the rest.
+          ...(chat.status && chat.status !== 'ready' ? { seededStatus: chat.status } : {}),
+          ...(chat.worktreeBranch ? { worktreeBranch: chat.worktreeBranch } : {}),
+          ...(chat.image ? { image: chat.image } : {}),
           approval: chat.approval,
           settings: {
             model: chat.model,
@@ -316,6 +346,7 @@ export class DemoServer {
     })
     this.#record(thread, { type: 'item.completed', item: this.#promptItem(submission, turnId) })
     const run: Run = { turnId, steps: [], open: new Map(), timer: undefined }
+    delete thread.seededStatus
     this.#runs.set(thread.id, run)
     run.steps.push(...this.#replySteps(thread, run, submission.text))
     this.#advance(thread, run)
@@ -564,6 +595,7 @@ export class DemoServer {
   #sessionStatus(thread: DemoThread) {
     if (this.#runs.has(thread.id)) return 'working' as const
     if (thread.queue.length > 0) return 'queued' as const
+    if (thread.seededStatus) return thread.seededStatus
     return thread.unread ? ('ready' as const) : ('idle' as const)
   }
 
@@ -935,6 +967,8 @@ export class DemoServer {
               status: this.#sessionStatus(thread),
               unread: thread.unread,
               lifecycle: thread.lifecycle,
+              ...(thread.worktreeBranch ? { worktreeBranch: thread.worktreeBranch } : {}),
+              ...(thread.image ? { image: thread.image } : {}),
               ...(thread.settings.model ? { model: thread.settings.model } : {}),
               lastActiveAt: thread.lastActiveAt,
             })),
@@ -1154,6 +1188,12 @@ export class DemoServer {
       },
       'thread.pin': ({ threadId, pinned }) => {
         this.#thread(threadId).pinned = pinned
+        return {}
+      },
+      'thread.setImage': ({ threadId, image }) => {
+        const thread = this.#thread(threadId)
+        if (image) thread.image = image
+        else delete thread.image
         return {}
       },
       'thread.delete': ({ threadId }) => {
