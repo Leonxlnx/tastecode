@@ -6,7 +6,7 @@ export function EmptyState(props: {
   icon?: ReactNode
   title: ReactNode
   detail?: ReactNode
-  role?: 'alert' | 'status'
+  role?: 'alert' | 'status' | undefined
   className?: string
   /** Actions under the detail, e.g. Retry. */
   children?: ReactNode

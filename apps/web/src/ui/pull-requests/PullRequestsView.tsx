@@ -32,6 +32,7 @@ import {
   type GitHubSetupAction,
   type ProviderLoginTerminalTarget,
 } from '../../provider-install.js'
+import { EmptyState } from '../EmptyState.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { Skeleton } from '../Skeleton.js'
 import { PullRequestDetailPane } from './PullRequestDetailPane.js'
@@ -450,13 +451,12 @@ export function PullRequestsView(props: {
             onChanged={syncDetail}
           />
         ) : (
-          <div className="pr-detail-empty">
-            <span className="pr-empty-emblem">
-              <GitPullRequest size={22} aria-hidden />
-            </span>
-            <strong>Select a pull request</strong>
-            <p>Summary, files, review conversations, checks, and merge controls live here.</p>
-          </div>
+          <EmptyState
+            className="pr-detail-empty"
+            icon={<GitPullRequest aria-hidden />}
+            title="Select a pull request"
+            detail="Summary, files, review conversations, checks, and merge controls live here."
+          />
         )}
       </div>
     </section>
@@ -669,10 +669,13 @@ function ListMessage(props: {
   actionDisabled?: boolean
 }) {
   return (
-    <div className="pr-list-message" role={props.role}>
-      <span className="pr-empty-emblem">{props.icon}</span>
-      <strong>{props.title}</strong>
-      <p>{props.detail}</p>
+    <EmptyState
+      className="pr-list-message"
+      role={props.role}
+      icon={props.icon}
+      title={props.title}
+      detail={props.detail}
+    >
       {props.action && props.href ? (
         <a className="pr-button is-secondary" href={props.href} target="_blank" rel="noreferrer">
           {props.action}
@@ -687,7 +690,7 @@ function ListMessage(props: {
           {props.action}
         </button>
       ) : null}
-    </div>
+    </EmptyState>
   )
 }
 
