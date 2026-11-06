@@ -1,9 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { reportStartupMilestone } from '../bridge.js'
+import type { NoticeTone } from './Notice.js'
 
 type NoticePresenceProps = {
   visible: boolean
   className: string
+  /** Colours the notice's icon (styles/notice.css); info when absent. */
+  tone?: NoticeTone
   role: 'alert' | 'status'
   children: ReactNode
   onDismiss?: () => void
@@ -129,6 +132,7 @@ function keepNoticeAboveComposer(notice: HTMLElement): () => void {
 export function NoticePresence(props: NoticePresenceProps) {
   const snapshot = useRef({
     className: props.className,
+    tone: props.tone ?? 'info',
     role: props.role,
     children: props.children,
   })
@@ -165,6 +169,7 @@ export function NoticePresence(props: NoticePresenceProps) {
   if (props.visible) {
     snapshot.current = {
       className: props.className,
+      tone: props.tone ?? 'info',
       role: props.role,
       children: props.children,
     }
@@ -222,6 +227,7 @@ export function NoticePresence(props: NoticePresenceProps) {
     <div
       ref={root}
       className={snapshot.current.className}
+      data-notice-tone={snapshot.current.tone}
       role={snapshot.current.role}
       data-state={phase}
       onMouseEnter={() => setHovered(true)}
