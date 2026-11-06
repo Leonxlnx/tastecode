@@ -26,7 +26,8 @@ import './sandbox.css'
  * apps/web and open http://127.0.0.1:5420/sandbox.html.
  *
  * `?chat=<id>` opens that chat once the sidebar shows it, for example
- * `?chat=demo-focus-ring`. The ids are in demo-data.ts.
+ * `?chat=demo-focus-ring`. The ids are in demo-data.ts. `?sidebar=classic`
+ * opens the classic project tree instead of the inbox.
  */
 
 const root = document.getElementById('root')
@@ -42,7 +43,12 @@ applyFontPreference(readFontPreference(appearanceMode))
 applyAccentPreference(readAccentPreference(appearanceMode))
 document.documentElement.dataset['shell'] = 'web'
 
-const transport = new DemoTransport()
+// The sandbox opens on the inbox rail, where the sample threads show every
+// state; `?sidebar=classic` opens the project tree instead.
+const transport = new DemoTransport({
+  sidebarMode:
+    new URLSearchParams(window.location.search).get('sidebar') === 'classic' ? 'classic' : 'inbox',
+})
 
 createRoot(root).render(
   <StrictMode>
@@ -50,7 +56,7 @@ createRoot(root).render(
       <App transport={transport} />
     </RendererErrorBoundary>
     <div className="sandbox-badge" role="note">
-      Sandbox · dummy data
+      Sandbox · sample data
     </div>
   </StrictMode>,
 )
@@ -64,15 +70,20 @@ if (requestedChat) openChatWhenListed(requestedChat)
  * stayed active for a second, and gives up after ten seconds.
  */
 function openChatWhenListed(id: string): void {
-  const selector = `[data-archive-session-id="${CSS.escape(id)}"]`
+  const escaped = CSS.escape(id)
+  const selector = `[data-archive-session-id="${escaped}"], [data-thread-id="${escaped}"]`
   const startedAt = Date.now()
   let clickedAt = 0
   const attempt = () => {
     const row = document.querySelector(selector)
-    const active = row?.classList.contains('is-active') === true
+    const active =
+      row?.classList.contains('is-active') === true ||
+      row?.classList.contains('is-selected') === true
     if (active && Date.now() - clickedAt > 1_000) return
     if (row && !active && Date.now() - clickedAt > 400) {
-      row.querySelector<HTMLButtonElement>('button.sess')?.click()
+      row
+        .querySelector<HTMLButtonElement>('button.sess, .inbox-card__main, .inbox-shelf__main')
+        ?.click()
       clickedAt = Date.now()
     }
     if (Date.now() - startedAt < 10_000) window.setTimeout(attempt, 100)
