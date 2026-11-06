@@ -688,6 +688,23 @@ describe('protocol envelopes', () => {
       threadId: 'th1',
       pinned: true,
     })
+    const image = 'data:image/png;base64,iVBORw0KGgo='
+    expect(methods['thread.setImage'].params.parse({ threadId: 'th1', image })).toEqual({
+      threadId: 'th1',
+      image,
+    })
+    expect(methods['thread.setImage'].params.parse({ threadId: 'th1', image: null }).image).toBe(
+      null,
+    )
+    for (const unsafe of [
+      'https://example.test/logo.png',
+      'data:image/svg+xml;base64,PHN2Zz4=',
+      `data:image/png;base64,${'A'.repeat(32 * 1024)}`,
+    ]) {
+      expect(() =>
+        methods['thread.setImage'].params.parse({ threadId: 'th1', image: unsafe }),
+      ).toThrow()
+    }
     expect(
       methods['workspace.switchBranch'].params.parse({ path: 'D:\\x', branch: 'feature/shelf' }),
     ).toEqual({ path: 'D:\\x', branch: 'feature/shelf' })
