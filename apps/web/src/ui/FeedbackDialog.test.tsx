@@ -6,7 +6,10 @@ import type { FeedbackRequest } from '../feedback-state.js'
 import type { Transport } from '../transport.js'
 import { FeedbackDialog } from './FeedbackDialog.js'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 type Call = { method: string; params: Record<string, unknown> }
 
@@ -122,6 +125,9 @@ describe('FeedbackDialog', () => {
   })
 
   it('keeps the text and counts down when the server asks to wait', async () => {
+    // A clock that moves a millisecond per reading, as a busy runner's does between two reads.
+    let clock = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => clock++)
     const { onSent } = renderDialog(() => ({
       ok: false,
       code: 'cooldown',
