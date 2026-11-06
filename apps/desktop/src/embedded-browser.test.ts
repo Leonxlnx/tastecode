@@ -144,7 +144,6 @@ describe('embedded browser guest', () => {
         setPermissionCheckHandler: vi.fn(),
         setPermissionRequestHandler: vi.fn(),
         on: vi.fn(),
-        on: vi.fn(),
       },
       setUserAgent: vi.fn(),
       setWindowOpenHandler: vi.fn(),
@@ -192,7 +191,6 @@ describe('embedded browser guest', () => {
         webRequest: { onBeforeRequest: vi.fn() },
         setPermissionCheckHandler: vi.fn(),
         setPermissionRequestHandler: vi.fn(),
-        on: vi.fn(),
         on: vi.fn(),
       },
     }
