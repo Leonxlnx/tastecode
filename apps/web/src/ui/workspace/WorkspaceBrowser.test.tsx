@@ -20,6 +20,7 @@ const nativeBrowser = vi.hoisted(() => ({
 
 vi.mock('../../bridge.js', () => ({
   isDesktop: true,
+  canSavePastedFiles: false,
   isMacOS: () => false,
   onBrowserShortcut: (listener: (guestId: number, action: string) => void) => {
     nativeBrowser.shortcutListeners.add(listener)

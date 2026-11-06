@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { newBrowserCommentId } from './browser-comments.js'
 import {
+  browserCommentChipText,
   composerChipAround,
   composerChipFragments,
   composerChips,
@@ -135,6 +137,11 @@ describe('composer chips', () => {
     )
     expect(composerTextWithoutPicks(`${goal} only`)).toBe(`${goal} only`)
     expect(composerTextWithoutPicks('plain $cook text')).toBe('plain $cook text')
+  })
+
+  it('keeps browser comment chips, which belong to a page and not to a provider', () => {
+    const comment = browserCommentChipText({ id: newBrowserCommentId(), comment: 'Smaller' })
+    expect(composerTextWithoutPicks(`${cook} ${comment} tail`)).toBe(`${comment} tail`)
   })
 
   it('only wakes the overlay while the draft has chips', () => {
