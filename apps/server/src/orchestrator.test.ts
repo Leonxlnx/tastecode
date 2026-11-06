@@ -5560,7 +5560,9 @@ describe('provider-neutral design briefing', () => {
         expect(sessions[0]?.sent[7]).toContain('<screenshots>')
         // Repair works from the screenshots Review already sent.
         expect(sessions[0]?.sentAttachments[7]).toEqual([])
-        expect(sessions[0]?.sent[7]).toContain('not attached again: 1440x1000.png, 390x844.png, ')
+        expect(sessions[0]?.sent[7]).toContain(
+          `not attached again: ${path.join(os.tmpdir(), '1440x1000.png')}, ${path.join(os.tmpdir(), '390x844.png')}, reference-home.png. If you no longer have them after a context compaction, open them from these paths.`,
+        )
         sessions[0]?.emit(
           message(
             JSON.stringify({

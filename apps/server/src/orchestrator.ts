@@ -6217,7 +6217,7 @@ ${JSON.stringify(deck, null, 2)}
       const attachedBefore = attachments.filter((file) => delivered.has(designAttachmentKey(file)))
       if (attachedBefore.length) {
         attachments = attachments.filter((file) => !attachedBefore.includes(file))
-        prompt = `${prompt}\n\n${designAttachedBeforeNote(attachedBefore)}`
+        prompt = `${prompt}\n\n${designAttachedBeforeNote(attachedBefore, this.#repoPath(threadId))}`
       }
       const panicGeneration = this.#panicGeneration
       this.#checkoutAccess.beginTurn(this.#repoPath(threadId), threadId)
