@@ -3949,8 +3949,12 @@
                   title, comment and element count. The agent receives quoted, bounded page context
                   and the crop through the normal send, queue and Steer flow, with honest text-only
                   fallback for models without images, and removing a chip removes its screenshot.
-                  Frames and closed shadow roots target their host; open shadow roots include their
-                  path. Rectangle selection is not included.</span
+                  Chips survive a provider or project change, come back with their screenshots from
+                  Edit as new prompt, Arrow Up and an edited queued prompt, and copy as the
+                  comment's words. A comment keeps its line breaks and joined characters, and one of
+                  only invisible characters cannot be saved. A hung page or a selector it cannot
+                  read does not stall the mode. Frames and closed shadow roots target their host;
+                  open shadow roots include their path. Rectangle selection is not included.</span
                 >
               </span></label
             >
