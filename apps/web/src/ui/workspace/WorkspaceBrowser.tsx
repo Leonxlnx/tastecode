@@ -544,6 +544,18 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const macOS = isMacOS()
   const hints = browserShortcutHints(macOS)
 
+  const startBrowsing = (
+    <div className="workspace-browser__placeholder">
+      <WorkspaceEmptyState
+        kind="browser"
+        title={isDesktop ? 'Start browsing' : 'Desktop browser unavailable'}
+        detail={
+          isDesktop ? 'Enter a URL to open a page.' : 'The in-app browser runs in the desktop app.'
+        }
+      />
+    </div>
+  )
+
   const loadingFirstPage = Boolean(state.url) && state.loading && !hasRenderedPage && !failure
   // Later loads keep the current page visible under a thin progress line.
   const loadingLaterPage = state.loading && hasRenderedPage && !failure
@@ -762,19 +774,13 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
             </WorkspaceEmptyState>
           </div>
         ) : !state.url ? (
-          <BrowserRecentPages onOpen={navigate}>
-            <div className="workspace-browser__placeholder">
-              <WorkspaceEmptyState
-                kind="browser"
-                title={isDesktop ? 'Start browsing' : 'Desktop browser unavailable'}
-                detail={
-                  isDesktop
-                    ? 'Enter a URL to open a page.'
-                    : 'The in-app browser runs in the desktop app.'
-                }
-              />
-            </div>
-          </BrowserRecentPages>
+          // A row loads in this tab, so only the user's own tabs offer the list:
+          // never the agent's, and never where no page can load.
+          keepHistory && isDesktop ? (
+            <BrowserRecentPages onOpen={navigate}>{startBrowsing}</BrowserRecentPages>
+          ) : (
+            startBrowsing
+          )
         ) : null}
         {error ? (
           <div className="workspace-browser__error" role="alert">

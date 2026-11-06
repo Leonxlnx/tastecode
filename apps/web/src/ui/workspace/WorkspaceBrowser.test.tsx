@@ -829,6 +829,14 @@ describe('WorkspaceBrowser history', () => {
     ])
   })
 
+  it('offers the list only on a tab that keeps history, so a row never drives an agent tab', () => {
+    rememberBrowserVisit('https://example.com/docs', 'Example docs')
+    render(<WorkspaceBrowser active />)
+
+    expect(screen.queryByText('Recently used')).toBeNull()
+    expect(screen.getByText('Start browsing')).toBeTruthy()
+  })
+
   it('leaves out the pages of a tab that does not keep history', async () => {
     render(
       <WorkspaceBrowser
