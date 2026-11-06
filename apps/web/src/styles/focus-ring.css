@@ -21,6 +21,11 @@
     outline-offset: var(--focus-ring-inset);
   }
 
+  /* 3px from the chat title: an outer ring would touch its last letter. */
+  :is(.stagehead__menu-trigger, .stagehead__action):focus-visible {
+    outline-offset: var(--focus-ring-inset);
+  }
+
   /* An inbox card's button fills the rounded card, so its ring follows the
      card's corners instead of drawing a square inside them. */
   .inbox-card__main:focus-visible {
