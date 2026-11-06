@@ -4072,6 +4072,15 @@ export class Orchestrator {
   }
 
   settleThread(threadId: string): ThreadLifecycle {
+    // The server settles idle chats on its own, and the classic sidebar keeps listing them with
+    // an Archive action. Archiving one makes it the user's own archive instead of an error.
+    const thread = this.#store.thread(threadId)
+    const settled = thread?.closedAt === undefined ? thread?.lifecycle : undefined
+    if (settled?.state === 'settled') {
+      if (settled.reason === 'manual') return settled
+      this.#assertCanHide(threadId)
+      return this.#notifyLifecycle(threadId, this.#store.settleThread(threadId, 'manual'))
+    }
     this.#assertLifecycleState(threadId, 'active')
     this.#assertCanHide(threadId)
     return this.#notifyLifecycle(threadId, this.#store.settleThread(threadId, 'manual'))
