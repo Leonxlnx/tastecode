@@ -71,6 +71,7 @@ import {
   composerSlashCanLead,
   composerTextWithoutPicks,
   composerBrowserImages,
+  composerCopyText,
   composerWireText,
   createComposerChipTextStore,
   hasComposerChips,
@@ -1859,7 +1860,7 @@ function ComposerComponent(props: {
     return false
   }
 
-  /** Copy and cut hand out the tokens a selection's chips stand for. */
+  /** Copy and cut hand out what a selection's chips stand for, as text that reads on its own. */
   const copyChips = (event: ClipboardEvent<HTMLTextAreaElement>, cut: boolean) => {
     if (chipStore.get() === '') return
     const el = event.currentTarget
@@ -1867,7 +1868,7 @@ function ComposerComponent(props: {
     const selected = el.value.slice(from, to)
     if (!hasComposerChips(selected)) return
     event.preventDefault()
-    event.clipboardData.setData('text/plain', composerWireText(selected))
+    event.clipboardData.setData('text/plain', composerCopyText(selected))
     if (cut) deleteRange(from, to)
   }
 

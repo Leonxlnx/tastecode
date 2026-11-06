@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import type { ApprovalRequest, Item } from '@harness/contracts'
 import { StrictMode } from 'react'
 import { ThreadFrameStore } from '../thread-frame-store.js'
+import { browserCommentBlock } from './browser-comments.js'
 import { emptyThread } from '../thread-store.js'
 import {
   createRepeatedDesignRowProjector,
@@ -2154,6 +2155,41 @@ describe('thread message actions', () => {
     fireEvent.click(copyButton)
     await waitFor(() => expect(writeClipboardText).toHaveBeenCalledWith('Keep my exact prompt'))
     await waitFor(() => expect(layers[1]?.hasAttribute('data-active')).toBe(true))
+  })
+
+  it('copies a prompt of page comments as the comments alone', async () => {
+    const text = browserCommentBlock({
+      id: 'c1',
+      comment: 'Make this smaller',
+      title: 'Coffee',
+      url: 'http://127.0.0.1:6445/',
+      selector: 'h1',
+      text: 'Coffee',
+    })
+    render(
+      <Thread
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              {
+                id: 'prompt-1',
+                turnId: 'turn-1',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text,
+                createdAt: 1,
+              },
+            ],
+          })
+        }
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Copy prompt' }))
+    await waitFor(() => expect(writeClipboardText).toHaveBeenCalledWith('Make this smaller'))
   })
 
   it('shows visible accessible feedback when copying fails', async () => {

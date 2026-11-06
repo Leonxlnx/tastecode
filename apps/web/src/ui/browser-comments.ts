@@ -194,8 +194,9 @@ export function resetBrowserComments(): void {
   remembered = undefined
 }
 
-/** A queued prompt is one short line: blocks read as their comments there. */
+/** Where a prompt is read or copied as text, blocks count as their comments. */
 export function browserCommentsAsPlainText(text: string): string {
+  if (!text.includes('[Browser comment]')) return text
   return browserCommentSegments(text)
     .map((segment) => (segment.type === 'text' ? segment.text.trim() : segment.comment.comment))
     .filter(Boolean)

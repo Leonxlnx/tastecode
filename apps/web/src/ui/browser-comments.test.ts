@@ -123,7 +123,7 @@ it('reads a prompt as its comments, for titles and queued rows', () => {
   const first = browserCommentBlock({ ...sample(), comment: 'Make this smaller' })
   const second = browserCommentBlock({ ...sample(), comment: 'And tighter' })
   expect(browserCommentsAsPlainText(`${first}\n\n${second}`)).toBe('Make this smaller And tighter')
-  expect(browserCommentsAsPlainText('Just a message')).toBe('Just a message')
+  expect(browserCommentsAsPlainText('  Just a message\n')).toBe('  Just a message\n')
 })
 
 it('tells the agent the comment is the request and the rest is page data', () => {

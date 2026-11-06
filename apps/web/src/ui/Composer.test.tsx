@@ -3349,6 +3349,22 @@ describe('browser annotation drafts', () => {
     )
   })
 
+  it('copies and cuts a comment as its words, not its page details', () => {
+    const saved = { ...comment(), comment: 'Make this smaller\nand tighter' }
+    rememberBrowserComment(saved)
+    renderComposer(vi.fn(), {
+      draftRequest: { text: `Note ${browserCommentChipText(saved)}`, attachments: [], request: 1 },
+    })
+    const area = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
+    area.setSelectionRange(0, area.value.length)
+    const setData = vi.fn()
+    fireEvent.copy(area, { clipboardData: { setData } })
+    expect(setData).toHaveBeenLastCalledWith('text/plain', 'Note Make this smaller\nand tighter')
+    fireEvent.cut(area, { clipboardData: { setData } })
+    expect(setData).toHaveBeenLastCalledWith('text/plain', 'Note Make this smaller\nand tighter')
+    expect(area.value).toBe('')
+  })
+
   it('leaves typed tokens alone when editing a queued prompt', async () => {
     renderComposer(vi.fn(), {
       queuedTurns: [{ id: 'q1', text: '$cook this', attachments: [], createdAt: 1 }],

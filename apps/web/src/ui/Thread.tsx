@@ -70,6 +70,7 @@ import { Approval } from './Approval.js'
 import { ChangeStats, Diff, parseDiff } from './Diff.js'
 import { ProjectRootContext, projectRelativePath } from './project-relative-path.js'
 import { parseToolCall, toolArgumentEntries, toolArgumentSnippet } from './tool-call-text.js'
+import { browserCommentsAsPlainText } from './browser-comments.js'
 import { CopyButton } from './CopyButton.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { Markdown } from './Markdown.js'
@@ -2361,7 +2362,7 @@ const Row = memo(function Row({
         ) : null}
         {item.text ? (
           <div className="response-actions said__actions" aria-label="Prompt actions">
-            <CopyButton text={item.text} label="Copy prompt" />
+            <CopyButton text={browserCommentsAsPlainText(item.text)} label="Copy prompt" />
             {onEditMessage ? (
               <button
                 type="button"

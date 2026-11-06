@@ -123,12 +123,28 @@ export function composerChipSegments(text: string): ComposerChipSegment[] {
  * (`$cookx`, `use$cook`, `$cook$docs` name no skill).
  */
 export function composerWireText(text: string, options: { images?: boolean } = {}): string {
+  return composerChipsAsText(text, options, false)
+}
+
+/**
+ * What a copy of the draft carries: the tokens of its picks, and of a comment only
+ * the user's words. The page details and screenshot mean nothing without the chip.
+ */
+export function composerCopyText(text: string): string {
+  return composerChipsAsText(text, {}, true)
+}
+
+function composerChipsAsText(
+  text: string,
+  options: { images?: boolean },
+  commentWords: boolean,
+): string {
   if (!hasComposerChips(text)) return text
   let wire = ''
   let afterToken = false
   let afterBlock = false
   for (const segment of composerChipSegments(text)) {
-    if (segment.type === 'chip' && segment.kind === 'browser') {
+    if (segment.type === 'chip' && segment.kind === 'browser' && !commentWords) {
       const comment = browserComment(segment.commentId!)
       const block = comment ? browserCommentBlock(comment, options.images !== false) : segment.name
       wire = `${wire.trimEnd()}${wire.trim() ? '\n\n' : ''}${block}\n\n`
@@ -138,7 +154,10 @@ export function composerWireText(text: string, options: { images?: boolean } = {
     }
     if (segment.type === 'chip') {
       if (wire !== '' && !opensToken(wire.at(-1)!)) wire += ' '
-      wire += segment.token
+      wire +=
+        segment.kind === 'browser'
+          ? (browserComment(segment.commentId!)?.comment ?? segment.name)
+          : segment.token
       afterToken = true
       afterBlock = false
       continue
