@@ -392,12 +392,17 @@ const quietServices = {
 
 /** Codex's control process would start the installed CLI; this one has nothing to report. */
 class QuietCodexControl extends EventEmitter implements CodexControlAdapter {
+  readonly #models: readonly Model[]
+  constructor(models: readonly Model[] = []) {
+    super()
+    this.#models = models
+  }
   async start(): Promise<void> {}
   async dispose(): Promise<void> {}
   onUsageChanged(): void {}
   account = signedOut
   async listModels(): Promise<Model[]> {
-    return []
+    return [...this.#models]
   }
   async listMcpServers(): Promise<McpServer[]> {
     return []
@@ -490,6 +495,8 @@ function harness(
       })),
   )
 
+  /** What every provider's model list reports. */
+  const models: Model[] = []
   const runtimeFor = (provider: ProviderId): ProviderRuntime => ({
     async start(workspacePath, options) {
       startedIn.push(workspacePath)
@@ -512,7 +519,7 @@ function harness(
       }
     },
     async listModels() {
-      return []
+      return models
     },
     ...(provider === 'codex' || provider === 'grok'
       ? {
@@ -581,13 +588,14 @@ function harness(
         return [provider, { ...quiet, ...providerServices?.[provider] }]
       }),
     ),
-    createCodex: () => new QuietCodexControl(),
+    createCodex: () => new QuietCodexControl(models),
     ...(worktreeRoot ? { worktreeRoot } : {}),
     ...(defaultSkillsRoot ? { defaultSkillsRoot } : {}),
   })
 
   return {
     store,
+    models,
     sessions,
     received,
     sideReceived,
@@ -5598,12 +5606,10 @@ describe('provider-neutral design briefing', () => {
             ),
           ).toBe(true),
         )
-        // Qualification and briefing run fast; every phase after the
-        // validated brief keeps the user's requested effort.
-        expect(sessions[0]?.sentOptions).toEqual([
-          ...Array.from({ length: 1 }, () => ({ model, effort: 'low' })),
-          ...Array.from({ length: 8 }, () => ({ model, effort: 'xhigh' })),
-        ])
+        // Every phase, the briefing included, keeps the user's requested effort (#2242).
+        expect(sessions[0]?.sentOptions).toEqual(
+          Array.from({ length: 9 }, () => ({ model, effort: 'xhigh' })),
+        )
         expect(readdirSync(path.join(workspace, '.taste')).sort()).toEqual([
           ...(appScreen ? ['app-kit'] : []),
           'assets.json',
@@ -7002,6 +7008,63 @@ describe('persisted threads', () => {
               (event.type === 'item.delta' && event.itemId === 'internal-brand-prompt'),
           ),
       ).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('runs a Design phase at the nearest effort the model lists', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-effort-'))
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'design-effort',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Design effort',
+    })
+    writeDesignBrief(workspace, {
+      originalRequest: 'Build a studio site.',
+      subject: 'Studio',
+      pageType: 'Marketing site',
+      scope: 'Single page',
+      primaryGoal: 'Generate enquiries',
+      audience: 'Prospective clients',
+      offer: 'Design services',
+      primaryAction: 'Start a project',
+      requiredContent: [],
+      constraints: [],
+      brandInputs: [],
+      creativeControl: 'Agent-led',
+      explicitAnswers: [],
+      assumptions: [],
+      unresolved: [],
+    })
+    store.setDesignRun('design-effort', {
+      approvedBrief: readDesignBrief(workspace),
+      workspacePath: workspace,
+      originalRequest: 'Build a studio site.',
+      // Saved while another model was chosen; this one offers no "xhigh".
+      options: { model: 'web-model', effort: 'xhigh' },
+      phase: 'brand',
+      askedQuestions: false,
+      finalAsked: false,
+      explicitAnswers: [],
+    })
+    const { orchestrator, sessions, models } = harness(undefined, store)
+    models.push({
+      id: 'web-model',
+      displayName: 'Web model',
+      isDefault: true,
+      reasoningEfforts: ['medium', 'high'],
+    } as Model)
+    try {
+      await orchestrator.listModels('codex')
+      await orchestrator.submitTurn('design-effort', 'Next.')
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+      expect(sessions[0]?.sentOptions[0]).toEqual({ model: 'web-model', effort: 'high' })
     } finally {
       await orchestrator.disposeAll()
       store.close()
