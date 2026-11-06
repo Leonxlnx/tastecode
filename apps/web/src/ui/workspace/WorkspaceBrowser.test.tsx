@@ -763,6 +763,8 @@ describe('WorkspaceBrowser history', () => {
       view.isLoading.mockReturnValue(false)
       // Chromium reports the failed address as the guest's own while its error page shows.
       view.getURL.mockReturnValue('https://nonexistent-host.invalid/')
+      // Chromium commits its error page as a navigation too.
+      dispatchGuestEvent(view, 'did-navigate', { url: 'https://nonexistent-host.invalid/' })
       dispatchGuestEvent(view, 'did-fail-load', {
         errorCode: -105,
         errorDescription: 'ERR_NAME_NOT_RESOLVED',
@@ -792,7 +794,10 @@ describe('WorkspaceBrowser history', () => {
     view.isLoading.mockReturnValue(false)
     view.getURL.mockReturnValue('https://example.com/slow')
     view.getTitle.mockReturnValue('Slow page')
-    act(() => view.dispatchEvent(new Event('did-stop-loading')))
+    act(() => {
+      dispatchGuestEvent(view, 'did-navigate', { url: 'https://example.com/slow' })
+      view.dispatchEvent(new Event('did-stop-loading'))
+    })
 
     expect(readBrowserHistory()[0]).toMatchObject({
       url: 'https://example.com/slow',
@@ -800,36 +805,43 @@ describe('WorkspaceBrowser history', () => {
     })
   })
 
-  it('updates the listed title when the page reports it after loading', async () => {
-    render(<WorkspaceBrowser active keepHistory />)
-    const view = await openPage('example.com/docs')
-    await waitFor(() => expect(readBrowserHistory()[0]?.title).toBe('Example'))
-
-    act(() => dispatchGuestEvent(view, 'page-title-updated', { title: 'Docs, loaded' }))
-
-    expect(readBrowserHistory()).toHaveLength(1)
-    expect(readBrowserHistory()[0]?.title).toBe('Docs, loaded')
-  })
-
-  it('lists a page a single-page app moved to without a new document', async () => {
+  it('records a committed page once, not its later title, routes or replaced state', async () => {
     render(<WorkspaceBrowser active keepHistory />)
     const view = await openPage('example.com/')
     await waitFor(() => expect(readBrowserHistory()).toHaveLength(1))
+    const writes = vi.spyOn(Storage.prototype, 'setItem')
 
     view.getURL.mockReturnValue('https://example.com/settings')
-    act(() =>
+    act(() => {
+      dispatchGuestEvent(view, 'page-title-updated', { title: 'Docs, loaded' })
       dispatchGuestEvent(view, 'did-navigate-in-page', {
         isMainFrame: true,
         url: 'https://example.com/settings',
-      }),
-    )
+      })
+      view.dispatchEvent(new Event('did-stop-loading'))
+    })
 
-    expect(readBrowserHistory().map(({ url }) => url)).toEqual([
-      'https://example.com/settings',
-      'https://example.com/',
-    ])
+    expect(writes.mock.calls.filter(([key]) => key === 'harness.browserHistory')).toEqual([])
+    expect(readBrowserHistory().map(({ url }) => url)).toEqual(['https://example.com/'])
+    writes.mockRestore()
   })
 
+  it('never lists a page the user stopped', async () => {
+    render(<WorkspaceBrowser active keepHistory />)
+    const view = guests[0]!
+    view.loadURL.mockImplementation(async () => {
+      view.isLoading.mockReturnValue(true)
+      view.dispatchEvent(new Event('did-start-loading'))
+      view.getURL.mockReturnValue('https://example.com/stopped')
+      dispatchGuestEvent(view, 'did-navigate', { url: 'https://example.com/stopped' })
+    })
+    await openPage('example.com/stopped')
+    fireEvent.click(screen.getByRole('button', { name: /Stop/ }))
+    view.isLoading.mockReturnValue(false)
+    act(() => view.dispatchEvent(new Event('did-stop-loading')))
+
+    expect(readBrowserHistory()).toEqual([])
+  })
   it('offers the list only on a tab that keeps history, so a row never drives an agent tab', () => {
     rememberBrowserVisit('https://example.com/docs', 'Example docs')
     render(<WorkspaceBrowser active />)

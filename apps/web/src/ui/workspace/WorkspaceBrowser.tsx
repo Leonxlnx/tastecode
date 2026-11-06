@@ -228,12 +228,13 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     pageInfoListener.current?.(tabId, { url: state.url, title: state.url ? state.title : '' })
   }, [tabId, state.url, state.title])
 
-  // Loading ends with what the guest really shows, so an address that failed is
-  // never listed; a title that arrives later updates the same row.
-  useEffect(() => {
-    if (!keepHistory || !state.url || state.loading || failure) return
-    rememberBrowserVisit(state.url, state.title)
-  }, [keepHistory, state.url, state.title, state.loading, failure])
+  // History records committed top-level navigations once each, when their load ends: a
+  // replaceState, an in-page route or a later title writes nothing, and an address that
+  // failed or was stopped is never listed.
+  const keepHistoryRef = useRef(keepHistory)
+  keepHistoryRef.current = keepHistory
+  const committedVisit = useRef(false)
+  const loadFailed = useRef(false)
 
   const syncGuestState = useCallback((pageReady = false) => {
     const view = guest.current
@@ -278,12 +279,24 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       syncGuestState(true)
     }
     const onStart = () => {
+      loadFailed.current = false
       stopRequested.current = false
       setError(undefined)
       setFailure(undefined)
       setState((current) => ({ ...current, loading: true }))
     }
-    const onStop = () => syncGuestState(true)
+    const onStop = () => {
+      syncGuestState(true)
+      if (!committedVisit.current) return
+      committedVisit.current = false
+      if (!keepHistoryRef.current || loadFailed.current || stopRequested.current) return
+      try {
+        const url = webPageUrl(view.getURL())
+        if (url) rememberBrowserVisit(url, view.getTitle())
+      } catch {
+        // A guest detached between its event and this read records nothing.
+      }
+    }
     const onNavigationStart = (event: Event) => {
       const navigation = NavigationEventSchema.safeParse(event)
       if (!navigation.success || navigation.data.isMainFrame === false) return
@@ -303,6 +316,10 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       }
       syncGuestState()
     }
+    const onCommit = (event: Event) => {
+      committedVisit.current = true
+      onNavigate(event)
+    }
     const onNavigateInPage = (event: Event) => {
       const navigation = NavigationEventSchema.safeParse(event)
       if (!navigation.success || navigation.data.isMainFrame !== false) onNavigate(event)
@@ -313,6 +330,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     }
     const onFail = (event: Event) => {
       const failure = LoadFailureEventSchema.safeParse(event)
+      if (failure.success && failure.data.isMainFrame !== false) loadFailed.current = true
       if (failure.success && failure.data.isMainFrame !== false && !stopRequested.current) {
         const url = webPageUrl(failure.data.validatedURL)
         const failedView = browserLoadFailureView({
@@ -343,7 +361,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     view.addEventListener('dom-ready', onReady)
     view.addEventListener('did-start-loading', onStart)
     view.addEventListener('did-stop-loading', onStop)
-    view.addEventListener('did-navigate', onNavigate)
+    view.addEventListener('did-navigate', onCommit)
     view.addEventListener('did-navigate-in-page', onNavigateInPage)
     view.addEventListener('page-title-updated', onTitle)
     view.addEventListener('did-fail-load', onFail)
@@ -384,7 +402,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       view.removeEventListener('dom-ready', onReady)
       view.removeEventListener('did-start-loading', onStart)
       view.removeEventListener('did-stop-loading', onStop)
-      view.removeEventListener('did-navigate', onNavigate)
+      view.removeEventListener('did-navigate', onCommit)
       view.removeEventListener('did-navigate-in-page', onNavigateInPage)
       view.removeEventListener('page-title-updated', onTitle)
       view.removeEventListener('did-fail-load', onFail)
