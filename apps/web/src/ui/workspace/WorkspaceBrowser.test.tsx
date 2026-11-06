@@ -319,6 +319,7 @@ describe('WorkspaceBrowser', () => {
       expect(canvas.getAttribute('aria-busy')).toBe('true')
       expect(container.querySelector('.workspace-browser__placeholder')).toBeNull()
       expect(host.contains(view)).toBe(true)
+      expect(host.getAttribute('data-painted')).toBe('false')
 
       act(() => {
         view.isLoading.mockReturnValue(readyEvent === 'dom-ready')
@@ -330,6 +331,7 @@ describe('WorkspaceBrowser', () => {
         view.dispatchEvent(new Event('did-stop-loading'))
       })
       expect(canvas.getAttribute('aria-busy')).toBe('false')
+      expect(host.getAttribute('data-painted')).toBe('true')
 
       fireEvent.change(address, { target: { value: 'example.com/second' } })
       fireEvent.submit(address.closest('form')!)

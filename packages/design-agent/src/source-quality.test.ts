@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { designSourceQualityBaseline, validateDesignSourceQuality } from './source-quality.js'
 import { parseAssetManifest, validateAssetManifestForPage } from './assets.js'
+import { DesignScanLimitError } from './workspace-files.js'
 
 const roots: string[] = []
 
@@ -243,6 +244,29 @@ describe('design source scan size limits', () => {
     const baseline = designSourceQualityBaseline(root)
     writeFileSync(file, '<svg>' + 'x'.repeat(2_000) + '<svg />')
     expect(() => validateDesignSourceQuality(root, [], baseline)).toThrow('SVG substitute')
+  })
+
+  it('leaves shipped bundles and build caches out of the source scan', () => {
+    const root = workspace()
+    const scene = '<svg viewBox="0 0 1200 600"><rect width="1200" height="600"/></svg>'
+    mkdirSync(path.join(root, 'public', 'vendor'), { recursive: true })
+    mkdirSync(path.join(root, '.output', 'public'), { recursive: true })
+    writeFileSync(path.join(root, 'public', 'vendor', 'three.min.js'), `var s='${scene}'`)
+    writeFileSync(path.join(root, 'public', 'app-bundle.js'), `var s='${scene}'`)
+    writeFileSync(path.join(root, '.output', 'public', 'index.html'), scene)
+    expect(designSourceQualityBaseline(root)).toEqual([])
+    writeFileSync(path.join(root, 'public', 'app.js'), `var s='${scene}'`)
+    expect(designSourceQualityBaseline(root)).toEqual([
+      expect.stringContaining('public/app.js: unmanifested inline SVG substitute'),
+    ])
+  })
+
+  it('reports an oversized scan as a scan limit, not a quality failure', () => {
+    const root = workspace()
+    const file = path.join(root, 'data.js')
+    writeFileSync(file, '')
+    truncateSync(file, 32_000_001)
+    expect(() => designSourceQualityBaseline(root)).toThrow(DesignScanLimitError)
   })
 
   it('accepts a source file at the 32 MB scan limit', () => {

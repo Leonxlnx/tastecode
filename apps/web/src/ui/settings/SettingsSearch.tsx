@@ -10,7 +10,7 @@ import { type Account, type ProviderStatus } from '@harness/contracts'
 import { useProviderAccounts } from '../../provider-accounts-state.js'
 import { rememberedAccountReads } from '../../provider-account-reads.js'
 import { lastSignIn } from '../../remembered-sign-in.js'
-import { providerTuningEntries } from './provider-tuning-search.js'
+import { executablePathEntries, providerTuningEntries } from './provider-tuning-search.js'
 import { getFastServiceTier } from '../model-selector-utils.js'
 import {
   searchSettings,
@@ -54,9 +54,12 @@ export function SettingsSearch(props: {
     }
   }
   if (props.account) signedIn.set(props.provider, props.account)
-  const providerEntries = props.providerDefaults
-    ? providerTuningEntries(props.providers, snapshot.accounts, signedIn)
-    : []
+  const providerEntries = [
+    ...(props.providerDefaults
+      ? providerTuningEntries(props.providers, snapshot.accounts, signedIn)
+      : []),
+    ...executablePathEntries(props.providers),
+  ]
   useEffect(() => {
     if (!searching) return
     let current = true

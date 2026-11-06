@@ -2482,6 +2482,9 @@ export function providerNoticeLabel(
   // Another account of a provider is named, so a move between two accounts says where.
   if (notice.accountId && accountLabel) parts.push(accountLabel(notice.provider, notice.accountId))
   if (notice.model) parts.push(modelName?.(notice.provider, notice.model) ?? notice.model)
+  // The chat stayed where it was; only its saved session could not be reopened.
+  if (notice.reason === 'session_missing')
+    return `New ${parts.join(' · ')} session: the saved one could not be reopened, so the chat so far was carried over`
   return `Switched to ${parts.join(' · ')}`
 }
 

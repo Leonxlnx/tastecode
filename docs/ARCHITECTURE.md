@@ -236,8 +236,8 @@ Browser annotations live entirely in the trusted renderer: an overlay intercepts
 reads bounded DOM descriptions on demand, and captures the guest's visible pixels. There is no
 new guest preload, IPC, global, event listener, stylesheet or DOM mutation. Leaving the mode
 removes the overlay and stops polling. Going to another page discards the round; a reload of
-the same page keeps it, because dev servers reload pages under an agent's edits. Open shadow boundaries
-use `>>>` in a DOM path, while frames and closed roots are represented by their host elements.
+the same page keeps it, because dev servers reload pages under an agent's edits. Open shadow
+boundaries use `>>>` in a DOM path, while frames and closed roots are represented by their host elements.
 Pins follow current element rectangles; removed elements retain their captured reference with
 an explicit missing-element label. A replaced element with the same selector can inherit a pin.
 
@@ -258,6 +258,18 @@ No protocol or shared-contract changes are required.
 
 _Rejected:_ guest-to-host message channels, privileged guest preloads, persistent injected
 listeners and DOM overlays would add an unnecessary trust boundary and cleanup obligation.
+
+**An agent drives only its own chat's tab, through the same guest.** The server routes a
+`browser.command` to the window that shows the chat; the renderer checks every page against
+the address bar's rule again, and the session filter above stays the last line. While a tab is
+agent-driven, the main process drops its downloads. The field check that keeps agents out of
+password, sign-in code and payment fields, the typing itself and clicks run in a JavaScript world
+of TasteCode's own (`executeJavaScriptInIsolatedWorld`): it shares the page's DOM but not its
+globals, so a page cannot replace `querySelector`, value setters or labels to slip a field past
+it. Clicks are DOM clicks there, because native input events do not reach a guest whose window
+is in the background. Reading text, scrolling and the console run in the page's own world on
+purpose: what they return is the page's word, which can lie, and it reaches the agent only as
+quoted, bounded data. A page that lies there can mislead the agent, not get past the field check.
 
 ### Desktop update assets
 

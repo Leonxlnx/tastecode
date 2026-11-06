@@ -296,7 +296,8 @@ export function parseBuildPhaseOutput(text: string): BuildPhaseOutput {
   if (value.status === 'failed') {
     // Repair reports a failure as summary; a Build that answers in that shape still names its
     // blocker, which is what the user needs to see.
-    const error = typeof value.error === 'string' && value.error.trim() ? value.error : value.summary
+    const error =
+      typeof value.error === 'string' && value.error.trim() ? value.error : value.summary
     return { status: 'failed', error: string(error, 'build error'), files, checks }
   }
   throw new Error('build status must be complete or failed')

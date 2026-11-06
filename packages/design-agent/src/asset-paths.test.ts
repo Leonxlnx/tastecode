@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -70,6 +70,33 @@ describe('asset paths', () => {
       '.taste/cafe_corner_photo.png',
       undefined,
     ])
+  })
+
+  // CI on macOS: the temp folder is /var/… for /private/var/…, so the workspace named one way
+  // and its real path the other made every saved photo "outside the workspace".
+  it('reads the same files when the workspace or the paths go through a link', () => {
+    const real = workspace()
+    const link = path.join(workspace(), 'linked')
+    symlinkSync(real, link, 'junction')
+    mkdirSync(path.join(real, '.taste'))
+    writeFileSync(path.join(real, '.taste', 'hero.png'), 'png')
+    for (const [root, file] of [
+      [link, path.join(real, '.taste', 'hero.png')],
+      [real, path.join(link, '.taste', 'hero.png')],
+      [link, path.join(link, '.taste', 'hero.png')],
+    ] as const) {
+      expect(
+        parseAssetPhaseOutput(JSON.stringify(manifest(root, file)), undefined, root).assets[0]
+          ?.destination,
+      ).toBe('.taste/hero.png')
+    }
+    expect(() =>
+      parseAssetPhaseOutput(
+        JSON.stringify(manifest(link, path.join(link, '..', 'elsewhere.png'))),
+        undefined,
+        link,
+      ),
+    ).toThrow(/destination must stay inside the workspace/)
   })
 
   it('still refuses a destination outside the workspace', () => {

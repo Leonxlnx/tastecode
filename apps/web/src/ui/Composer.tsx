@@ -19,6 +19,7 @@ import {
   IconCornerDownRight as CornerDownRight,
   IconFile as FileIcon,
   IconFolder as Folder,
+  IconFolderPlus as FolderPlus,
   IconGitBranch as GitBranch,
   IconGripVertical as GripVertical,
   IconPhoto as ImageIcon,
@@ -649,6 +650,8 @@ function ComposerComponent(props: {
   onTranscribeVoice: (requestId: string, recording: VoiceRecording) => Promise<string>
   onCancelVoice: (requestId: string) => void
   onProjectChange: (path: string) => void
+  /** Opens the folder picker and makes the chosen folder a project. */
+  onAddProject: () => void
   onBranchChange: (branch: string) => void
   onProjectRequired: () => void
   onSetupProvider: () => void
@@ -2123,6 +2126,15 @@ function ComposerComponent(props: {
                           }}
                         />
                       ))}
+                      {/* With no project yet the list was empty, and no folder could be chosen here (#2194). */}
+                      <MenuItem
+                        title="New project"
+                        icon={<FolderPlus size={14} aria-hidden />}
+                        onClick={() => {
+                          close()
+                          props.onAddProject()
+                        }}
+                      />
                     </>
                   )}
                 </Menu>

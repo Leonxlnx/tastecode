@@ -796,6 +796,23 @@ textarea.workspace-review__field {
   white-space: nowrap;
 }
 
+/* A toolbar path that opens its folder: the text as it was, underlined on hover. */
+.workspace-files__reveal {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.workspace-files__reveal:hover {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 0.18em;
+}
+
 .workspace-files__split {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(230px, 32%, 360px);
@@ -1071,6 +1088,43 @@ textarea.workspace-review__field {
   background: var(--bg);
 }
 
+/* While an agent drives the tab, a bar above the toolbar says so and offers Stop. */
+.workspace-browser:has(> .workspace-browser__agent) {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.workspace-browser__agent {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+.workspace-browser__agent > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.workspace-browser__agent > button {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspace-browser__agent > button:hover {
+  background: var(--control-hover);
+}
+
 .workspace-browser__toolbar {
   display: flex;
   min-width: 0;
@@ -1224,6 +1278,12 @@ textarea.workspace-review__field {
   background: var(--bg);
   border: 0;
   transform-origin: top left;
+}
+
+/* A guest is transparent, so a page without its own background would show the panel's ground
+   (black text on dark). Once a page has rendered it gets a browser's white canvas. */
+.workspace-browser__guest-host[data-painted='true'] .workspace-browser__guest {
+  background: #fff;
 }
 
 .workspace-browser__guest-host[data-visible='false'] .workspace-browser__guest {

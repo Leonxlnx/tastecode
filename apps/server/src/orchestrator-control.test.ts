@@ -224,8 +224,8 @@ describe('control adapter startup', () => {
     } finally {
       homedir.mockRestore()
       await orchestrator.disposeAll()
-      rmSync(project, { recursive: true, force: true })
-      rmSync(home, { recursive: true, force: true })
+      rmSync(project, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })

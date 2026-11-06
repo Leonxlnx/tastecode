@@ -289,7 +289,8 @@ afterEach(async () => {
     await entry.orchestrator.disposeAll()
     entry.store.close()
   }
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 describe('background title source discovery', () => {

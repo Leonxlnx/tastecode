@@ -1228,7 +1228,7 @@ describe('attached images', () => {
         'no such image',
       )
     } finally {
-      await rm(directory, { recursive: true })
+      await rm(directory, { recursive: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1266,7 +1266,7 @@ describe('attached images', () => {
         'no such image',
       )
     } finally {
-      await rm(directory, { recursive: true })
+      await rm(directory, { recursive: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })

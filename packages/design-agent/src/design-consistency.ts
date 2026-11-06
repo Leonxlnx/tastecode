@@ -2,7 +2,7 @@ import path from 'node:path'
 import type { BrandSystem } from './brand.js'
 import type { VisualReview } from './review-phase.js'
 import { designSourceFiles } from './source-quality.js'
-import { readWorkspaceFile } from './workspace-files.js'
+import { DesignScanLimitError, readWorkspaceFile } from './workspace-files.js'
 
 const MAX_SOURCE_SCAN_BYTES = 32_000_000
 const MAX_LITERAL_LENGTH = 2_000
@@ -213,7 +213,7 @@ function collectDeclarations(workspacePath: string): Declaration[] {
     const bytes = readWorkspaceFile(path.join(workspacePath, file), MAX_SOURCE_SCAN_BYTES)
     totalBytes += bytes.length
     if (totalBytes > MAX_SOURCE_SCAN_BYTES)
-      throw new Error('Design source scan exceeds 32 MB; reduce the workspace scope')
+      throw new DesignScanLimitError('Design source scan exceeds 32 MB')
     let source = bytes.toString('utf8').replace(/\/\*[\s\S]*?\*\//g, '')
     if (extension === '.html' || extension === '.vue' || extension === '.svelte') {
       source = source

@@ -2384,6 +2384,32 @@ describe('Composer project requirement', () => {
     expect(onSend).not.toHaveBeenCalled()
     expect(composer.value).toBe('Keep this prompt')
   })
+
+  // #2194: with no project yet the picker was empty, so no local folder could be chosen here.
+  it('offers a new project from the picker, also when there is none yet', () => {
+    const onAddProject = vi.fn()
+    renderComposer(vi.fn(), {
+      projects: [],
+      projectPath: undefined,
+      projectName: undefined,
+      onAddProject,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'New project' }))
+
+    expect(onAddProject).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('lists the projects before the new project entry', () => {
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      expect.stringContaining('TasteCode'),
+      'New project',
+    ])
+  })
 })
 
 describe('Composer height', () => {
@@ -3251,6 +3277,7 @@ function renderComposer(
       onProjectChange={vi.fn()}
       onBranchChange={vi.fn()}
       onProjectRequired={vi.fn()}
+      onAddProject={vi.fn()}
       onSetupProvider={vi.fn()}
       onSend={onSend}
       onSteer={vi.fn()}

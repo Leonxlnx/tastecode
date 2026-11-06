@@ -8,9 +8,7 @@
       "purpose": "Concept sourdough photograph for the hero; adjacent live copy should identify it as concept imagery, not an actual Brotzeit product or premises.",
       "requirements": [],
       "role": "photography",
-      "sectionIds": [
-        "hero"
-      ],
+      "sectionIds": ["hero"],
       "aspectRatio": "1:1",
       "composition": "Close sourdough loaf and sliced crumb on a pale stone counter, warm natural light, loaf centered slightly right with soft low-detail background; square crop suited to the hero’s large rounded media frame.",
       "source": {
@@ -27,9 +25,7 @@
       "purpose": "Concept sourdough photograph for the bread feature.",
       "requirements": [],
       "role": "photography",
-      "sectionIds": [
-        "bread"
-      ],
+      "sectionIds": ["bread"],
       "aspectRatio": "4:3",
       "composition": "Close landscape view of a naturally split sourdough loaf and open crumb on pale stone, loaf focal point slightly right, warm window light and soft neutral background; keep the loaf legible within the rounded frame.",
       "source": {
@@ -46,9 +42,7 @@
       "purpose": "First concept photograph in the paired café gallery, showing bread at a bakery counter.",
       "requirements": [],
       "role": "photography",
-      "sectionIds": [
-        "cafe"
-      ],
+      "sectionIds": ["cafe"],
       "aspectRatio": "9:10",
       "composition": "Tall frame with one sourdough loaf on a stone counter in the lower middle, softly blurred bakery background and quiet upper area; warm natural light and rounded crop.",
       "source": {
@@ -65,9 +59,7 @@
       "purpose": "Second concept photograph in the paired café gallery, showing a calm café-corner scene.",
       "requirements": [],
       "role": "photography",
-      "sectionIds": [
-        "cafe"
-      ],
+      "sectionIds": ["cafe"],
       "aspectRatio": "9:10",
       "composition": "Tall rounded-frame view of a simple table and chairs near a window, cup and small loaf in the lower middle, room depth and soft light above; warm plaster, wood, and stone palette.",
       "source": {
@@ -88,15 +80,7 @@
         "Network access prevented local font acquisition in this session."
       ],
       "role": "font",
-      "sectionIds": [
-        "hero",
-        "bakery",
-        "bread",
-        "cafe",
-        "visit",
-        "closing",
-        "footer"
-      ]
+      "sectionIds": ["hero", "bakery", "bread", "cafe", "visit", "closing", "footer"]
     }
   ]
 }

@@ -43,6 +43,11 @@ import {
   syncNativeMenuShortcuts,
 } from './bridge.js'
 import {
+  clearAgentBrowserEvents,
+  deliverAgentBrowserEvent,
+  showBrowserThread,
+} from './browser-capability.js'
+import {
   createDefaultKeybindings,
   DEBUG_SETTINGS_SHORTCUT,
   KEYBINDING_DEFINITIONS,
@@ -1959,6 +1964,16 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     setWorkspaceDesignPreviewRequest(preview)
   }, [activeId])
   activeIdRef.current = activeId
+  // The server sends the agent's browser commands only for the chat this window shows.
+  useEffect(() => {
+    // Commands that waited for the panel belong to the chat that was on screen.
+    clearAgentBrowserEvents()
+    if (!isDesktop || !activeId || activeId.startsWith('pending:')) return
+    return showBrowserThread(
+      (capabilities) => transport.request('client.capabilities', capabilities),
+      activeId,
+    )
+  }, [transport, activeId])
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
   useEffect(() => {
@@ -2465,6 +2480,24 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       setWorkspacePanelHasMounted(true)
       setWorkspaceDesignPreviewRequest(preview)
     })
+    // The agent's browser runs in the shown chat's workspace panel, which loads on first use.
+    const offBrowserCommand = transport.on('browser.command', (command) => {
+      if (command.threadId !== activeIdRef.current) {
+        void transport
+          .request('browser.result', {
+            commandId: command.commandId,
+            ok: false,
+            error: 'TasteCode no longer shows this chat.',
+          })
+          .catch(() => undefined)
+        return
+      }
+      setWorkspacePanelHasMounted(true)
+      deliverAgentBrowserEvent({ kind: 'command', command })
+    })
+    const offBrowserCancel = transport.on('browser.commandCancelled', ({ commandId }) =>
+      deliverAgentBrowserEvent({ kind: 'cancel', commandId }),
+    )
     const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
     const offUsageChanged = transport.on('usage.changed', ({ provider, accountId }) => {
       usageController.changed(provider, accountId)
@@ -2539,6 +2572,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       offSettings()
       offLifecycle()
       offPreviewCapture()
+      offBrowserCommand()
+      offBrowserCancel()
       offSidebarSettings()
       offUsageChanged()
       offUsageLimits()
@@ -7652,6 +7687,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     onTranscribeVoice: transcribeVoice,
     onCancelVoice: cancelVoice,
     onProjectChange: selectProject,
+    onAddProject: addProject,
     onBranchChange: changeBranch,
     onProjectRequired: requireProject,
     onSetupProvider: sendAvailability === 'no-provider' ? openProviderPicker : openProviderSetup,

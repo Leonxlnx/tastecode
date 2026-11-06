@@ -227,7 +227,11 @@ describe('AppBackgroundLayer', () => {
       view.rerender(<AppBackgroundLayer background={{ ...background, blur }} images={images} />)
     }
     expect(load).toHaveBeenCalledTimes(1)
-    await waitFor(() => expect(createObjectURL).toHaveBeenLastCalledWith(second))
+    // The new URL is made while React computes the next state; the old one is let go only in
+    // the effect cleanup after that commit. Wait for the commit, not for the call, or a slow
+    // runner checks between the two (CI 42109425713, Windows).
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:tastecode/1'))
+    expect(createObjectURL).toHaveBeenLastCalledWith(second)
     expect(load).toHaveBeenCalledTimes(2)
     // The old picture stayed up until the new one was ready, then was let go.
     expect(layer.dataset['ready']).toBe('')

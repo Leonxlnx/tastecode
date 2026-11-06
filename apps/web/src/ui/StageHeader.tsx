@@ -254,6 +254,17 @@ function StageHeaderComponent(props: {
                 disabled={!props.projectPath}
                 onClick={() => closeThenRun(close, props.menuActions.toggleWorkspace)}
               />
+              {/* The project's, so a new chat offers it too, not only a saved one. */}
+              {isDesktop && props.projectPath ? (
+                <MenuItem
+                  title="Open in Explorer"
+                  icon={<FolderOpen size={14} aria-hidden />}
+                  onClick={() => {
+                    void revealPath(props.projectPath!)
+                    close()
+                  }}
+                />
+              ) : null}
 
               <div className="menu__rule" role="separator" />
 
@@ -333,16 +344,6 @@ function StageHeaderComponent(props: {
                       close()
                     }}
                   />
-                  {isDesktop && props.projectPath ? (
-                    <MenuItem
-                      title="Open in Explorer"
-                      icon={<FolderOpen size={14} aria-hidden />}
-                      onClick={() => {
-                        void revealPath(props.projectPath!)
-                        close()
-                      }}
-                    />
-                  ) : null}
                   {props.checkpointCount > 0 ? (
                     <MenuItem
                       title={`Checkpoint history (${props.checkpointCount})`}

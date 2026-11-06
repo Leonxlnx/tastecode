@@ -62,7 +62,7 @@ vi.mock('@harness/adapter-claude-code', async (importOriginal) => {
 })
 
 const root = mkdtempSync(path.join(os.tmpdir(), 'harness-orchestrator-accounts-'))
-afterAll(() => rmSync(root, { recursive: true, force: true }))
+afterAll(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
 
 const workHome = path.join(root, 'codex-work')
 mkdirSync(workHome)

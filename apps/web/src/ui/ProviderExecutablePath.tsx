@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Transport } from '../transport.js'
+import { EXECUTABLE_PATH_LABEL, executablePathSearchId } from './settings/provider-tuning-search.js'
 import '../styles/provider-executable-path.css'
 
 type ExecutablePaths = Readonly<Record<string, string>>
@@ -67,14 +68,19 @@ export function ProviderExecutablePath(props: {
   }
 
   return (
-    <details className="provider-executable" open={open}>
+    <details
+      className="provider-executable"
+      open={open}
+      data-settings-id={executablePathSearchId(props.source)}
+    >
       <summary
         onClick={(event) => {
           event.preventDefault()
           setOpen((current) => !current)
         }}
       >
-        Executable path{saved ? ' · Custom' : ''}
+        {EXECUTABLE_PATH_LABEL}
+        {saved ? ' · Custom' : ''}
       </summary>
       {open ? (
         <>
