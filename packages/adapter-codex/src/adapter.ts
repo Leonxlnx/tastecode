@@ -1628,7 +1628,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   async interrupt(threadId: string): Promise<void> {
     const turnId = this.#activeTurns.get(threadId)
-    if (!turnId) throw new Error('there is no running Codex turn to interrupt')
+    // A Stop pressed as the turn ends finds nothing left to stop; that is not the user's error.
+    if (!turnId) return
     await this.#call('turn/interrupt', { threadId, turnId })
   }
 
