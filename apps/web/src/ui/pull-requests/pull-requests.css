@@ -2745,6 +2745,23 @@
   }
 }
 
+/* On a stage too narrow for both panes, the list takes the whole width until a pull request is
+   selected; the empty detail pane would only squeeze it. */
+@container chat-stage (max-width: 750px) {
+  .pr-workspace.is-unselected {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-x: hidden;
+  }
+
+  .pr-workspace.is-unselected .pr-detail-pane {
+    display: none;
+  }
+
+  .pr-workspace.is-unselected .pr-list-pane {
+    border-right: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .is-spinning {
     animation: none;
