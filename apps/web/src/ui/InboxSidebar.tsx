@@ -163,6 +163,8 @@ function InboxSidebarComponent(props: {
   onSelectSession: (id: string) => void
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin?: (id: string) => void
+  /** Sets a chat's picture from a file the user picked, or removes it. */
+  onSetSessionImage?: ((id: string, file: File | undefined) => void) | undefined
   onArchiveSession: (id: string) => void
   onArchiveSessions?: ((ids: string[]) => void) | undefined
   pullRequestsActive?: boolean | undefined

@@ -96,6 +96,19 @@ export const QueuedTurnSchema = z.object({
 })
 export type QueuedTurn = z.infer<typeof QueuedTurnSchema>
 
+/** The longest stored chat picture, in characters of its data URL. */
+export const THREAD_IMAGE_MAX_LENGTH = 32 * 1024
+
+/**
+ * A chat's picture: a small PNG the client re-encoded from the user's file. It
+ * travels in `projects.list` with every chat, so the cap is what keeps that
+ * list cheap, and PNG only keeps user SVG markup from ever being rendered.
+ */
+export const ThreadImageSchema = z
+  .string()
+  .max(THREAD_IMAGE_MAX_LENGTH)
+  .regex(/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/u)
+
 /**
  * A chat's setup: what its next turn runs with. The server keeps it so every
  * client shows the same choice, and pushes `thread.settings` when one client
@@ -1900,6 +1913,8 @@ export const methods = {
               closedAt: z.number().optional(),
               /** The private checkout branch, when this session is isolated. */
               worktreeBranch: z.string().optional(),
+              /** The picture the user chose for this chat. Absent means none. */
+              image: ThreadImageSchema.optional(),
               /**
                * The model of the chat's shared setup (`thread.settings`), so a
                * list can show or filter by it. Absent until a client chose one.
@@ -2021,6 +2036,11 @@ export const methods = {
   },
   'thread.pin': {
     params: z.object({ threadId: z.string().min(1), pinned: z.boolean() }),
+    result: z.object({}),
+  },
+  /** Sets a chat's picture, or clears it with `null`. Every provider shares this. */
+  'thread.setImage': {
+    params: z.object({ threadId: z.string().min(1), image: ThreadImageSchema.nullable() }),
     result: z.object({}),
   },
   'thread.settle': {

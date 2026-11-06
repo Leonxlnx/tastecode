@@ -178,6 +178,8 @@ export type StoredSidebarThread = {
   accountId?: string | undefined
   title: string
   pinned: boolean
+  /** The picture the user chose for this chat, as a PNG data URL. */
+  image?: string | undefined
   createdAt: number
   closedAt?: number | undefined
   worktreeBranch?: string | undefined
@@ -397,6 +399,7 @@ CREATE TABLE IF NOT EXISTS threads (
   title        TEXT NOT NULL,
   provisional_title TEXT,
   pinned       INTEGER NOT NULL DEFAULT 0,
+  image        TEXT,
   created_at   INTEGER NOT NULL,
   closed_at    INTEGER,
   worktree_path   TEXT,
@@ -690,6 +693,7 @@ CREATE INDEX IF NOT EXISTS threads_by_project ON threads (project_path);
 const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }> = [
   { table: 'projects', column: 'pinned', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'pinned', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'threads', column: 'image', definition: 'TEXT' },
   { table: 'threads', column: 'worktree_path', definition: 'TEXT' },
   { table: 'threads', column: 'worktree_branch', definition: 'TEXT' },
   {
@@ -757,6 +761,7 @@ type ThreadRow = {
   provider_session_id: string | null
   title: string
   pinned: SqliteInteger
+  image: string | null
   created_at: SqliteInteger
   closed_at: SqliteInteger | null
   worktree_path: string | null
@@ -785,6 +790,7 @@ type SidebarThreadRow = Pick<
   | 'account_id'
   | 'title'
   | 'pinned'
+  | 'image'
   | 'created_at'
   | 'closed_at'
   | 'worktree_branch'
@@ -1346,7 +1352,7 @@ export class Store {
     )
     this.#listSidebarThreads = this.#db.prepare(
       `SELECT t.id, t.project_path, t.provider, t.agent, t.connection_id, t.account_id, t.title,
-              t.pinned, t.created_at, t.closed_at,
+              t.pinned, t.image, t.created_at, t.closed_at,
               t.worktree_branch, t.lifecycle_state, t.lifecycle_at, t.lifecycle_reason, t.wake_at,
               t.keep_active, t.woke_at, t.unread, t.continued_from, t.last_active_at,
               s.model AS settings_model
@@ -1910,6 +1916,14 @@ export class Store {
     )
     this.#updateSidebarThread(id, (thread) =>
       thread.pinned === pinned ? thread : { ...thread, pinned },
+    )
+  }
+
+  /** Sets or, with `undefined`, clears a chat's picture. */
+  setThreadImage(id: string, image: string | undefined): void {
+    this.#db.prepare(`UPDATE threads SET image = ? WHERE id = ?`).run(image ?? null, id)
+    this.#updateSidebarThread(id, (thread) =>
+      thread.image === image ? thread : { ...thread, image },
     )
   }
 
@@ -5641,6 +5655,7 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined
     ...(row.account_id === null ? {} : { accountId: row.account_id }),
     title: row.title,
     pinned: row.pinned === 1,
+    ...(row.image === null ? {} : { image: row.image }),
     createdAt: Number(row.created_at),
     ...(row.closed_at === null ? {} : { closedAt: Number(row.closed_at) }),
     ...(row.worktree_branch === null ? {} : { worktreeBranch: row.worktree_branch }),
