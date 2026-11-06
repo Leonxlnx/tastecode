@@ -76,6 +76,7 @@
   --composer-orb: #f2f2f2;
   --composer-on-orb: #101010;
   --composer-stop: #2b2b2b;
+  --composer-on-stop: #f2f2f2;
   --composer-control-bg: var(--control-hover);
   --composer-control-bg-hover: var(--menu-hover);
   --composer-control-border: var(--chrome-border);
@@ -386,6 +387,7 @@
   --composer-orb: #18181b;
   --composer-on-orb: #ffffff;
   --composer-stop: #1d1d1f;
+  --composer-on-stop: #ffffff;
   --composer-control-bg: var(--control-hover);
   --composer-control-bg-hover: var(--menu-hover);
   --composer-control-border: var(--chrome-border);
