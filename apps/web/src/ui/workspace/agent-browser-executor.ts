@@ -22,13 +22,6 @@ export type AgentBrowserGuest = {
   executeIsolated(code: string): Promise<unknown>
   /** The visible page as a PNG data URL. */
   capturePng(): Promise<string>
-  sendInputEvent(event: {
-    type: 'mouseDown' | 'mouseUp'
-    x: number
-    y: number
-    button: 'left'
-    clickCount: number
-  }): void
 }
 
 /** The tab's console, newest last, as the tab recorded it. */
@@ -98,13 +91,22 @@ export async function runAgentBrowserCommand(
         return { commandId: command.commandId, ok: true, ...page(), png }
       }
       case 'click': {
-        const point =
+        // A DOM click from TasteCode's own world: native input events do not reach a guest
+        // whose window is in the background, which is where an agent often works.
+        const target =
           command.selector === undefined
-            ? { x: command.x ?? 0, y: command.y ?? 0 }
-            : await elementCenter(guest, command.selector)
-        if (!point) return refuse(REFUSED_FIELD.missing)
-        for (const type of ['mouseDown', 'mouseUp'] as const)
-          guest.sendInputEvent({ type, x: point.x, y: point.y, button: 'left', clickCount: 1 })
+            ? `document.elementFromPoint(${command.x ?? 0}, ${command.y ?? 0})`
+            : `document.querySelector(${JSON.stringify(command.selector)})`
+        const outcome = await guest.executeIsolated(
+          `(() => {
+            const element = ${target}
+            if (!element) return 'missing'
+            element.scrollIntoView({ block: 'center', inline: 'center' })
+            element.click()
+            return 'ok'
+          })()`,
+        )
+        if (outcome !== 'ok') return refuse(REFUSED_FIELD.missing)
         return { commandId: command.commandId, ok: true, ...page() }
       }
       case 'type': {
@@ -161,22 +163,4 @@ export async function runAgentBrowserCommand(
     const message = error instanceof Error ? error.message : String(error)
     return refuse((message || 'The browser could not run that command.').slice(0, 2_000))
   }
-}
-
-async function elementCenter(
-  guest: AgentBrowserGuest,
-  selector: string,
-): Promise<{ x: number; y: number } | undefined> {
-  const point = await guest.executeJavaScript(
-    `(() => {
-      const element = document.querySelector(${JSON.stringify(selector)})
-      if (!element) return null
-      element.scrollIntoView({ block: 'center', inline: 'center' })
-      const box = element.getBoundingClientRect()
-      return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2) }
-    })()`,
-  )
-  if (typeof point !== 'object' || point === null) return undefined
-  const { x, y } = point as { x?: unknown; y?: unknown }
-  return typeof x === 'number' && typeof y === 'number' ? { x, y } : undefined
 }

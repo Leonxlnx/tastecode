@@ -71,7 +71,6 @@ type BrowserGuest = HTMLElement & {
   stop(): void
   executeJavaScript(code: string): Promise<unknown>
   capturePage(): Promise<{ toDataURL(): string }>
-  sendInputEvent(event: object): void
 }
 
 /** The agent's hold on this tab: the command it runs now, and the Stop the user can press. */
@@ -555,7 +554,6 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         executeJavaScript: (code) => view.executeJavaScript(code),
         executeIsolated: (code) => agentBrowserIsolated(id, code),
         capturePng: async () => (await view.capturePage()).toDataURL(),
-        sendInputEvent: (event) => view.sendInputEvent(event),
       },
       () => agentConsole.current,
       scalePng,

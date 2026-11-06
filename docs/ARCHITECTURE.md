@@ -236,11 +236,12 @@ Linux.
 `browser.command` to the window that shows the chat; the renderer checks every page against
 the address bar's rule again, and the session filter above stays the last line. While a tab is
 agent-driven, the main process drops its downloads. The field check that keeps agents out of
-password, sign-in code and payment fields, and the typing itself, run in a JavaScript world of
-TasteCode's own (`executeJavaScriptInIsolatedWorld`): it shares the page's DOM but not its
+password, sign-in code and payment fields, the typing itself and clicks run in a JavaScript world
+of TasteCode's own (`executeJavaScriptInIsolatedWorld`): it shares the page's DOM but not its
 globals, so a page cannot replace `querySelector`, value setters or labels to slip a field past
-it. Reading text, finding a click point, scrolling and the console run in the page's own world
-on purpose: what they return is the page's word, which can lie, and it reaches the agent only as
+it. Clicks are DOM clicks there, because native input events do not reach a guest whose window
+is in the background. Reading text, scrolling and the console run in the page's own world on
+purpose: what they return is the page's word, which can lie, and it reaches the agent only as
 quoted, bounded data. A page that lies there can mislead the agent, not get past the field check.
 
 ### Desktop update assets
