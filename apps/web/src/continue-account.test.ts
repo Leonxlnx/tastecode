@@ -102,10 +102,10 @@ describe('continue on another account', () => {
     expect(
       lastRequest([
         message('user', 'First'),
-        message('user', ' Second '),
+        { ...message('user', ' Second '), attachments: ['C:\\shots\\comment.png'] },
         message('assistant', 'Answer'),
       ]),
-    ).toBe('Second')
+    ).toEqual({ text: 'Second', attachments: ['C:\\shots\\comment.png'] })
     expect(lastRequest([message('assistant', 'Only an answer')])).toBeUndefined()
   })
 })

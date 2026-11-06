@@ -95,13 +95,18 @@ export function continuationNote(
   return `${note}. Its uncommitted changes could not be carried over; they are still in ${changes.keptIn}.`
 }
 
-/** The user's last request in a chat, offered again where the chat continues. */
-export function lastRequest(items: readonly Item[]): string | undefined {
+/**
+ * The user's last request in a chat, offered again where the chat continues. Its attachments
+ * come along, so a browser comment keeps its screenshot.
+ */
+export function lastRequest(
+  items: readonly Item[],
+): { text: string; attachments: string[] | undefined } | undefined {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]!
     if (item.type !== 'message' || item.role !== 'user') continue
     const text = item.text?.trim()
-    if (text) return text
+    if (text) return { text, attachments: item.attachments }
   }
   return undefined
 }
