@@ -7,6 +7,7 @@ vi.mock('./bridge.js', async (importOriginal) => ({
 }))
 
 const {
+  clearAgentBrowserEvents,
   clientCapabilities,
   deliverAgentBrowserEvent,
   receiveAgentBrowserEvents,
@@ -54,5 +55,26 @@ describe('agent browser capability', () => {
     const later: unknown[] = []
     receiveAgentBrowserEvents((event) => later.push(event))()
     expect(later).toHaveLength(8)
+  })
+
+  // A command the server already timed out must not run when a panel loads minutes later.
+  it('drops what waited longer than a command may take, and what waited for another chat', () => {
+    const command = {
+      threadId: 'chat-1',
+      commandId: ID,
+      action: 'click' as const,
+      selector: '#buy',
+    }
+    deliverAgentBrowserEvent({ kind: 'command', command }, 1_000)
+    deliverAgentBrowserEvent({ kind: 'cancel', commandId: ID }, 25_000)
+    const heard: unknown[] = []
+    receiveAgentBrowserEvents((event) => heard.push(event), 31_000)()
+    expect(heard).toEqual([{ kind: 'cancel', commandId: ID }])
+
+    deliverAgentBrowserEvent({ kind: 'command', command }, 40_000)
+    clearAgentBrowserEvents()
+    const afterSwitch: unknown[] = []
+    receiveAgentBrowserEvents((event) => afterSwitch.push(event), 41_000)()
+    expect(afterSwitch).toEqual([])
   })
 })

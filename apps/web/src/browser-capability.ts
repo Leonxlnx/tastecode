@@ -38,23 +38,38 @@ export function showBrowserThread(
 export type AgentBrowserEvent =
   { kind: 'command'; command: BrowserCommand } | { kind: 'cancel'; commandId: string }
 
-/** Events that arrived before the workspace panel had loaded; a few at most. */
-const waiting: AgentBrowserEvent[] = []
+/**
+ * How long a waiting event may still be handed on: the server's time for one command. Past it the
+ * server has already told the agent the command timed out, so running it would surprise everyone.
+ */
+export const AGENT_BROWSER_EVENT_TTL_MS = 30_000
+
+/** Events that arrived before the workspace panel had loaded; a few at most, with their time. */
+const waiting: Array<{ event: AgentBrowserEvent; at: number }> = []
 let receiver: ((event: AgentBrowserEvent) => void) | undefined
 
 /**
  * The app hears browser pushes even while the workspace panel has not loaded, and hands them to
- * the panel here: at once while it listens, or when it starts listening.
+ * the panel here: at once while it listens, or when it starts listening, if still fresh.
  */
-export function deliverAgentBrowserEvent(event: AgentBrowserEvent): void {
+export function deliverAgentBrowserEvent(event: AgentBrowserEvent, now = Date.now()): void {
   if (receiver) receiver(event)
-  else if (waiting.push(event) > 8) waiting.shift()
+  else if (waiting.push({ event, at: now }) > 8) waiting.shift()
 }
 
-export function receiveAgentBrowserEvents(next: (event: AgentBrowserEvent) => void): () => void {
+export function receiveAgentBrowserEvents(
+  next: (event: AgentBrowserEvent) => void,
+  now = Date.now(),
+): () => void {
   receiver = next
-  for (const event of waiting.splice(0)) next(event)
+  for (const { event, at } of waiting.splice(0))
+    if (now - at < AGENT_BROWSER_EVENT_TTL_MS) next(event)
   return () => {
     if (receiver === next) receiver = undefined
   }
+}
+
+/** Another chat is on screen: what waited for the last one is not this one's. */
+export function clearAgentBrowserEvents(): void {
+  waiting.length = 0
 }

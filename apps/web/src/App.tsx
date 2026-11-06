@@ -42,7 +42,11 @@ import {
   setDesktopTheme,
   syncNativeMenuShortcuts,
 } from './bridge.js'
-import { deliverAgentBrowserEvent, showBrowserThread } from './browser-capability.js'
+import {
+  clearAgentBrowserEvents,
+  deliverAgentBrowserEvent,
+  showBrowserThread,
+} from './browser-capability.js'
 import {
   createDefaultKeybindings,
   DEBUG_SETTINGS_SHORTCUT,
@@ -1960,6 +1964,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   activeIdRef.current = activeId
   // The server sends the agent's browser commands only for the chat this window shows.
   useEffect(() => {
+    // Commands that waited for the panel belong to the chat that was on screen.
+    clearAgentBrowserEvents()
     if (!isDesktop || !activeId || activeId.startsWith('pending:')) return
     return showBrowserThread(
       (capabilities) => transport.request('client.capabilities', capabilities),
