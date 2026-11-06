@@ -8,6 +8,7 @@ import { TestTransport } from '../test-transport.js'
 import { Composer, composerResourceTriggerAt } from './Composer.js'
 import {
   browserCommentChipText,
+  composerChips,
   composerChipText,
   composerWireText,
   hasComposerChips,
@@ -3320,6 +3321,32 @@ describe('browser annotation drafts', () => {
     expect(view.container.querySelector('.composer__attachments')).toBeNull()
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Message' }), { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith(browserCommentBlock(kept), [kept.image])
+  })
+
+  it('keeps comment chips when the provider or project changes', () => {
+    const onSend = vi.fn()
+    const first = comment()
+    const second = { ...comment(), image: '/images/456-pasted-image.png' }
+    rememberBrowserComment(first)
+    rememberBrowserComment(second)
+    const view = renderComposer(onSend, {
+      provider: 'codex',
+      projectPath: '/one',
+      draftRequest: {
+        text: `${browserCommentChipText(first)}\n${browserCommentChipText(second)}`,
+        attachments: [],
+        request: 1,
+      },
+    })
+    view.rerenderComposer({ provider: 'claude-code' })
+    view.rerenderComposer({ projectPath: '/two' })
+    const area = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
+    expect(composerChips(area.value)).toHaveLength(2)
+    fireEvent.keyDown(area, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith(
+      `${browserCommentBlock(first)}\n\n${browserCommentBlock(second)}`,
+      [first.image, second.image],
+    )
   })
 
   it('keeps the comment sendable when switching to a provider without images', () => {

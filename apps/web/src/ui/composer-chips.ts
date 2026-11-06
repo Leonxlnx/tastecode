@@ -314,13 +314,14 @@ export function composerChipTokens(text: string): ReadonlySet<string> {
 /**
  * The draft without its skill and MCP server chips, each with the space typed
  * after it. Skills and servers belong to the provider and project they were
- * picked for; command chips stay, as typed commands always did.
+ * picked for; command chips stay, as typed commands always did, and a browser
+ * comment stays because it belongs to a page, and any provider can act on it.
  */
 export function composerTextWithoutPicks(text: string): string {
   let kept = ''
   let position = 0
   for (const chip of composerChips(text)) {
-    if (chip.kind === 'command') continue
+    if (chip.kind === 'command' || chip.kind === 'browser') continue
     kept += text.slice(position, chip.start)
     position = text[chip.end] === ' ' ? chip.end + 1 : chip.end
   }
