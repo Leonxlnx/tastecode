@@ -2031,7 +2031,13 @@ textarea.workspace-review__field {
 }
 @supports (animation-timeline: scroll()) {
   .workspace-tabs {
-    mask-image: linear-gradient(to right, transparent, #000 var(--workspace-tabs-fade));
+    /* Clear for the first quarter, so a tab cut at the edge is hidden rather than half drawn
+       against the Back to chat button, then in over a tab's width. */
+    mask-image: linear-gradient(
+      to right,
+      transparent calc(var(--workspace-tabs-fade) / 4),
+      #000 calc(var(--workspace-tabs-fade) * 1.25)
+    );
     animation: workspace-tabs-fade linear both;
     animation-timeline: scroll(self inline);
     animation-range: 0 24px;
