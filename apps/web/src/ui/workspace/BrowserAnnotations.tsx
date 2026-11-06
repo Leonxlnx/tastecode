@@ -21,6 +21,7 @@ import {
   type BrowserAnnotation,
   type ProbeRequest,
 } from './browser-annotations.js'
+import { paintWhiteGround } from './white-ground.js'
 
 export type AnnotationGuest = HTMLElement & {
   executeJavaScript(code: string): Promise<unknown>
@@ -82,9 +83,19 @@ async function captureElement(
     const scale = Math.min(1, MAX_CROP_SIDE / Math.max(crop.width, crop.height))
     canvas.width = Math.max(1, Math.round(crop.width * scale))
     canvas.height = Math.max(1, Math.round(crop.height * scale))
-    canvas
-      .getContext('2d')!
-      .drawImage(bitmap, crop.x, crop.y, crop.width, crop.height, 0, 0, canvas.width, canvas.height)
+    const context = canvas.getContext('2d')!
+    paintWhiteGround(context, canvas.width, canvas.height)
+    context.drawImage(
+      bitmap,
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    )
     return canvas.toDataURL('image/png').split(',')[1]
   } finally {
     bitmap.close()
