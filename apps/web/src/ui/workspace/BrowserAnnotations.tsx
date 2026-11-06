@@ -45,10 +45,23 @@ function withinTime<T>(answer: Promise<T>, limit: number): Promise<T> {
   })
 }
 
+/**
+ * Page reads a guest has not answered yet, given up on or not. A hung page keeps them, and
+ * the tracking reads wait for them instead of piling up one more every time one times out.
+ */
+const unanswered = new WeakMap<AnnotationGuest, number>()
+
+function awaitingAnswer(view: AnnotationGuest): boolean {
+  return (unanswered.get(view) ?? 0) > 0
+}
+
 async function readPage(view: AnnotationGuest, request: ProbeRequest) {
-  return AnnotationProbe.parse(
-    await withinTime(view.executeJavaScript(annotationProbeScript(request)), PAGE_ANSWER_MS),
-  )
+  unanswered.set(view, (unanswered.get(view) ?? 0) + 1)
+  const answer = view.executeJavaScript(annotationProbeScript(request))
+  void answer
+    .catch(() => undefined)
+    .finally(() => unanswered.set(view, (unanswered.get(view) ?? 1) - 1))
+  return AnnotationProbe.parse(await withinTime(answer, PAGE_ANSWER_MS))
 }
 
 /** Pixels of the element as the guest paints it now. The overlay is never in the capture. */
@@ -126,6 +139,8 @@ export function BrowserAnnotations({
         readAgain = true
         return
       }
+      // A read the page never answered still runs in it; the next one waits until it ends.
+      if (awaitingAnswer(view)) return
       reading = true
       const scroll = pendingScroll.current
       pendingScroll.current = { dx: 0, dy: 0 }
