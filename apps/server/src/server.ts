@@ -110,6 +110,7 @@ const LIST_CHANGES: ReadonlySet<MethodName> = new Set<MethodName>([
   'thread.start',
   'thread.rename',
   'thread.pin',
+  'thread.setImage',
   'thread.delete',
   'thread.changeProvider',
   'projects.add',
@@ -1440,6 +1441,12 @@ export function startServer(
       case 'thread.pin': {
         const p = parseParams(method, params)
         store.setThreadPinned(p.threadId, p.pinned)
+        return {}
+      }
+
+      case 'thread.setImage': {
+        const p = parseParams(method, params)
+        store.setThreadImage(p.threadId, p.image ?? undefined)
         return {}
       }
 

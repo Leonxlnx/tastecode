@@ -237,6 +237,7 @@ function projectSession(
     session.lifecycle = thread.lifecycle
   }
   if (thread.worktreeBranch !== undefined) session.worktreeBranch = thread.worktreeBranch
+  if (thread.image !== undefined) session.image = thread.image
   if (thread.closedAt !== undefined) session.closedAt = thread.closedAt
   if (thread.model !== undefined) session.model = thread.model
   session.lastActiveAt = thread.lastActiveAt
