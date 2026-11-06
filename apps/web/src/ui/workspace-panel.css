@@ -1990,3 +1990,292 @@ textarea.workspace-review__field {
     transition: none;
   }
 }
+
+/* Annotation chrome belongs to the host; the untrusted guest stays untouched.
+   The marks sit on whatever the page paints, so their colour is fixed rather than
+   themed: it has to read on a white hero and on a black one alike. */
+.workspace-browser__guest-host {
+  --annotate: #2f7bf6;
+  --annotate-on: #fff;
+}
+
+.browser-annotations__overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  cursor: crosshair;
+  outline: none;
+}
+
+.browser-annotations__overlay[data-busy] {
+  cursor: progress;
+}
+
+.browser-annotations__highlight,
+.browser-annotations__outline {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  border-radius: var(--r-xs);
+}
+
+.browser-annotations__highlight {
+  background: color-mix(in srgb, var(--annotate) 14%, transparent);
+  box-shadow:
+    0 0 0 1.5px var(--annotate),
+    0 0 0 2.5px rgb(255 255 255 / 55%);
+  transition:
+    left var(--dur-hover) var(--ease-out),
+    top var(--dur-hover) var(--ease-out),
+    width var(--dur-hover) var(--ease-out),
+    height var(--dur-hover) var(--ease-out);
+}
+
+.browser-annotations__outline {
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--annotate) 70%, transparent);
+}
+
+.browser-annotations__tag {
+  position: absolute;
+  bottom: calc(100% + 5px);
+  left: -1.5px;
+  padding: 0 5px;
+  border-radius: var(--r-sm);
+  background: var(--annotate);
+  color: var(--annotate-on);
+  font: 500 11px/17px var(--font-mono);
+  white-space: nowrap;
+}
+
+.browser-annotations__highlight[data-inside] .browser-annotations__tag {
+  top: 4px;
+  bottom: auto;
+  left: 4px;
+}
+
+.browser-annotations__pin,
+.browser-annotations__number {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  box-sizing: border-box;
+  border-radius: var(--r-circle);
+  background: var(--annotate);
+  color: var(--annotate-on);
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.browser-annotations__pin {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 5px rgb(0 0 0 / 38%);
+  cursor: pointer;
+  font-size: 12px;
+  transform: translate(-50%, -50%);
+  transition: transform var(--dur-hover) var(--ease-out);
+  animation: browser-annotations-pin var(--dur-popup-in) var(--ease-overshoot);
+}
+
+.browser-annotations__pin:hover {
+  transform: translate(-50%, -50%) scale(1.12);
+}
+
+.browser-annotations__pin:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.browser-annotations__number {
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+}
+
+.browser-annotations__popover,
+.browser-annotations__bar {
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-popup);
+  box-shadow: var(--shadow-flyout);
+  color: var(--text);
+  font-size: var(--t-sm);
+}
+
+.browser-annotations__popover {
+  display: grid;
+  gap: 8px;
+  width: min(296px, calc(100% - 24px));
+  padding: 10px;
+  animation: browser-annotations-popover var(--dur-popup-in) var(--ease-popup);
+}
+
+.browser-annotations__target {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  color: var(--text-3);
+}
+
+.browser-annotations__target code {
+  flex: none;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.browser-annotations__target span:last-child:not(.browser-annotations__number) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-annotations__popover textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  max-height: 132px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  field-sizing: content;
+  font: inherit;
+  line-height: 1.45;
+  resize: none;
+}
+
+.browser-annotations__popover textarea::placeholder {
+  color: var(--text-3);
+}
+
+.browser-annotations__popover-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.browser-annotations__popover-actions .ghost:first-child:not(:last-of-type):has(+ .ghost) {
+  margin-right: auto;
+}
+
+.browser-annotations__popover-actions .btn {
+  margin-left: 4px;
+}
+
+.browser-annotations__bar {
+  bottom: 14px;
+  left: 50%;
+  overflow: hidden;
+  width: min(340px, calc(100% - 24px));
+  transform: translateX(-50%);
+  animation: browser-annotations-bar var(--dur-popup-in) var(--ease-popup);
+}
+
+.browser-annotations__list {
+  display: grid;
+  gap: 1px;
+  max-height: 172px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--menu-line);
+  list-style: none;
+}
+
+.browser-annotations__row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: var(--r-popup-item);
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.browser-annotations__row:hover {
+  background: var(--menu-hover);
+}
+
+.browser-annotations__comment {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-annotations__gone {
+  flex: none;
+  color: var(--text-3);
+}
+
+.browser-annotations__actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  min-height: 40px;
+  padding: 5px 6px 5px 12px;
+}
+
+.browser-annotations__actions p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-annotations__actions .btn {
+  margin-left: 4px;
+}
+
+@keyframes browser-annotations-pin {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.6);
+  }
+}
+
+@keyframes browser-annotations-popover {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes browser-annotations-bar {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-annotations__highlight,
+  .browser-annotations__pin,
+  .browser-annotations__popover,
+  .browser-annotations__bar {
+    transition: none;
+    animation: none;
+  }
+}

@@ -286,7 +286,10 @@ export function PullRequestsView(props: {
   }
 
   return (
-    <section className="pr-workspace" aria-label="Pull requests">
+    <section
+      className={selected ? 'pr-workspace' : 'pr-workspace is-unselected'}
+      aria-label="Pull requests"
+    >
       <aside className="pr-list-pane">
         <header className="pr-list-head">
           <div className="pr-list-title-row">

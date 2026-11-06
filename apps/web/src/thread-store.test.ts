@@ -1250,8 +1250,10 @@ describe('last sent prompt', () => {
         item({ id: 'a2', status: 'started', text: 'Working' }),
       ],
     }
-    expect(lastSentPrompt(state)).toBe('Now add a test')
+    expect(lastSentPrompt(state)?.text).toBe('Now add a test')
     expect(lastSentPrompt(emptyThread)).toBeUndefined()
-    expect(lastSentPrompt(appendUserMessage(emptyThread, 'Just sent'))).toBe('Just sent')
+    expect(lastSentPrompt(appendUserMessage(emptyThread, 'Just sent'))?.text).toBe('Just sent')
+    const withImage = appendUserMessage(emptyThread, 'See this', 'message-1', 1, ['/images/a.png'])
+    expect(lastSentPrompt(withImage)?.attachments).toEqual(['/images/a.png'])
   })
 })
