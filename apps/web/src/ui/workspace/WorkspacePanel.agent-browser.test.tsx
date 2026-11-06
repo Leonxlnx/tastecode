@@ -2,6 +2,7 @@
 import type { BrowserCommand } from '@harness/contracts'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
+import { deliverAgentBrowserEvent } from '../../browser-capability.js'
 import { TestTransport } from '../../test-transport.js'
 import type { AgentBrowserLink } from './WorkspaceBrowser.js'
 
@@ -61,17 +62,10 @@ function panel(threadId = 'chat-1') {
   return { transport, props, view, answers, announced }
 }
 
-it('tells the server which chat this window shows, and again when that changes', () => {
-  const { props, view, announced } = panel('chat-1')
-  view.rerender(<WorkspacePanel {...props} threadId="chat-2" />)
-  view.unmount()
-  expect(announced()).toEqual([['chat-1'], [], ['chat-2'], []])
-})
-
 it('runs a command for its chat in the agent tab and answers it', async () => {
   const { transport, props, answers } = panel()
   const asked = command()
-  act(() => transport.emit('browser.command', asked))
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: asked }))
   expect(props.onOpen).toHaveBeenCalledOnce()
   await screen.findByTestId('browser-surface')
   expect(agent.link).toMatchObject({ command: asked, active: true })
@@ -81,34 +75,34 @@ it('runs a command for its chat in the agent tab and answers it', async () => {
   expect(agent.link).toMatchObject({ command: undefined, active: true })
 
   // Another chat's command is not this window's to answer.
-  act(() => transport.emit('browser.command', command('chat-9')))
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: command('chat-9') }))
   expect(answers()).toHaveLength(1)
 })
 
 it('refuses a second command while one runs, and drops a cancelled one', async () => {
   const { transport, answers } = panel()
   const first = command()
-  act(() => transport.emit('browser.command', first))
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: first }))
   await screen.findByTestId('browser-surface')
   const second = command()
-  act(() => transport.emit('browser.command', second))
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: second }))
   expect(answers()).toEqual([
     { commandId: second.commandId, ok: false, error: 'Another browser command is still running.' },
   ])
-  act(() => transport.emit('browser.commandCancelled', { commandId: first.commandId }))
+  act(() => deliverAgentBrowserEvent({ kind: 'cancel', commandId: first.commandId }))
   expect(agent.link?.command).toBeUndefined()
 })
 
 it('stops the agent for the rest of its turn when the user presses Stop', async () => {
   const { transport, answers } = panel()
   const running = command()
-  act(() => transport.emit('browser.command', running))
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: running }))
   await screen.findByTestId('browser-surface')
   act(() => agent.link!.onStop())
   expect(agent.link).toMatchObject({ command: undefined, active: false })
 
   const later = command()
-  act(() => transport.emit('browser.command', later))
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: later }))
   act(() =>
     transport.emit('thread.event', {
       threadId: 'chat-1',
@@ -117,7 +111,7 @@ it('stops the agent for the rest of its turn when the user presses Stop', async 
     }),
   )
   const allowed = command()
-  act(() => transport.emit('browser.command', allowed))
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: allowed }))
   expect(answers()).toEqual([
     { commandId: running.commandId, ok: false, error: STOPPED },
     { commandId: later.commandId, ok: false, error: STOPPED },

@@ -26,7 +26,7 @@ import {
 } from '@tabler/icons-react'
 import type { BrowserCommand, BrowserResult, PullRequestTarget } from '@harness/contracts'
 import { isDesktop } from '../../bridge.js'
-import { showBrowserThread } from '../../browser-capability.js'
+import { receiveAgentBrowserEvents } from '../../browser-capability.js'
 import { performAppHaptic, prepareAppHaptics } from '../../haptics.js'
 import { cancelInstall, installState, subscribeInstalls } from '../../provider-install.js'
 import type { ThreadFrameStore } from '../../thread-frame-store.js'
@@ -416,20 +416,19 @@ function WorkspacePanelComponent(props: {
     agentLinger.current = setTimeout(() => setAgentRecent(false), AGENT_BAR_LINGER_MS)
   }, [])
   useEffect(() => {
-    if (!isDesktop || !props.threadId) return
-    return showBrowserThread(
-      (capabilities) => props.transport.request('client.capabilities', capabilities),
-      props.threadId,
-    )
-  }, [props.transport, props.threadId])
-  useEffect(() => {
     setAgentStopped(false)
     setAgentRecent(false)
     setAgentCommand(undefined)
   }, [props.threadId])
   useEffect(() => {
     if (!isDesktop) return
-    const offCommand = props.transport.on('browser.command', (command) => {
+    // The app hears the pushes, also before this panel loaded, and hands them on here.
+    return receiveAgentBrowserEvents((event) => {
+      if (event.kind === 'cancel') {
+        if (agentCommandRef.current?.commandId === event.commandId) endAgentCommand()
+        return
+      }
+      const { command } = event
       if (command.threadId !== props.threadId) return
       const refuse = (error: string) =>
         answerAgent({ commandId: command.commandId, ok: false, error })
@@ -441,14 +440,7 @@ function WorkspacePanelComponent(props: {
       showTool({ id: AGENT_BROWSER_TAB_ID, kind: 'browser' })
       props.onOpen()
     })
-    const offCancel = props.transport.on('browser.commandCancelled', ({ commandId }) => {
-      if (agentCommandRef.current?.commandId === commandId) endAgentCommand()
-    })
-    return () => {
-      offCommand()
-      offCancel()
-    }
-  }, [props.transport, props.threadId, props.onOpen, showTool, answerAgent, endAgentCommand])
+  }, [props.threadId, props.onOpen, showTool, answerAgent, endAgentCommand])
   // Only while stopped does the panel read the chat's events, to allow the next turn again.
   useEffect(() => {
     if (!agentStopped) return
