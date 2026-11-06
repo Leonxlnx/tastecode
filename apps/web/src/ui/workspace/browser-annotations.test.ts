@@ -8,6 +8,8 @@ import {
   annotationPopoverPlace,
   annotationProbeScript,
   annotationSelector,
+  annotationComment,
+  annotationCommentReady,
   annotationText,
 } from './browser-annotations.js'
 
@@ -165,5 +167,29 @@ describe('annotation crop pixels', () => {
         { width: 800, height: 1600 },
       ),
     ).toBeUndefined()
+  })
+})
+
+describe("the user's comment", () => {
+  it('keeps lines and the characters that join emoji and scripts', () => {
+    const family = '\u{1F469}\u200D\u{1F4BB}'
+    const persian = '\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645'
+    const hindi = '\u0915\u094D\u200D\u0937'
+    expect(annotationComment(`  ${family} first\r\n${persian}\u2028${hindi}\u0007 `)).toBe(
+      `${family} first\n${persian}\n${hindi}`,
+    )
+  })
+
+  it('stops at the length limit without splitting a character', () => {
+    const limited = annotationComment(`${'a'.repeat(1999)}\u{1F600}`)
+    expect(limited).toBe('a'.repeat(1999))
+  })
+
+  it('does not count what cannot be seen as a comment', () => {
+    for (const empty of ['', '  \n ', '\u200B', '\u200D \u200C', '\uFEFF\u2060']) {
+      expect(annotationCommentReady(empty)).toBe(false)
+    }
+    expect(annotationCommentReady('\u200Bfix')).toBe(true)
+    expect(annotationCommentReady('\u{1F44D}')).toBe(true)
   })
 })

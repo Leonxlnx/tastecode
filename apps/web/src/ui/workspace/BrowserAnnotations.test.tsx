@@ -135,6 +135,25 @@ it('keeps a line break on Shift+Enter and refuses an empty comment', async () =>
   expect(screen.getByLabelText('Comment 1')).toBeTruthy()
 })
 
+it('refuses a comment of invisible characters and keeps the lines of a real one', async () => {
+  const { onDraft } = setup()
+  clickPage()
+  const input = await screen.findByLabelText('Comment 1')
+  fireEvent.change(input, { target: { value: '\u200B' } })
+  expect(screen.getByRole('button', { name: 'Comment' })).toHaveProperty('disabled', true)
+  fireEvent.keyDown(input, { key: 'Enter' })
+  expect(screen.getByLabelText('Comment 1')).toBeTruthy()
+
+  fireEvent.change(input, { target: { value: 'First line\nSecond \u{1F469}\u200D\u{1F4BB}' } })
+  fireEvent.keyDown(input, { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('button', { name: 'Add to chat' }))
+  await waitFor(() => expect(onDraft).toHaveBeenCalledOnce())
+  const chip = composerChips(onDraft.mock.calls[0]![0].text)[0]!
+  expect(browserComment(chip.commentId!)?.comment).toBe(
+    'First line\nSecond \u{1F469}\u200D\u{1F4BB}',
+  )
+})
+
 it('reopens a pinned element instead of pinning it twice', async () => {
   setup()
   await pin()

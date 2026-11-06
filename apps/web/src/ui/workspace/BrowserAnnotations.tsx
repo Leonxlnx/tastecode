@@ -9,6 +9,8 @@ import {
 } from '../browser-comments.js'
 import {
   AnnotationProbe,
+  annotationComment,
+  annotationCommentReady,
   annotationCrop,
   annotationPopoverPlace,
   annotationProbeScript,
@@ -260,8 +262,8 @@ export function BrowserAnnotations({
     }
   }
   const saveEditing = () => {
-    if (!editing?.comment.trim()) return
-    const saved = { ...editing, comment: annotationText(editing.comment, 2000) }
+    if (!editing || !annotationCommentReady(editing.comment)) return
+    const saved = { ...editing, comment: annotationComment(editing.comment) }
     setPins((current) =>
       [...current.filter((pin) => pin.number !== saved.number), saved].sort(
         (a, b) => a.number - b.number,
@@ -347,7 +349,8 @@ export function BrowserAnnotations({
         onClick={(event) => {
           event.stopPropagation()
           if (!editing) void select(event.clientX, event.clientY)
-          else if (editing.comment.trim()) popover.current?.querySelector('textarea')?.focus()
+          else if (annotationCommentReady(editing.comment))
+            popover.current?.querySelector('textarea')?.focus()
           else closeEditor()
         }}
         onKeyDown={(event) => {
@@ -458,7 +461,7 @@ export function BrowserAnnotations({
             <button type="button" className="ghost" onClick={closeEditor}>
               Cancel
             </button>
-            <button className="btn" disabled={!editing.comment.trim()}>
+            <button className="btn" disabled={!annotationCommentReady(editing.comment)}>
               {editingExisting ? 'Save' : 'Comment'}
             </button>
           </div>

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { sliceCodeUnits } from '../../slice-code-units.js'
 
 const coordinate = z.number().finite().min(-10_000_000).max(10_000_000)
 const Box = z.object({
@@ -40,6 +41,23 @@ export function annotationText(value: string, limit: number): string {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, limit)
+}
+
+/**
+ * The user's own words, not page content: lines stay, and so do the format characters
+ * that join emoji and scripts such as Persian and Hindi. Only control characters go.
+ */
+export function annotationComment(value: string): string {
+  const clean = value
+    .replace(/\r\n?|[\u2028\u2029]/g, '\n')
+    .replace(/[^\P{Cc}\n\t]/gu, '')
+    .trim()
+  return sliceCodeUnits(clean, 2000).trimEnd()
+}
+
+/** Zero-width characters alone would save as a comment nobody can see or read. */
+export function annotationCommentReady(value: string): boolean {
+  return /[^\s\p{Cc}\p{Cf}]/u.test(value)
 }
 
 /** Pixel bounds from the actual capture, not a guessed devicePixelRatio or host scale. */

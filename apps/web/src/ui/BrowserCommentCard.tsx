@@ -58,7 +58,7 @@ export function BrowserCommentCard(props: {
       ) : null}
       <div className="browser-comment-card__body">
         <p className="browser-comment-card__title">{props.comment.title || props.comment.url}</p>
-        <p>{props.comment.comment}</p>
+        <p className="browser-comment-card__comment">{props.comment.comment}</p>
         <p className="browser-comment-card__count">1 element</p>
       </div>
     </div>,

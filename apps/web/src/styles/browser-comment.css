@@ -101,6 +101,10 @@
   white-space: nowrap;
 }
 
+.browser-comment-card__comment {
+  white-space: pre-wrap;
+}
+
 .browser-comment-card__count {
   color: var(--text-3);
 }

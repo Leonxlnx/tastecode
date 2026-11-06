@@ -145,3 +145,15 @@ it('reads a block whatever its closing sentence says, so wording can change', ()
     expect(parts[0]).toMatchObject({ type: 'comment', comment: { comment: 'Keep me' } })
   }
 })
+
+it('carries a comment through the block with its lines and joiners intact', () => {
+  const words = 'First line\nSecond \u{1F469}\u200D\u{1F4BB}\u2028third'
+  const [part] = browserCommentSegments(browserCommentBlock({ ...sample(), comment: words }))
+  expect(part).toMatchObject({ type: 'comment', comment: { comment: words } })
+})
+
+it('labels a chip on one line and keeps the joiners that shape its words', () => {
+  expect(browserChipLabel('One\ntwo')).toBe('One two')
+  expect(browserChipLabel('\u200Bmi\u200Cxed\u2060')).toBe('mi\u200Cxed')
+  expect(browserChipLabel(`${'x'.repeat(34)}\u{1F600}\u{1F600}`)).toBe(`${'x'.repeat(34)}…`)
+})

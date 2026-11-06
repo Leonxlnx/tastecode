@@ -1,3 +1,5 @@
+import { sliceCodeUnits } from '../slice-code-units.js'
+
 /**
  * Comments pinned on a page in the browser. In the composer and the transcript
  * each one is a chip, with its details on hover. The draft only holds the chip;
@@ -103,14 +105,15 @@ export function browserCommentElementLabel(selector: string): string {
 
 export function browserChipLabel(comment: string): string {
   comment = comment
-    .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
+    // Format characters could end the chip, except the ones that shape the words themselves.
+    .replace(/(?![‌‍\u{E0020}-\u{E007F}])[\p{Cc}\p{Cf}]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
   if (comment.length <= CHIP_LABEL_LIMIT) return comment
   // A word cut in half reads as a typo, unless one long word is all there is.
   const space = comment.lastIndexOf(' ', CHIP_LABEL_LIMIT - 1)
   const end = space > CHIP_LABEL_LIMIT / 2 ? space : CHIP_LABEL_LIMIT - 1
-  return `${comment.slice(0, end).trimEnd()}…`
+  return `${sliceCodeUnits(comment, end).trimEnd()}…`
 }
 
 /**
