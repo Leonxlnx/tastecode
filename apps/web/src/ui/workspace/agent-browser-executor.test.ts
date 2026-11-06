@@ -7,7 +7,6 @@ const ID = '00000000-0000-4000-8000-000000000001'
 
 /** A guest whose page is this test document: scripts run against it as they would in the tab. */
 function guest(overrides: Partial<AgentBrowserGuest> = {}) {
-  const events: Array<{ type: string; x: number; y: number }> = []
   const page: AgentBrowserGuest = {
     loadURL: vi.fn(async () => undefined),
     getURL: () => 'http://127.0.0.1:5173/checkout',
@@ -17,10 +16,9 @@ function guest(overrides: Partial<AgentBrowserGuest> = {}) {
     // eslint-disable-next-line no-eval -- the test document stands in for the isolated world too
     executeIsolated: async (code) => (0, eval)(code),
     capturePng: async () => 'data:image/png;base64,AAAA',
-    sendInputEvent: (event) => events.push(event),
     ...overrides,
   }
-  return { page, events }
+  return { page }
 }
 
 const run = (command: object, page: AgentBrowserGuest, scale = async () => 'iVBORw0K') =>
@@ -98,11 +96,16 @@ describe('agent browser commands', () => {
 
   it('clicks an element by selector or a point, and refuses a missing element', async () => {
     document.body.innerHTML = '<button id="buy">Buy</button>'
-    const { page, events } = guest()
+    const button = document.querySelector('#buy')!
+    const clicked = vi.fn()
+    button.addEventListener('click', clicked)
+    // happy-dom has no layout; the page's own hit test stands in for the point.
+    const atPoint = vi.spyOn(document, 'elementFromPoint').mockReturnValue(button)
+    const { page } = guest()
     expect(await run({ action: 'click', selector: '#buy' }, page)).toMatchObject({ ok: true })
     expect(await run({ action: 'click', x: 40, y: 60 }, page)).toMatchObject({ ok: true })
-    expect(events.map(({ type }) => type)).toEqual(['mouseDown', 'mouseUp', 'mouseDown', 'mouseUp'])
-    expect(events.at(-1)).toMatchObject({ x: 40, y: 60 })
+    expect(atPoint).toHaveBeenCalledWith(40, 60)
+    expect(clicked).toHaveBeenCalledTimes(2)
     expect(await run({ action: 'click', selector: '#gone' }, page)).toMatchObject({
       ok: false,
       error: 'No element matches that selector.',

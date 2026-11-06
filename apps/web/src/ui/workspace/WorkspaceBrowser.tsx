@@ -12,13 +12,17 @@ import {
   IconDeviceMobile as Smartphone,
   IconDeviceTablet as Tablet,
 } from '@tabler/icons-react'
+import type { BrowserCommand, BrowserConsoleEntry, BrowserResult } from '@harness/contracts'
 import {
+  agentBrowserIsolated,
   isDesktop,
   isMacOS,
   onBrowserShortcut,
   openExternalUrl,
+  setAgentBrowserGuest,
   type BrowserShortcutAction,
 } from '../../bridge.js'
+import { runAgentBrowserCommand } from './agent-browser-executor.js'
 import { errorMessage } from '../../boundary.js'
 import { IconMorph } from '../IconMorph.js'
 import { Skeleton, SkeletonLines, SkeletonStatus } from '../Skeleton.js'
@@ -65,6 +69,39 @@ type BrowserGuest = HTMLElement & {
   loadURL(url: string): Promise<void>
   reload(): void
   stop(): void
+  executeJavaScript(code: string): Promise<unknown>
+  capturePage(): Promise<{ toDataURL(): string }>
+}
+
+/** The agent's hold on this tab: the command it runs now, and the Stop the user can press. */
+export type AgentBrowserLink = {
+  command: BrowserCommand | undefined
+  /** Shows "Agent is using the browser" with Stop. */
+  active: boolean
+  onResult: (result: BrowserResult) => void
+  onStop: () => void
+}
+
+/** The console an agent reads: the newest entries, as the page logged them. */
+const AGENT_CONSOLE_KEPT = 200
+const CONSOLE_LEVELS = ['debug', 'log', 'warn', 'error'] as const
+const ConsoleMessageEventSchema = z.object({
+  level: z.union([z.number(), z.string()]).optional(),
+  message: z.string().optional(),
+})
+
+/** Scales a PNG data URL down to a width and returns its base64. */
+async function scalePng(dataUrl: string, width: number): Promise<string> {
+  const image = new Image()
+  image.src = dataUrl
+  await image.decode()
+  if (image.naturalWidth <= width) return dataUrl.slice(dataUrl.indexOf(',') + 1)
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = Math.round((image.naturalHeight * width) / image.naturalWidth)
+  canvas.getContext('2d')?.drawImage(image, 0, 0, canvas.width, canvas.height)
+  const scaled = canvas.toDataURL('image/png')
+  return scaled.slice(scaled.indexOf(',') + 1)
 }
 
 declare global {
@@ -108,6 +145,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   tabId,
   onPageInfo,
   onClose,
+  agent,
 }: {
   active: boolean
   navigation?: BrowserNavigationRequest | undefined
@@ -119,7 +157,12 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   onPageInfo?: ((tabId: string, page: BrowserPageInfo) => void) | undefined
   /** Closes this tab, for Ctrl+W pressed in the toolbar or inside the page. */
   onClose?: ((tabId: string) => void) | undefined
+  /** Set on the chat's agent tab only: the agent's commands run here. */
+  agent?: AgentBrowserLink | undefined
 }) {
+  const agentConsole = useRef<BrowserConsoleEntry[]>([])
+  const agentLink = useRef(agent)
+  agentLink.current = agent
   const canvas = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
   const guest = useRef<BrowserGuest | null>(null)
@@ -273,6 +316,26 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     view.addEventListener('did-navigate-in-page', onNavigateInPage)
     view.addEventListener('page-title-updated', onTitle)
     view.addEventListener('did-fail-load', onFail)
+    // Only the agent's tab keeps a console, and only the newest entries.
+    const onConsole = (event: Event) => {
+      if (!agentLink.current) return
+      const message = ConsoleMessageEventSchema.safeParse(event)
+      if (!message.success) return
+      const raw = message.data.level
+      const level =
+        typeof raw === 'number'
+          ? (CONSOLE_LEVELS[raw] ?? 'log')
+          : raw === 'warning'
+            ? 'warn'
+            : raw === 'error' || raw === 'debug' || raw === 'info'
+              ? raw
+              : 'log'
+      const entries = agentConsole.current
+      entries.push({ level, text: (message.data.message ?? '').slice(0, 2_000), at: Date.now() })
+      if (entries.length > AGENT_CONSOLE_KEPT)
+        entries.splice(0, entries.length - AGENT_CONSOLE_KEPT)
+    }
+    view.addEventListener('console-message', onConsole)
     view.addEventListener('render-process-gone', onRendererGone)
     element.append(view)
     guest.current = view
@@ -293,6 +356,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       view.removeEventListener('did-navigate-in-page', onNavigateInPage)
       view.removeEventListener('page-title-updated', onTitle)
       view.removeEventListener('did-fail-load', onFail)
+      view.removeEventListener('console-message', onConsole)
       view.removeEventListener('render-process-gone', onRendererGone)
       view.remove()
     }
@@ -472,6 +536,55 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   // Later loads keep the current page visible under a thin progress line.
   const loadingLaterPage = state.loading && hasRenderedPage && !failure
 
+  // The agent's command runs once on the ready guest; a later page load does not repeat it.
+  const agentCommand = agent?.command
+  const handledAgentCommand = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    const view = readyGuest.current
+    if (!agentCommand || !view || view !== guest.current) return
+    if (handledAgentCommand.current === agentCommand.commandId) return
+    handledAgentCommand.current = agentCommand.commandId
+    const id = view.getWebContentsId()
+    void runAgentBrowserCommand(
+      agentCommand,
+      {
+        loadURL: (url) => view.loadURL(url),
+        getURL: () => view.getURL(),
+        getTitle: () => view.getTitle(),
+        executeJavaScript: (code) => view.executeJavaScript(code),
+        executeIsolated: (code) => agentBrowserIsolated(id, code),
+        capturePng: async () => (await view.capturePage()).toDataURL(),
+      },
+      () => agentConsole.current,
+      scalePng,
+    ).then((result) => {
+      // A Stop or a cancel may have ended the command meanwhile; its answer then goes nowhere.
+      if (agentLink.current?.command?.commandId === result.commandId)
+        agentLink.current.onResult(result)
+    })
+  }, [agentCommand, guestReadyRevision])
+
+  // The desktop app drops downloads from the tab while it is the agent's.
+  const agentTab = agent !== undefined
+  const drivenGuest = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    const view = readyGuest.current
+    if (!agentTab || !view) return
+    const id = view.getWebContentsId()
+    if (drivenGuest.current === id) return
+    if (drivenGuest.current !== undefined)
+      void setAgentBrowserGuest(drivenGuest.current, false).catch(() => undefined)
+    drivenGuest.current = id
+    void setAgentBrowserGuest(id, true).catch(() => undefined)
+  }, [agentTab, guestReadyRevision])
+  useEffect(
+    () => () => {
+      if (drivenGuest.current !== undefined)
+        void setAgentBrowserGuest(drivenGuest.current, false).catch(() => undefined)
+    },
+    [],
+  )
+
   return (
     <div
       className="workspace-browser"
@@ -491,6 +604,14 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         if (!event.repeat) runShortcut(shortcut)
       }}
     >
+      {agent?.active ? (
+        <div className="workspace-browser__agent" role="status">
+          <span>Agent is using the browser</span>
+          <button type="button" onClick={agent.onStop}>
+            Stop
+          </button>
+        </div>
+      ) : null}
       <div className="workspace-browser__toolbar">
         <button
           type="button"
