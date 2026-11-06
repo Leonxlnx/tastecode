@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ProviderId } from '@harness/contracts'
 import type { Transport } from './transport.js'
 import { UsageResetController, usageResetAt } from './usage-reset.js'
 
@@ -17,7 +18,7 @@ describe('resume at usage reset', () => {
     vi.useRealTimers()
   })
 
-  function setup() {
+  function setup(provider: ProviderId = 'codex') {
     let saved = '[]'
     const storage = {
       read: () => saved,
@@ -25,11 +26,12 @@ describe('resume at usage reset', () => {
         saved = value
       },
     }
-    const listeners = new Map<string, (data: any) => void>()
+    const listeners = new Map<string, (data: unknown) => void>()
     const report = vi.fn()
-    const request = vi.fn(async (method: string) => {
+    const request = vi.fn(async (method: string): Promise<unknown> => {
       if (method === 'thread.settings') return { model: 'chosen-model' }
-      if (method === 'projects.list') return { projects: [{ sessions: [session] }] }
+      if (method === 'projects.list')
+        return { projects: [{ sessions: [{ ...session, provider }] }] }
       if (method === 'usage.summary') return { limits: [] }
       if (method === 'thread.history')
         return {
@@ -48,7 +50,7 @@ describe('resume at usage reset', () => {
       state: 'open',
       request,
       onState: () => () => {},
-      on: (channel: string, listener: (data: any) => void) => {
+      on: (channel: string, listener: (data: unknown) => void) => {
         listeners.set(channel, listener)
         return () => listeners.delete(channel)
       },
@@ -157,6 +159,59 @@ describe('resume at usage reset', () => {
       expect(request.mock.calls.some(([method]) => method === 'thread.sendTurn')).toBe(false)
     },
   )
+
+  it('uses the same shared flow for a direct API provider', async () => {
+    const { controller, request } = setup('api')
+    await controller.schedule({ ...session, provider: 'api' }, 'ask', NOW + 1000)
+    vi.setSystemTime(NOW + 1000)
+    await controller.check()
+    expect(request).toHaveBeenCalledWith(
+      'usage.summary',
+      expect.objectContaining({ provider: 'api' }),
+    )
+    expect(request.mock.calls.filter(([method]) => method === 'thread.sendTurn')).toHaveLength(1)
+  })
+
+  it('postpones continuation when refreshed usage reports a later exhausted window', async () => {
+    const { controller, request, listeners } = setup()
+    await controller.schedule(session, 'ask', NOW + 1000)
+    const original = request.getMockImplementation()!
+    request.mockImplementation(async (method) =>
+      method === 'usage.summary' ? { limits: [window(NOW + 5000)] } : original(method),
+    )
+    vi.setSystemTime(NOW + 1000)
+    await controller.check()
+    expect(controller.snapshot()[0]?.resetsAt).toBe(NOW + 5000)
+    listeners.get('thread.lifecycle')!({
+      threadId: 'limited',
+      lifecycle: { state: 'snoozed', wakeAt: NOW + 5000 },
+    })
+    expect(controller.snapshot()).toHaveLength(1)
+    expect(request.mock.calls.some(([method]) => method === 'thread.sendTurn')).toBe(false)
+  })
+
+  it('does not duplicate a continuation claimed by another window', async () => {
+    const { controller, transport, storage, report, request } = setup()
+    await controller.schedule(session, 'ask', NOW + 1000)
+    const other = new UsageResetController(transport, storage, report)
+    stops.push(other.start())
+    vi.setSystemTime(NOW + 1000)
+    await controller.check()
+    await other.check()
+    expect(request.mock.calls.filter(([method]) => method === 'thread.sendTurn')).toHaveLength(1)
+  })
+
+  it('undoes the snooze if the schedule cannot be saved', async () => {
+    const { controller, storage, request } = setup()
+    vi.spyOn(storage, 'write').mockImplementation(() => {
+      throw new Error('Storage unavailable')
+    })
+    await expect(controller.schedule(session, 'ask', NOW + 1000)).rejects.toThrow(
+      'Storage unavailable',
+    )
+    expect(request).toHaveBeenCalledWith('thread.unsnooze', { threadId: 'limited' })
+    expect(controller.snapshot()).toEqual([])
+  })
 
   it('waits while disconnected, and consumes a rejected send without retrying it', async () => {
     const { controller, request, transport, report } = setup()

@@ -71,7 +71,14 @@ export class UsageResetController {
       resetsAt,
       model: settings.model,
     })
-    this.#save([...this.#entries.filter((each) => each.threadId !== entry.threadId), entry])
+    try {
+      this.#save([...this.#entries.filter((each) => each.threadId !== entry.threadId), entry])
+    } catch (error) {
+      await this.transport
+        .request('thread.unsnooze', { threadId: session.id })
+        .catch(() => undefined)
+      throw error
+    }
   }
 
   cancel = (threadId: string): void => {
@@ -86,7 +93,11 @@ export class UsageResetController {
       if (state === 'open') void this.check()
     })
     const offEvent = this.transport.on('thread.event', ({ threadId, event }) => {
-      if (event.type === 'turn.started') this.cancel(threadId)
+      if (
+        event.type === 'turn.started' ||
+        (event.type === 'item.completed' && event.item.notice?.kind === 'provider')
+      )
+        this.cancel(threadId)
     })
     const offSettings = this.transport.on('thread.settings', ({ threadId, settings }) => {
       const entry = this.#entries.find((each) => each.threadId === threadId)
@@ -120,7 +131,7 @@ export class UsageResetController {
     this.#checking = true
     try {
       const run = async () => {
-        for (const entry of [...this.#entries]) {
+        for (const entry of this.#entries) {
           if (entry.resetsAt > Date.now()) continue
           try {
             await this.#resume(entry)
