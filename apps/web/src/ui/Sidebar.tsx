@@ -174,6 +174,8 @@ export type Session = {
   unread: boolean
   pinned?: boolean
   worktreeBranch?: string | undefined
+  /** The picture the user chose for this chat, as a PNG data URL. */
+  image?: string | undefined
 }
 
 export type Project = {
@@ -284,6 +286,8 @@ function SidebarComponent(props: {
   onTogglePin: (path: string) => void
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin?: (id: string) => void
+  /** Sets a chat's picture from a file the user picked, or removes it. */
+  onSetSessionImage?: ((id: string, file: File | undefined) => void) | undefined
   onDeleteSession: (id: string) => void
   /** Moves a chat to Archived without deleting it; sending to it later brings it back. */
   onArchiveSession?: ((id: string) => void) | undefined
@@ -542,6 +546,10 @@ function SidebarComponent(props: {
     (id: string) => actionsRef.current.onToggleSessionPin?.(id),
     [],
   )
+  const setSessionImage = useCallback(
+    (id: string, file: File | undefined) => actionsRef.current.onSetSessionImage?.(id, file),
+    [],
+  )
   const markSessionRead = useCallback(
     (id: string) => actionsRef.current.onMarkSessionRead?.(id),
     [],
@@ -774,6 +782,7 @@ function SidebarComponent(props: {
               onSelectSession={selectSession}
               onRenameSession={renameSession}
               onToggleSessionPin={toggleSessionPin}
+              onSetSessionImage={props.onSetSessionImage ? setSessionImage : undefined}
               onArchiveSession={deleteSession}
               onArchiveSessions={archiveProject}
               pullRequestsActive={props.pullRequestsActive}
