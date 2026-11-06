@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-11-04 dev 7b38f04b · includes main db5fba4d</span>
+        <span class="meta">2026-11-06 dev 1792526e · includes main d5e45826</span>
       </div>
     </div>
 
@@ -1298,6 +1298,26 @@
                   they still are). The earlier chat is left as it was; its failed turn's row then
                   reads Continued on Work and opens the new chat. Not yet: per-account Sign out,
                   MCP/skills inventory and history import per account</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Resume at usage reset
+                <span class="d"
+                  >In review,
+                  <a href="https://github.com/Leonxlnx/tastecode/pull/2239">PR #2239</a>: a failed
+                  chat at a reported usage limit offers Resume at reset. The chat snoozes until
+                  every exhausted window with a known deadline resets, then continues its previous
+                  request on the same provider, account and model. A neutral scheduled notice shows
+                  the reset time and Cancel auto-resume. Schedules survive reloads; TasteCode must
+                  be open, or reopened after the deadline. A manual continuation, provider/model
+                  change, settlement or early wake cancels the schedule. Unknown reset times stay
+                  unavailable rather than guessing; refreshed later limits postpone the resume. The
+                  shared flow also supports direct API sources when limits are supplied, without a
+                  vendor CLI dependency.</span
                 ></span
               ></label
             >
