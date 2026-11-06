@@ -108,11 +108,8 @@ export function composerTextWithChips(
   attachments: readonly string[] = [],
 ): string {
   if (hasComposerChips(text)) return text
-  if (
-    text.includes('[Browser comment]') &&
-    browserCommentSegments(text).some((part) => part.type === 'comment')
-  )
-    return browserBlocksAsChips(text, known, attachments)
+  if (holdsCommentBlock(text))
+    return commentBlocksAsChips(text, attachments, (part) => composerTextWithChips(part, known))
   const segments = messageChipSegments(text, known)
   if (segments.length === 1 && segments[0]!.type === 'text') return text
   return segments
@@ -122,15 +119,33 @@ export function composerTextWithChips(
     .join('')
 }
 
-/** A recalled prompt goes back to the composer as the chips it was sent from. */
-function browserBlocksAsChips(
+/**
+ * Text that was never sent, such as a queued prompt or a restored draft: its comment
+ * blocks come back as chips, and what the user typed stays exactly as typed.
+ */
+export function composerTextWithCommentChips(
   text: string,
-  known: KnownChipTokens,
+  attachments: readonly string[] = [],
+): string {
+  if (hasComposerChips(text) || !holdsCommentBlock(text)) return text
+  return commentBlocksAsChips(text, attachments, (part) => part)
+}
+
+function holdsCommentBlock(text: string): boolean {
+  return (
+    text.includes('[Browser comment]') &&
+    browserCommentSegments(text).some((part) => part.type === 'comment')
+  )
+}
+
+function commentBlocksAsChips(
+  text: string,
   attachments: readonly string[],
+  rest: (text: string) => string,
 ): string {
   return browserCommentSegments(text)
     .map((segment) => {
-      if (segment.type === 'text') return composerTextWithChips(segment.text, known)
+      if (segment.type === 'text') return rest(segment.text)
       const image = attachments.find((path) => path.split(/[/\\]/).at(-1) === segment.imageName)
       const comment = { ...segment.comment, id: newBrowserCommentId(), ...(image ? { image } : {}) }
       rememberBrowserComment(comment)

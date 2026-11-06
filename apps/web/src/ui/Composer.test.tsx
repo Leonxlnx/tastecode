@@ -3349,6 +3349,31 @@ describe('browser annotation drafts', () => {
     )
   })
 
+  it('leaves typed tokens alone when editing a queued prompt', async () => {
+    renderComposer(vi.fn(), {
+      queuedTurns: [{ id: 'q1', text: '$cook this', attachments: [], createdAt: 1 }],
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit $cook this' }))
+    const area = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
+    await waitFor(() => expect(area.value).toBe('$cook this'))
+  })
+
+  it('brings a queued comment back as a chip with its screenshot', async () => {
+    const onSend = vi.fn()
+    const saved = comment()
+    renderComposer(onSend, {
+      queuedTurns: [
+        { id: 'q1', text: browserCommentBlock(saved), attachments: [saved.image], createdAt: 1 },
+      ],
+    })
+    fireEvent.click(screen.getByRole('button', { name: `Edit ${saved.comment}` }))
+    const area = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
+    await waitFor(() => expect(composerChips(area.value)).toHaveLength(1))
+    expect(area.value).not.toContain('[Browser comment]')
+    fireEvent.keyDown(area, { key: 'Enter' })
+    expect(onSend.mock.calls[0]?.[1]).toEqual([saved.image])
+  })
+
   it('keeps the comment sendable when switching to a provider without images', () => {
     const onSend = vi.fn()
     const saved = comment()

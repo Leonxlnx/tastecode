@@ -78,7 +78,7 @@ import {
   type ComposerChipKind,
 } from './composer-chips.js'
 import { browserCommentImages, browserCommentsAsPlainText } from './browser-comments.js'
-import { composerTextWithChips } from './message-chips.js'
+import { composerTextWithChips, composerTextWithCommentChips } from './message-chips.js'
 import { Menu, MenuItem } from './Menu.js'
 import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
@@ -1268,13 +1268,13 @@ function ComposerComponent(props: {
     // draft saved before chips sat inline brings its skills into the text.
     const legacyResources = props.draftRequest.resources ?? []
     const text = draftTextWithResources(
-      props.draftRequest.undoable || props.draftRequest.text.includes('[Browser comment]')
+      props.draftRequest.undoable
         ? composerTextWithChips(
             props.draftRequest.text,
             rememberedChipTokens(),
             props.draftRequest.attachments,
           )
-        : props.draftRequest.text,
+        : composerTextWithCommentChips(props.draftRequest.text, props.draftRequest.attachments),
       legacyResources,
     )
     // A draft that brings chips (restored, edited, recalled) starts loading
@@ -1642,11 +1642,7 @@ function ComposerComponent(props: {
       }
       // Preserve text typed while the deletion was in flight.
       const draft = textRef.current.trim()
-      const recalled = composerTextWithChips(
-        queuedTurn.text,
-        rememberedChipTokens(),
-        queuedTurn.attachments,
-      )
+      const recalled = composerTextWithCommentChips(queuedTurn.text, queuedTurn.attachments)
       setValue(draft === '' ? recalled : `${recalled}\n\n${draft}`)
       const linked = browserCommentImages(queuedTurn.text, queuedTurn.attachments)
       addFiles(queuedTurn.attachments.filter((path) => !linked.has(path)))
