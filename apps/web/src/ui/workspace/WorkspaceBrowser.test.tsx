@@ -687,7 +687,7 @@ function failureView(): { title: string; detail: string } | null {
   if (!view) return null
   return {
     title: view.querySelector('strong')?.textContent ?? '',
-    detail: view.querySelector('.workspace-empty > span')?.textContent ?? '',
+    detail: view.querySelector('.empty-state > span')?.textContent ?? '',
   }
 }
 

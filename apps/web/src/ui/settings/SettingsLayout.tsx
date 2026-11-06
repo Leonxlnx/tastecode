@@ -14,6 +14,7 @@ import {
   IconInfoCircle as Info,
   IconLoader2 as LoaderCircle,
 } from '@tabler/icons-react'
+import { EmptyState } from '../EmptyState.js'
 import { Skeleton, SkeletonStatus } from '../Skeleton.js'
 import '../../styles/settings-system.css'
 
@@ -233,7 +234,7 @@ export function SettingsEntitySkeleton(props: { label: string; rows?: number | u
   )
 }
 
-/** Nothing to list yet: one plain line where the rows would start, never a centred card. */
+/** Nothing to list yet: the app's one empty state, where the rows would start. */
 export function SettingsEmpty(props: {
   icon?: ReactNode
   title: ReactNode
@@ -241,17 +242,8 @@ export function SettingsEmpty(props: {
   action?: ReactNode
 }) {
   return (
-    <div className="set-empty">
-      {props.icon ? (
-        <span className="set-empty__icon" aria-hidden>
-          {props.icon}
-        </span>
-      ) : null}
-      <div className="set-empty__copy">
-        <p className="set-empty__title">{props.title}</p>
-        {props.detail ? <p className="set-empty__detail">{props.detail}</p> : null}
-        {props.action ? <div className="set-empty__action">{props.action}</div> : null}
-      </div>
-    </div>
+    <EmptyState className="set-empty" icon={props.icon} title={props.title} detail={props.detail}>
+      {props.action}
+    </EmptyState>
   )
 }

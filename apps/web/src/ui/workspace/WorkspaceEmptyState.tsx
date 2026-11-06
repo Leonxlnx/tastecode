@@ -8,6 +8,7 @@ import {
   IconSubtask as Subtask,
   IconTerminal2 as SquareTerminal,
 } from '@tabler/icons-react'
+import { EmptyState } from '../EmptyState.js'
 
 const ICONS = {
   review: FileDiff,
@@ -23,16 +24,19 @@ export function WorkspaceEmptyState(props: {
   kind: keyof typeof ICONS
   title: string
   detail: string
+  role?: 'alert'
   /** Actions under the detail, e.g. Retry. */
   children?: ReactNode
 }) {
   const Icon = ICONS[props.kind]
   return (
-    <div className="workspace-empty">
-      <Icon size={30} strokeWidth={1.6} aria-hidden />
-      <strong>{props.title}</strong>
-      <span>{props.detail}</span>
+    <EmptyState
+      icon={<Icon size={30} strokeWidth={1.6} aria-hidden />}
+      title={props.title}
+      detail={props.detail}
+      role={props.role}
+    >
       {props.children}
-    </div>
+    </EmptyState>
   )
 }
