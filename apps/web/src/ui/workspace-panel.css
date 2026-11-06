@@ -1226,6 +1226,12 @@ textarea.workspace-review__field {
   transform-origin: top left;
 }
 
+/* A guest is transparent, so a page without its own background would show the panel's ground
+   (black text on dark). Once a page has rendered it gets a browser's white canvas. */
+.workspace-browser__guest-host[data-painted='true'] .workspace-browser__guest {
+  background: #fff;
+}
+
 .workspace-browser__guest-host[data-visible='false'] .workspace-browser__guest {
   visibility: hidden;
 }

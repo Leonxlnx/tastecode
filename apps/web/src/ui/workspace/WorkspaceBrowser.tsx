@@ -593,6 +593,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           ref={host}
           className="workspace-browser__guest-host"
           data-visible={Boolean(state.url) && !failure}
+          data-painted={hasRenderedPage}
           aria-hidden={!active}
         >
           {loadingFirstPage ? (
