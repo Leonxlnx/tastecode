@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { BrowserAnnotations, type AnnotationGuest } from './BrowserAnnotations.js'
 import { composerChips, composerWireText } from '../composer-chips.js'
@@ -151,6 +151,40 @@ it('refuses a comment of invisible characters and keeps the lines of a real one'
   const chip = composerChips(onDraft.mock.calls[0]![0].text)[0]!
   expect(browserComment(chip.commentId!)?.comment).toBe(
     'First line\nSecond \u{1F469}\u200D\u{1F4BB}',
+  )
+})
+
+it('gives up on a page that stops answering and takes the next click', async () => {
+  const { view } = setup()
+  await waitFor(() => expect(view.executeJavaScript).toHaveBeenCalled())
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    vi.mocked(view.executeJavaScript).mockReturnValueOnce(new Promise(() => undefined))
+    clickPage()
+    await act(() => vi.advanceTimersByTimeAsync(2_100))
+  } finally {
+    vi.useRealTimers()
+  }
+  clickPage()
+  expect(await screen.findByLabelText('Comment 1')).toBeTruthy()
+})
+
+it('opens the box on a page whose screenshot never arrives, and takes the next click', async () => {
+  const { view } = setup()
+  vi.mocked(view.capturePage).mockReturnValue(new Promise(() => undefined))
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    clickPage()
+    await act(() => vi.advanceTimersByTimeAsync(10_100))
+  } finally {
+    vi.useRealTimers()
+  }
+  const input = await screen.findByLabelText('Comment 1')
+  fireEvent.change(input, { target: { value: 'No picture' } })
+  fireEvent.keyDown(input, { key: 'Enter' })
+  expect(await screen.findByRole('button', { name: 'Add to chat' })).toHaveProperty(
+    'disabled',
+    false,
   )
 })
 

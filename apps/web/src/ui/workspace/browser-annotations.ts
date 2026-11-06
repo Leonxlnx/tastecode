@@ -190,7 +190,12 @@ function pageProbe(request: ProbeRequest, selectorOf: (element: Element) => stri
     let element: Element | null = null
     const steps = selector.split(' >>> ')
     for (const [index, step] of steps.entries()) {
-      element = root.querySelector(step)
+      // A page can leave a selector it cannot read; that pin is gone, not the whole probe.
+      try {
+        element = root.querySelector(step)
+      } catch {
+        return null
+      }
       if (!element) return null
       if (index < steps.length - 1) {
         if (!element.shadowRoot) return null

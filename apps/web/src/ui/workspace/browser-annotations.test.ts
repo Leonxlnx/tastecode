@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import path from 'node:path'
 import { build } from 'esbuild'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AnnotationProbe,
   annotationCrop,
@@ -192,4 +192,19 @@ describe("the user's comment", () => {
     expect(annotationCommentReady('\u200Bfix')).toBe(true)
     expect(annotationCommentReady('\u{1F44D}')).toBe(true)
   })
+})
+
+it('reports a selector the page cannot read as gone, and still reads the others', () => {
+  document.body.innerHTML = '<p id="sample">Page text</p>'
+  const query = document.querySelector.bind(document)
+  vi.spyOn(document, 'querySelector').mockImplementation((selector: string) => {
+    if (selector === 'div[') throw new DOMException('Not a selector', 'SyntaxError')
+    return query(selector)
+  })
+  const result = AnnotationProbe.parse(
+    window.eval(annotationProbeScript({ selectors: ['div[', '#sample'] })),
+  )
+  vi.restoreAllMocks()
+  expect(result.targets[0]).toBeNull()
+  expect(result.targets[1]?.tag).toBe('p')
 })

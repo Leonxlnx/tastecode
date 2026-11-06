@@ -33,6 +33,23 @@ const MAX_PINS = 20
 const TRACKING_INTERVAL_MS = 250
 /** Above this the screenshot only costs the agent's context, not detail it can use. */
 const MAX_CROP_SIDE = 1600
+/** Long past a healthy page's answer, which takes a frame. */
+const PAGE_ANSWER_MS = 2_000
+const CAPTURE_MS = 10_000
+
+/** A hung page never answers, and every click and pin would wait for it. */
+function withinTime<T>(answer: Promise<T>, limit: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('The page did not answer')), limit)
+    void answer.then(resolve, reject).finally(() => clearTimeout(timer))
+  })
+}
+
+async function readPage(view: AnnotationGuest, request: ProbeRequest) {
+  return AnnotationProbe.parse(
+    await withinTime(view.executeJavaScript(annotationProbeScript(request)), PAGE_ANSWER_MS),
+  )
+}
 
 /** Pixels of the element as the guest paints it now. The overlay is never in the capture. */
 async function captureElement(
@@ -120,9 +137,7 @@ export function BrowserAnnotations({
         ...(scroll.dx || scroll.dy ? { scroll } : {}),
       }
       try {
-        const data = AnnotationProbe.parse(
-          await view.executeJavaScript(annotationProbeScript(request)),
-        )
+        const data = await readPage(view, request)
         if (stopped) return
         setViewport({ width: data.width, height: data.height })
         setBoxes(new Map(pins.map((pin, index) => [pin.number, data.targets[index]?.box ?? null])))
@@ -220,11 +235,7 @@ export function BrowserAnnotations({
     if (busy || pins.length >= MAX_PINS) return
     setBusy(true)
     try {
-      const data = AnnotationProbe.parse(
-        await view.executeJavaScript(
-          annotationProbeScript({ point: toPoint(x, y), withText: true }),
-        ),
-      )
+      const data = await readPage(view, { point: toPoint(x, y), withText: true })
       const target = data.hit
       if (!target || !target.box.width || !target.box.height) return
       // A second click on a pinned element means this comment, not a duplicate of it.
@@ -248,7 +259,9 @@ export function BrowserAnnotations({
         url: annotationText(view.getURL(), 2048),
         title: annotationText(view.getTitle(), 300),
       })
-      const image = await captureElement(view, target.box, data).catch(() => undefined)
+      const image = await withinTime(captureElement(view, target.box, data), CAPTURE_MS).catch(
+        () => undefined,
+      )
       if (image) {
         setEditing((current) => (current?.number === number ? { ...current, image } : current))
         setPins((current) =>
