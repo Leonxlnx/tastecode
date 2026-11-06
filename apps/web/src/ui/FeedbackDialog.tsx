@@ -138,8 +138,10 @@ export function FeedbackDialog(props: {
       }
       setFailure(result.message)
       if (result.retryAfterMs) {
-        setNow(Date.now())
-        setWaitUntil(Date.now() + result.retryAfterMs)
+        // One reading of the clock: two could differ by a millisecond and show one second more.
+        const answeredAt = Date.now()
+        setNow(answeredAt)
+        setWaitUntil(answeredAt + result.retryAfterMs)
       }
     } catch (reason) {
       // A lost reply may still have been delivered; the same id asks again safely.
