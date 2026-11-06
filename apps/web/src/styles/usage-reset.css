@@ -1,38 +1,29 @@
+/* Resume at usage reset (UsageResetNotice): a composer shelf row in the one notice look
+   (styles/notice.css), whose message has a title and a few lines under it. */
+
 .composer__shelf:has(.composer__usage-reset) {
   container-type: inline-size;
   container-name: usage-reset;
 }
 
-.composer__error-row:has(+ .composer__usage-reset) {
-  color: var(--text);
-}
-
-.composer__error-row:has(+ .composer__usage-reset) > svg {
-  color: var(--error);
-}
-
 .composer__usage-reset {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 10px;
-  margin-block: 8px 4px;
-  padding: 14px;
-  border-radius: var(--r-md);
-  background: var(--bg-shelf);
-  color: var(--text);
+  align-items: flex-start;
 }
 
-.composer__usage-reset > svg {
-  margin-top: 2px;
-  color: var(--text-2);
+.composer__usage-reset > .notice-icon {
+  margin-top: 5px;
+}
+
+.composer__usage-reset > .notice__text {
+  flex: 1;
+  min-width: 0;
+  padding-block: 3px;
 }
 
 .composer__usage-reset-copy {
   display: grid;
-  gap: 3px;
-  min-width: 0;
-  line-height: 1.5;
+  gap: 2px;
+  line-height: 1.45;
 }
 
 .composer__usage-reset-copy strong {
@@ -49,84 +40,27 @@
   font-variant-numeric: tabular-nums;
 }
 
-.composer__usage-reset-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: var(--r-md);
-  background: var(--text);
-  color: var(--bg);
-  font: inherit;
-  font-weight: 550;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.composer__usage-reset-action.is-scheduled {
-  background: var(--surface-3);
-  color: var(--text);
-}
-
-.composer__usage-reset-action:hover:not(:disabled) {
-  opacity: 0.85;
-}
-
-.composer__usage-reset-action:active:not(:disabled) {
-  transform: translateY(1px);
-}
-
 .composer__usage-reset-action:disabled {
-  background: var(--surface-3);
-  color: var(--text-2);
+  color: var(--text-3);
   cursor: default;
 }
 
-.composer__usage-reset-action:focus-visible {
-  outline: 2px solid var(--text);
-  outline-offset: 3px;
+.composer__usage-reset-action:disabled:hover {
+  background: transparent;
+  color: var(--text-3);
 }
 
+/* Narrow composers put the action under the copy instead of squeezing it. */
 @container usage-reset (max-width: 540px) {
-  .composer__error-row:has(+ .composer__usage-reset) {
-    display: grid;
-    grid-template-columns: 15px minmax(0, 1fr) 26px;
-    align-items: start;
-  }
-
-  .composer__error-row:has(+ .composer__usage-reset) > svg {
-    margin-top: 5px;
-  }
-
-  .composer__error-row:has(+ .composer__usage-reset) > .composer__provider-message,
-  .composer__error-row:has(+ .composer__usage-reset) > .composer__provider-action,
-  .composer__error-row:has(+ .composer__usage-reset) > .menuwrap,
-  .composer__error-row:has(+ .composer__usage-reset) > .composer__error-report {
-    grid-column: 2;
-    justify-self: start;
-  }
-
-  .composer__error-row:has(+ .composer__usage-reset) > .composer__error-dismiss {
-    grid-column: 3;
-    grid-row: 1;
-  }
-
   .composer__usage-reset {
-    grid-template-columns: 18px minmax(0, 1fr);
+    flex-wrap: wrap;
   }
 
-  .composer__usage-reset-action {
-    grid-column: 2;
-    justify-self: start;
-    min-height: 36px;
+  .composer__usage-reset > .notice__text {
+    flex-basis: calc(100% - 32px);
   }
-}
 
-@media (prefers-reduced-motion: reduce) {
-  .composer__usage-reset-action:active:not(:disabled) {
-    transform: none;
+  .composer__usage-reset > .composer__usage-reset-action {
+    margin-left: 24px;
   }
 }

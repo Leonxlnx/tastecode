@@ -47,3 +47,17 @@ it('shows a failed save and lets the user try again', async () => {
     ).toBe(false),
   )
 })
+
+it('draws as a shelf row in the one notice look', () => {
+  const view = render(<UsageResetNotice {...props()} />)
+  const row = view.container.querySelector('.composer__usage-reset')!
+  expect(row.classList.contains('composer__error-row')).toBe(true)
+  expect(row.getAttribute('data-notice-tone')).toBe('info')
+  expect(row.querySelector(':scope > .notice-icon')).toBeTruthy()
+  expect(row.querySelector(':scope > .notice__text strong')?.textContent).toBe(
+    'Continue when usage resets',
+  )
+  expect(screen.getByRole('button', { name: 'Resume at reset' }).classList).toContain(
+    'notice-action',
+  )
+})
