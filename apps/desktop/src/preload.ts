@@ -58,6 +58,8 @@ const api = {
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('harness:revealPath', path),
   setAgentBrowserGuest: (webContentsId: number, driven: boolean): Promise<void> =>
     ipcRenderer.invoke('harness:agentBrowserGuest', webContentsId, driven),
+  agentBrowserIsolated: (webContentsId: number, code: string): Promise<unknown> =>
+    ipcRenderer.invoke('harness:agentBrowserIsolated', webContentsId, code),
   revealProjectFile: (path: string, projectPath: string): Promise<void> =>
     ipcRenderer.invoke('harness:revealProjectFile', path, projectPath),
   savePastedFile: (file: {

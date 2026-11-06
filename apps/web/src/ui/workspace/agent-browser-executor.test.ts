@@ -14,6 +14,8 @@ function guest(overrides: Partial<AgentBrowserGuest> = {}) {
     getTitle: () => 'Checkout',
     // eslint-disable-next-line no-eval -- the page's own scripts, against the test document
     executeJavaScript: async (code) => (0, eval)(code),
+    // eslint-disable-next-line no-eval -- the test document stands in for the isolated world too
+    executeIsolated: async (code) => (0, eval)(code),
     capturePng: async () => 'data:image/png;base64,AAAA',
     sendInputEvent: (event) => events.push(event),
     ...overrides,
@@ -81,6 +83,17 @@ describe('agent browser commands', () => {
     ).toMatchObject({ ok: true })
     expect(document.querySelector<HTMLInputElement>('#email')!.value).toBe('me@example.com')
     expect(input).toHaveBeenCalledOnce()
+  })
+
+  // A page can replace its own querySelector or value setter; the check must not run there.
+  it('checks and types in its own world, never in the page’s', async () => {
+    document.body.innerHTML = '<input id="pw" type="password">'
+    const pageWorld = vi.fn(async () => 'ok')
+    const { page } = guest({ executeJavaScript: pageWorld })
+    expect(await run({ action: 'type', selector: '#pw', text: 'x' }, page)).toMatchObject({
+      ok: false,
+    })
+    expect(pageWorld).not.toHaveBeenCalled()
   })
 
   it('clicks an element by selector or a point, and refuses a missing element', async () => {

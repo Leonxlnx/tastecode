@@ -13,7 +13,13 @@ export type AgentBrowserGuest = {
   loadURL(url: string): Promise<void>
   getURL(): string
   getTitle(): string
+  /** Runs in the page's own world: what it returns is the page's word, which may lie. */
   executeJavaScript(code: string): Promise<unknown>
+  /**
+   * Runs in a JavaScript world of TasteCode's own on the same page, where the page cannot replace
+   * querySelector, property descriptors or labels. The field check and typing run here.
+   */
+  executeIsolated(code: string): Promise<unknown>
   /** The visible page as a PNG data URL. */
   capturePng(): Promise<string>
   sendInputEvent(event: {
@@ -102,7 +108,7 @@ export async function runAgentBrowserCommand(
         return { commandId: command.commandId, ok: true, ...page() }
       }
       case 'type': {
-        const outcome = await guest.executeJavaScript(
+        const outcome = await guest.executeIsolated(
           `(() => {
             const element = document.querySelector(${JSON.stringify(command.selector)})
             const verdict = (${SENSITIVE_FIELD_CHECK})(element)

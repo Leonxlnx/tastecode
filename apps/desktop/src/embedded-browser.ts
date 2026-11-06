@@ -6,6 +6,10 @@ const configuredSessions = new WeakSet<Session>()
 const agentDrivenGuests = new Set<number>()
 
 /** The renderer says which in-app browser tab an agent drives, and when it stops. */
+export function isAgentDrivenGuest(webContentsId: number): boolean {
+  return agentDrivenGuests.has(webContentsId)
+}
+
 export function setAgentDrivenGuest(webContentsId: number, driven: boolean): void {
   if (driven) agentDrivenGuests.add(webContentsId)
   else agentDrivenGuests.delete(webContentsId)
