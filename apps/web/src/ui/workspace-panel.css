@@ -1347,11 +1347,12 @@ textarea.workspace-review__field {
   left: 5px;
   width: 3px;
   height: 3px;
-  background: #ff5f57;
+  /* The window's three dots in the theme's own red, amber and green. */
+  background: var(--error);
   border-radius: var(--r-circle);
   box-shadow:
-    5px 0 #febc2e,
-    10px 0 #28c840;
+    5px 0 var(--warning),
+    10px 0 var(--success);
 }
 
 .workspace-browser__recent-thumb::after {
