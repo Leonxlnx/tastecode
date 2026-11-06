@@ -1071,6 +1071,43 @@ textarea.workspace-review__field {
   background: var(--bg);
 }
 
+/* While an agent drives the tab, a bar above the toolbar says so and offers Stop. */
+.workspace-browser:has(> .workspace-browser__agent) {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.workspace-browser__agent {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+.workspace-browser__agent > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.workspace-browser__agent > button {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspace-browser__agent > button:hover {
+  background: var(--control-hover);
+}
+
 .workspace-browser__toolbar {
   display: flex;
   min-width: 0;
