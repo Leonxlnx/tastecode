@@ -36,6 +36,9 @@
 .browser-comment-card {
   position: fixed;
   z-index: 60;
+  /* The card cannot scroll (it lets the pointer through), so it never outgrows the window
+     inside its 12px edges (BrowserCommentCard.tsx). */
+  max-height: calc(100vh - 24px);
   overflow: hidden;
   background: var(--menu-bg);
   border: 1px solid var(--menu-line);
@@ -102,6 +105,11 @@
 }
 
 .browser-comment-card__comment {
+  /* A long comment keeps its line breaks but stops after eight lines. */
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
   white-space: pre-wrap;
 }
 

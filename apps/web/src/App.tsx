@@ -5592,7 +5592,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         })
         if (changes) setEarlierChanges((current) => ({ ...current, [threadId]: changes }))
         const request = lastRequest(threadController.snapshot(earlierId)?.items ?? [])
-        if (request) threadController.editDraft(threadId, { text: request })
+        if (request) threadController.editDraft(threadId, { text: request.text })
         const now = Date.now()
         const row: Session = {
           id: threadId,
@@ -7501,7 +7501,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const switchAtLimit = (choice: ModelChoice) => {
     commitModelChoice(choice)
     const request = lastRequest(thread.items)
-    if (request) editMessage(request)
+    if (request) editMessage(request.text, request.attachments)
   }
   const continueOffer: Pick<ComposerError, 'action' | 'choices'> = continuedChat
     ? {

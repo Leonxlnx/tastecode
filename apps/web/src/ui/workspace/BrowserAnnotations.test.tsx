@@ -169,6 +169,16 @@ it('gives up on a page that stops answering and takes the next click', async () 
   expect(await screen.findByLabelText('Comment 1')).toBeTruthy()
 })
 
+it('keeps one read waiting on a hung page with pins instead of starting more', async () => {
+  const { view } = setup()
+  await pin()
+  vi.mocked(view.executeJavaScript).mockReturnValue(new Promise(() => undefined))
+  const before = vi.mocked(view.executeJavaScript).mock.calls.length
+  // Past the 2 s answer limit: before, every tracking tick after it started another read.
+  await act(() => new Promise((resolve) => setTimeout(resolve, 2_600)))
+  expect(vi.mocked(view.executeJavaScript).mock.calls.length - before).toBe(1)
+})
+
 it('opens the box on a page whose screenshot never arrives, and takes the next click', async () => {
   const { view } = setup()
   vi.mocked(view.capturePage).mockReturnValue(new Promise(() => undefined))
