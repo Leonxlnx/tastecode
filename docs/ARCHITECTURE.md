@@ -278,6 +278,17 @@ is in the background. Reading text, scrolling and the console run in the page's 
 purpose: what they return is the page's word, which can lie, and it reaches the agent only as
 quoted, bounded data. A page that lies there can mislead the agent, not get past the field check.
 
+**The Browser's recently used pages stay in the renderer's own storage.** A tab the user opened
+lists a page once it has finished loading, newest first and capped at 50. A fragment move does
+not add a row, and a username or password in the address is dropped before saving. The agent's
+tab and Design previews record nothing, because their pages are not the user's history, and
+only the user's tabs offer the list, because a row loads in the tab that shows it. Like the
+other device preferences the list is per renderer origin, so the dev renderer and the packaged
+app keep separate lists. _Rejected:_ the server's SQLite store, which would need a contract
+change and a protocol round trip for data no other client reads; and Chromium's history for the
+guest partition, which Electron exposes only as each guest's back and forward list, gone with
+the tab.
+
 ### Desktop update assets
 
 The desktop updater finds releases in `Leonxlnx/tastecode` through the public release Atom
@@ -1039,3 +1050,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-25 | Dashboards run again as app screens dealt from the bundled tasteskill v2.1.5 app library, without reference images; the dashboard image catalog stays parked.                  |
 | 2026-10-31 | Phone access became dev-only: offered only with `HARNESS_PHONE_ACCESS=1` (set by `pnpm dev`); other builds never open the phone port.                                          |
 | 2026-11-01 | Each build offers its edition's providers: release offers Claude Code, Codex, Grok, Cursor and Antigravity, dev every provider; missing means release.                         |
+| 2026-11-06 | Kept the Browser's recently used pages in renderer storage, recorded only from tabs the user opened.                                                                           |

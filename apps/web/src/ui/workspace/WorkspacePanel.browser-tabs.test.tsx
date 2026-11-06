@@ -10,14 +10,17 @@ import { WorkspacePanel } from './WorkspacePanel.js'
 const browsers = vi.hoisted(() => ({
   reports: new Map<string, (page: BrowserPageInfo) => void>(),
   callbacks: new Set<unknown>(),
+  keepHistory: new Map<string, boolean | undefined>(),
 }))
 
 vi.mock('./WorkspaceBrowser.js', () => ({
   WorkspaceBrowser: (props: {
     tabId?: string
+    keepHistory?: boolean
     onPageInfo?: (tabId: string, page: BrowserPageInfo) => void
   }) => {
     browsers.callbacks.add(props.onPageInfo)
+    if (props.tabId) browsers.keepHistory.set(props.tabId, props.keepHistory)
     if (props.tabId && props.onPageInfo) {
       const report = props.onPageInfo
       const id = props.tabId
@@ -31,6 +34,7 @@ afterEach(() => {
   cleanup()
   browsers.reports.clear()
   browsers.callbacks.clear()
+  browsers.keepHistory.clear()
 })
 
 const props = () => ({
@@ -103,4 +107,24 @@ it('forgets a closed tab page so a later tab starts as New tab', async () => {
   await vi.waitFor(() =>
     expect(screen.queryByRole('tab', { name: 'Browser: Example Domain' })).toBeNull(),
   )
+})
+
+it('keeps history for the Browser tabs the user opens, not for a design preview', async () => {
+  const base = props()
+  const view = render(
+    <WorkspacePanel {...base} externalToolRequest={{ request: 1, kind: 'browser' }} />,
+  )
+  await screen.findByTestId('browser-surface')
+  view.rerender(
+    <WorkspacePanel
+      {...base}
+      externalToolRequest={{ request: 1, kind: 'browser' }}
+      designPreviewRequest={{ requestId: 'preview-1', url: 'http://127.0.0.1:4321/' }}
+    />,
+  )
+  await vi.waitFor(() => expect(browsers.keepHistory.size).toBe(2))
+
+  const [userTab, previewTab] = [...browsers.keepHistory.values()]
+  expect(userTab).toBe(true)
+  expect(previewTab).toBeUndefined()
 })
