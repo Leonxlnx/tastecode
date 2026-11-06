@@ -14,7 +14,7 @@ import { withoutContinuationContext } from './side-chat.js'
 import { Store } from './store.js'
 
 const root = mkdtempSync(path.join(os.tmpdir(), 'harness-provider-change-'))
-afterAll(() => rmSync(root, { recursive: true, force: true }))
+afterAll(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
 
 function repository(): string {
   const repo = mkdtempSync(path.join(root, 'repo-'))

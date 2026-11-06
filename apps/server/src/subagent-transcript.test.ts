@@ -230,7 +230,7 @@ describe('stored item snapshots', () => {
   const directories: string[] = []
   afterEach(() => {
     for (const directory of directories.splice(0))
-      rmSync(directory, { recursive: true, force: true })
+      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
 
   // A delta names the item's quoted id too, but is not a snapshot of it.

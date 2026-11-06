@@ -23,7 +23,9 @@ afterEach(() => {
 
 function temporaryFolder(): string {
   const folder = mkdtempSync(path.join(os.tmpdir(), 'harness-accounts-'))
-  cleanup.push(() => rmSync(folder, { recursive: true, force: true }))
+  cleanup.push(() =>
+    rmSync(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
+  )
   return folder
 }
 
@@ -91,7 +93,7 @@ describe('provider accounts', () => {
     expect(accounts.environment('codex', undefined)).toEqual({})
     expect(accounts.environment('codex', 'default')).toEqual({})
     expect(accounts.environment('codex', managed.id)).toEqual({ FAKE_CLI_HOME: managed.home })
-    rmSync(brought, { recursive: true })
+    rmSync(brought, { recursive: true, maxRetries: 5, retryDelay: 100 })
     expect(() => accounts.environment('codex', existing.id)).toThrow(
       `This account's folder is missing (${brought}). Put it back, or remove the account.`,
     )
@@ -127,7 +129,7 @@ describe('provider accounts', () => {
 
   it('starts an empty folder when the default account has no settings yet', () => {
     const { accounts, cliHome } = setup()
-    rmSync(cliHome, { recursive: true, force: true })
+    rmSync(cliHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     const account = accounts.create('claude-code', 'Ünïcode ✓', { kind: 'managed' })
     expect(account.id).toMatch(/^unicode-[0-9a-f]{6}$/)
     expect(readdirSync(account.home!)).toEqual([])

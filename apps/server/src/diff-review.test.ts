@@ -139,7 +139,7 @@ describe('structured diff review', () => {
         text: 'hello',
       })
     } finally {
-      rmSync(fresh, { recursive: true, force: true })
+      rmSync(fresh, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 

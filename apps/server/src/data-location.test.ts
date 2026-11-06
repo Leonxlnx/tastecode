@@ -12,7 +12,7 @@ beforeEach(() => {
   root = mkdtempSync(path.join(os.tmpdir(), 'harness-data-migrate-'))
 })
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true })
+  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 function crashedDatabase() {

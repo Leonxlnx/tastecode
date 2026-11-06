@@ -25,7 +25,7 @@ vi.mock('@harness/adapter-claude-code', async (importOriginal) => {
 })
 
 const root = mkdtempSync(path.join(os.tmpdir(), 'harness-orchestrator-runtimes-'))
-afterAll(() => rmSync(root, { recursive: true, force: true }))
+afterAll(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
 
 function session(): AgentSession {
   return {

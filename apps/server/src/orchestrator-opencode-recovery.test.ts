@@ -180,7 +180,7 @@ describe.each(['v1', 'v2'] as const)('OpenCode %s connection recovery', (protoco
         await orchestrator.disposeAll()
         store.close()
         await server.close()
-        rmSync(root, { recursive: true, force: true })
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
   )
@@ -241,7 +241,7 @@ describe('OpenCode opening stream recovery', () => {
         await orchestrator.disposeAll()
         store.close()
         await server.close()
-        rmSync(root, { recursive: true, force: true })
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
   )

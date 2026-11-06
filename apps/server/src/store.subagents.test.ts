@@ -55,7 +55,7 @@ beforeEach(() => {
   dir = mkdtempSync(path.join(os.tmpdir(), 'harness-subagents-'))
   file = path.join(dir, 'harness.db')
 })
-afterEach(() => rmSync(dir, { recursive: true, force: true }))
+afterEach(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
 
 describe('sub-agent chats in the store', () => {
   it('keeps a sub-agent chat addressable but out of every chat list and search', () => {
