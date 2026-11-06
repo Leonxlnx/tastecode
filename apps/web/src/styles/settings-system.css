@@ -835,32 +835,30 @@
   transform: translateX(12px);
 }
 
-/* Page-level notice */
+/* Page-level notice: the one notice look (styles/notice.css), in the page's flow. */
 
 .settings .set-notice {
   display: flex;
   align-items: flex-start;
   gap: 8px;
   margin: 0 0 16px;
-  padding: 8px 12px;
-  background: color-mix(in srgb, var(--text) 4%, transparent);
-  border: 1px solid transparent;
-  border-radius: var(--r-lg);
-  color: var(--text-2);
+  padding: 5px 7px 5px 12px;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-popup);
+  color: var(--text);
   font-size: var(--t-sm);
-  line-height: 1.45;
+  line-height: 20px;
 }
 
-.settings .set-notice__icon {
-  flex: none;
-  margin-top: 2px;
-  color: var(--text-3);
+.settings .set-notice > .notice-icon {
+  margin-top: 3px;
 }
 
-.settings .set-notice__text {
+.settings .set-notice > .notice__text {
   flex: 1;
   min-width: 0;
-  margin: 0;
+  padding-block: 3px;
 }
 
 /* A notice about several things gives each one a line under the first. */
@@ -874,65 +872,4 @@
   display: flex;
   flex: none;
   gap: 8px;
-  margin-block: -4px;
-}
-
-.settings .set-notice[data-tone='progress'] .set-notice__icon {
-  animation: spin 0.9s linear infinite;
-}
-
-.settings .set-notice[data-tone='error'] {
-  background: color-mix(in srgb, var(--error) 8%, transparent);
-  border-color: color-mix(in srgb, var(--error) 22%, transparent);
-  color: var(--text);
-}
-
-.settings .set-notice[data-tone='error'] .set-notice__icon {
-  color: var(--error);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .settings .set-notice[data-tone='progress'] .set-notice__icon {
-    animation: none;
-  }
-}
-
-/* Empty state: where the rows would start, left-aligned, no card. */
-
-.settings .set-empty {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding-block: 12px;
-}
-
-.settings .set-empty__icon {
-  display: inline-flex;
-  flex: none;
-  margin-top: 1px;
-  color: var(--text-3);
-}
-
-.settings .set-empty__icon svg {
-  width: 16px;
-  height: 16px;
-}
-
-.settings .set-empty__title {
-  margin: 0;
-  color: var(--text-2);
-  font-size: var(--t-md);
-  line-height: 1.35;
-}
-
-.settings .set-empty__detail {
-  max-width: 60ch;
-  margin: 2px 0 0;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  line-height: 1.45;
-}
-
-.settings .set-empty__action {
-  margin-top: 12px;
 }

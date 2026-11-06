@@ -24,7 +24,9 @@ import {
   IconPlus as Plus,
   type TablerIcon,
 } from '@tabler/icons-react'
-import type { PullRequestTarget } from '@harness/contracts'
+import type { BrowserCommand, BrowserResult, PullRequestTarget } from '@harness/contracts'
+import { isDesktop } from '../../bridge.js'
+import { receiveAgentBrowserEvents } from '../../browser-capability.js'
 import { performAppHaptic, prepareAppHaptics } from '../../haptics.js'
 import { cancelInstall, installState, subscribeInstalls } from '../../provider-install.js'
 import type { ThreadFrameStore } from '../../thread-frame-store.js'
@@ -35,7 +37,8 @@ import type {
   SideChatPromptRequest,
   SideChatStartOptions,
 } from './WorkspaceSideChat.js'
-import type { BrowserNavigationRequest } from './WorkspaceBrowser.js'
+import type { AnnotationDraft } from './browser-annotations.js'
+import type { AgentBrowserLink, BrowserNavigationRequest } from './WorkspaceBrowser.js'
 import { browserPageLabel, type BrowserPageInfo } from './browser-page.js'
 import { WorkspaceTabs } from './WorkspaceTabs.js'
 import {
@@ -137,6 +140,11 @@ const TOOLS: Array<{
 
 const MIN_CHAT_WIDTH = 360
 const DESIGN_PREVIEW_TAB_ID = 'design-preview'
+/** The chat's own tab for its agent's browser commands. */
+const AGENT_BROWSER_TAB_ID = 'agent-browser'
+/** The bar stays this long after a command, so a run of commands reads as one use. */
+const AGENT_BAR_LINGER_MS = 4_000
+const STOPPED_BY_USER = "The user stopped the agent's use of the browser for this turn."
 
 function WorkspacePanelComponent(props: {
   placement?: 'right' | 'bottom'
@@ -163,6 +171,8 @@ function WorkspacePanelComponent(props: {
   providerLogin?: WorkspaceProviderLoginRequest | undefined
   onProviderLoginClose?: ((id: number) => void) | undefined
   externalToolRequest?: { request: number; kind: WorkspaceTool } | undefined
+  imagesSupported?: boolean | undefined
+  onAnnotationDraft?: ((draft: AnnotationDraft) => void) | undefined
   designPreviewRequest?: BrowserNavigationRequest | undefined
   /** Opens the Pull requests surface on the pull request the Review tab shows. */
   onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
@@ -387,6 +397,80 @@ function WorkspacePanelComponent(props: {
     showTool({ id: DESIGN_PREVIEW_TAB_ID, kind: 'browser' })
     props.onOpen()
   }, [props.designPreviewRequest, props.onOpen, showTool])
+
+  // The agent's browser: commands for the chat this panel shows run in its own tab.
+  const [agentCommand, setAgentCommand] = useState<BrowserCommand>()
+  const [agentRecent, setAgentRecent] = useState(false)
+  const [agentStopped, setAgentStopped] = useState(false)
+  const agentCommandRef = useRef(agentCommand)
+  agentCommandRef.current = agentCommand
+  const agentStoppedRef = useRef(agentStopped)
+  agentStoppedRef.current = agentStopped
+  const agentLinger = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const answerAgent = useCallback(
+    (result: BrowserResult) => {
+      void props.transport.request('browser.result', result).catch(() => undefined)
+    },
+    [props.transport],
+  )
+  const endAgentCommand = useCallback(() => {
+    setAgentCommand(undefined)
+    clearTimeout(agentLinger.current)
+    agentLinger.current = setTimeout(() => setAgentRecent(false), AGENT_BAR_LINGER_MS)
+  }, [])
+  useEffect(() => {
+    setAgentStopped(false)
+    setAgentRecent(false)
+    setAgentCommand(undefined)
+  }, [props.threadId])
+  useEffect(() => {
+    if (!isDesktop) return
+    // The app hears the pushes, also before this panel loaded, and hands them on here.
+    return receiveAgentBrowserEvents((event) => {
+      if (event.kind === 'cancel') {
+        if (agentCommandRef.current?.commandId === event.commandId) endAgentCommand()
+        return
+      }
+      const { command } = event
+      if (command.threadId !== props.threadId) return
+      const refuse = (error: string) =>
+        answerAgent({ commandId: command.commandId, ok: false, error })
+      if (agentStoppedRef.current) return refuse(STOPPED_BY_USER)
+      if (agentCommandRef.current) return refuse('Another browser command is still running.')
+      clearTimeout(agentLinger.current)
+      setAgentRecent(true)
+      setAgentCommand(command)
+      showTool({ id: AGENT_BROWSER_TAB_ID, kind: 'browser' })
+      props.onOpen()
+    })
+  }, [props.threadId, props.onOpen, showTool, answerAgent, endAgentCommand])
+  // Only while stopped does the panel read the chat's events, to allow the next turn again.
+  useEffect(() => {
+    if (!agentStopped) return
+    return props.transport.on('thread.event', ({ threadId, event }) => {
+      if (threadId === props.threadId && event.type === 'turn.completed') setAgentStopped(false)
+    })
+  }, [agentStopped, props.transport, props.threadId])
+  useEffect(() => () => clearTimeout(agentLinger.current), [])
+  const agentLink = useMemo<AgentBrowserLink>(
+    () => ({
+      command: agentCommand,
+      active: agentCommand !== undefined || agentRecent,
+      onResult: (result) => {
+        answerAgent(result)
+        endAgentCommand()
+      },
+      onStop: () => {
+        const running = agentCommandRef.current
+        if (running)
+          answerAgent({ commandId: running.commandId, ok: false, error: STOPPED_BY_USER })
+        setAgentStopped(true)
+        endAgentCommand()
+        setAgentRecent(false)
+      },
+    }),
+    [agentCommand, agentRecent, answerAgent, endAgentCommand],
+  )
 
   useEffect(() => () => resizeCleanup.current(), [])
 
@@ -631,6 +715,9 @@ function WorkspacePanelComponent(props: {
                   sideChatPromptRequest={props.sideChatPromptRequest}
                   onOpenPullRequest={props.onOpenPullRequest}
                   browserNavigation={tab.id === DESIGN_PREVIEW_TAB_ID ? designPreview : undefined}
+                  imagesSupported={props.imagesSupported}
+                  onAnnotationDraft={props.onAnnotationDraft}
+                  browserAgent={tab.id === AGENT_BROWSER_TAB_ID ? agentLink : undefined}
                   onBrowserPage={updateBrowserPage}
                   onCloseTab={closeTabByShortcut}
                   onClose={() => closeTab(tab.id)}
@@ -681,7 +768,11 @@ function WorkspaceToolSurface(props: {
   sideChatStartOptions: SideChatStartOptions
   sideChatPromptRequest?: SideChatPromptRequest | undefined
   onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
+  imagesSupported?: boolean | undefined
+  onAnnotationDraft?: ((draft: AnnotationDraft) => void) | undefined
   browserNavigation?: BrowserNavigationRequest | undefined
+  /** Set on the chat's agent tab: its commands, its bar and Stop. */
+  browserAgent?: AgentBrowserLink | undefined
   onBrowserPage: (tabId: string, page: BrowserPageInfo) => void
   /** Ctrl+W in a Browser tab. Stable, so a memoized Browser surface keeps its props. */
   onCloseTab: (tabId: string) => void
@@ -731,11 +822,14 @@ function WorkspaceToolSurface(props: {
     return (
       <WorkspaceBrowser
         active={props.active}
+        imagesSupported={props.imagesSupported}
+        onAnnotationDraft={props.onAnnotationDraft}
         navigation={props.browserNavigation}
         focusAddressOnOpen={props.tab.userOpened}
         tabId={props.tab.id}
         onPageInfo={props.onBrowserPage}
         onClose={props.onCloseTab}
+        agent={props.browserAgent}
       />
     )
   }

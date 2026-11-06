@@ -68,6 +68,7 @@ vi.mock('./Menu.js', () => ({
 import {
   ModelSelector,
   getCompactModelName,
+  getShortModelName,
   getEffortIndexFromPointer,
   getEffortProgressFromPointer,
   getFastModeOffValue,
@@ -204,6 +205,15 @@ describe('ModelSelector', () => {
       ['Grok Code Fast 1', 'Grok Code Fast 1'],
     ]
     for (const [name, compact] of names) expect(getCompactModelName(name)).toBe(compact)
+    // A narrow composer shows the provider icon and this name; the icon already says GPT.
+    const short: Array<[string, string]> = [
+      ['GPT-6.1-Luna', 'Luna'],
+      ['GPT-5.3-Codex-Spark', 'Codex Spark'],
+      ['GPT-5.5', 'GPT-5.5'],
+      ['Sonnet 5.5', 'Sonnet 5.5'],
+      ['Grok Code Fast 1', 'Grok Code Fast 1'],
+    ]
+    for (const [name, compact] of short) expect(getShortModelName(name)).toBe(compact)
     expect(getCompactModelName(undefined)).toBe('Model')
     expect(getCompactModelName('  ')).toBe('Model')
   })

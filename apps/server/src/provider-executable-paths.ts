@@ -2,23 +2,14 @@ import { ACP_AGENTS } from '@harness/adapter-acp/agents'
 import { commandOverride, setCommandOverride, windowsCliCommand } from '@harness/proc/cli'
 import { resolveProviderExecutable } from './custom-harness-launch.js'
 import { assertProviderOffered } from './provider-edition.js'
+import { providerCommand } from './provider-commands.js'
 import type { Store } from './store.js'
-
-const DIRECT_COMMANDS = new Map([
-  ['claude-code', 'claude'],
-  ['codex', 'codex'],
-  ['grok', 'grok'],
-  ['cursor', 'cursor-agent'],
-  ['opencode', 'opencode'],
-  ['antigravity', 'agy'],
-  ['pi', 'pi'],
-])
 
 function commandFor(source: string): string | undefined {
   if (source.startsWith('acp:')) {
     return ACP_AGENTS.find((agent) => agent.id === source.slice(4) && !agent.retired)?.command
   }
-  return DIRECT_COMMANDS.get(source)
+  return providerCommand(source)
 }
 
 /** Restore paths before provider detection or any adapter can launch. */

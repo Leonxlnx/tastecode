@@ -462,7 +462,7 @@ describe('build phase', () => {
 
       writeFileSync(
         path.join(workspace, 'App.tsx'),
-        'export const Art = () => <svg viewBox="0 0 100 100"><path d="M0 0h100v100z" /></svg>',
+        'export const Art = () => <svg viewBox="0 0 800 600"><path d="M0 0h800v600z" /></svg>',
       )
       expect(() => validateDesignSourceQuality(workspace, [], baseline, approvedAssets)).toThrow(
         'unmanifested inline SVG substitute',

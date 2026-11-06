@@ -232,6 +232,52 @@ fixed modes retain their requested CSS viewport and scale the complete guest to 
 stretching it. All modes therefore share Electron's Chromium path across macOS, Windows, and
 Linux.
 
+Browser annotations live entirely in the trusted renderer: an overlay intercepts clicks,
+reads bounded DOM descriptions on demand, and captures the guest's visible pixels. There is no
+new guest preload, IPC, global, event listener, stylesheet or DOM mutation. Leaving the mode
+removes the overlay and stops polling. Going to another page discards the round; a reload of
+the same page keeps it, because dev servers reload pages under an agent's edits. Open shadow
+boundaries use `>>>` in a DOM path, while frames and closed roots are represented by their host elements.
+Pins follow current element rectangles; removed elements retain their captured reference with
+an explicit missing-element label. A replaced element with the same selector can inherit a pin.
+
+`executeJavaScript` runs in the page world. A hostile page can falsify DOM metadata or deny the
+read, so the host validates shapes, counts and finite coordinates, bounds and strips control
+characters, and quotes all page strings as untrusted JSON. Every read of the page has a time
+limit, and a selector it cannot resolve counts as a removed element, so neither a hung page nor
+a bad selector stalls the mode. It cannot supply user comments,
+create pins without a host click, invoke a host action or receive host state through this
+stateless pull. Screenshots are also untrusted reference content. Quoting reduces instruction
+confusion; it cannot guarantee that an agent will resist every visual or textual injection.
+Crops use the captured bitmap dimensions relative to the guest's CSS viewport, independently
+of host scaling and device pixel ratio. Only visible portions are captured, at selection time.
+
+Add to chat moves a round into the composer as one chip per comment and saves each crop. The
+draft holds only the chip; sending expands it into a quoted block and collects the screenshots
+of chips still in the draft, so the ordinary send, queue, Steer and rejection recovery stay
+authoritative. The block is also what lets the transcript draw the chip again after a restart.
+The comment itself is the user's request and keeps its lines and joining characters; the
+block's closing sentence separates it from the page data and is free text, so it can be
+reworded without old messages losing their chips. A comment belongs to its page, not a provider,
+so its chip survives a provider or project change. Copying one gives the user's words alone,
+and recalling a sent prompt brings each chip back with its screenshot.
+No protocol or shared-contract changes are required.
+
+_Rejected:_ guest-to-host message channels, privileged guest preloads, persistent injected
+listeners and DOM overlays would add an unnecessary trust boundary and cleanup obligation.
+
+**An agent drives only its own chat's tab, through the same guest.** The server routes a
+`browser.command` to the window that shows the chat; the renderer checks every page against
+the address bar's rule again, and the session filter above stays the last line. While a tab is
+agent-driven, the main process drops its downloads. The field check that keeps agents out of
+password, sign-in code and payment fields, the typing itself and clicks run in a JavaScript world
+of TasteCode's own (`executeJavaScriptInIsolatedWorld`): it shares the page's DOM but not its
+globals, so a page cannot replace `querySelector`, value setters or labels to slip a field past
+it. Clicks are DOM clicks there, because native input events do not reach a guest whose window
+is in the background. Reading text, scrolling and the console run in the page's own world on
+purpose: what they return is the page's word, which can lie, and it reaches the agent only as
+quoted, bounded data. A page that lies there can mislead the agent, not get past the field check.
+
 ### Desktop update assets
 
 The desktop updater finds releases in `Leonxlnx/tastecode` through the public release Atom

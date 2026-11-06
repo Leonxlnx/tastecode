@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { CheckoutPullRequestResult, PullRequestTarget, SessionDiff } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TestTransport } from '../../test-transport.js'
@@ -113,6 +113,29 @@ describe('WorkspaceReview', () => {
       projectPath: '/repo',
       threadId: 'thread-1',
     })
+  })
+
+  it('shows changes that could not be read as the empty state, with the reason', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'workspace.diff')
+        throw new Error('/repo is not a git repository, so there is nothing to snapshot')
+      throw new Error(`unexpected method ${method}`)
+    })
+
+    render(
+      <WorkspaceReview
+        transport={new TestTransport(request)}
+        projectPath="/repo"
+        threadId="thread-1"
+        branch="main"
+        theme="dark"
+      />,
+    )
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.classList.contains('empty-state')).toBe(true)
+    expect(within(alert).getByText('Changes could not be read')).toBeTruthy()
+    expect(alert.textContent).toContain('is not a git repository')
   })
 
   it('reviews a provisional chat in the project checkout until its real id arrives', async () => {

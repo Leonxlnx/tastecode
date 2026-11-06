@@ -16,7 +16,8 @@ function workspaceDirectory(prefix: string): string {
   return directory
 }
 afterEach(() => {
-  for (const workspace of workspaces.splice(0)) rmSync(workspace, { recursive: true, force: true })
+  for (const workspace of workspaces.splice(0))
+    rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 describe('direct API workspace path policy', () => {

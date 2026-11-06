@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { commandOverride, setCommandOverride } from '@harness/proc/cli'
@@ -17,6 +17,22 @@ afterEach(() => {
 })
 
 describe('provider executable paths', () => {
+  // The server loads providers.ts lazily. A static import from this module, which the server
+  // loads at startup, pulled every probe in early, and the sign-in terminal test's providers
+  // mock then lacked the command lookup (CI 42102579660).
+  it('reads provider commands from the shared table without loading the probes', async () => {
+    const source = readFileSync(new URL('./provider-executable-paths.ts', import.meta.url), 'utf8')
+    expect(source).not.toContain("from './providers.js'")
+    expect(source).toContain("from './provider-commands.js'")
+    const probes = readFileSync(new URL('./providers.ts', import.meta.url), 'utf8')
+    const { PROVIDER_COMMANDS } = await import('./provider-commands.js')
+    for (const id of Object.keys(PROVIDER_COMMANDS))
+      expect(probes).toMatch(
+        new RegExp(String.raw`command: PROVIDER_COMMANDS(?:\.${id}|\['${id}'\])`),
+      )
+    expect(probes).not.toMatch(/command: '/)
+  })
+
   it('validates before saving, restores at startup, and resets discovery', () => {
     const store = new Store(':memory:')
     try {
@@ -56,7 +72,7 @@ describe('provider executable paths', () => {
           /installation instructions/,
         )
       } finally {
-        rmSync(directory, { recursive: true, force: true })
+        rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
   )

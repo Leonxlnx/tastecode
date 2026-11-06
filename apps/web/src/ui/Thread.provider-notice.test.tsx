@@ -84,6 +84,15 @@ describe('a chat that switched provider', () => {
     )
   })
 
+  // #2190: Codex had no saved rollout for a chat that ran turns; it continued in a new session.
+  it('says a chat stayed on its provider in a new session when the saved one was missing', () => {
+    expect(
+      providerNoticeLabel({ kind: 'provider', provider: 'codex', reason: 'session_missing' }),
+    ).toBe(
+      'New Codex session: the saved one could not be reopened, so the chat so far was carried over',
+    )
+  })
+
   it("names the account a chat moved to, once the app knows the account's name", () => {
     const moved: ProviderNotice = {
       kind: 'provider',

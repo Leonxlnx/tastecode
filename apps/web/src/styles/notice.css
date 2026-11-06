@@ -1,0 +1,94 @@
+/* The one notice look (ui/Notice.tsx). Toasts, the composer shelf and settings notices share
+   it; each keeps its own place. The tone colours only the icon, so every message reads in
+   the same ink. */
+
+[data-notice-tone] {
+  --notice-tone: var(--text-2);
+}
+
+[data-notice-tone='success'] {
+  --notice-tone: var(--success);
+}
+
+[data-notice-tone='error'] {
+  --notice-tone: var(--error);
+}
+
+.notice-icon,
+[data-notice-tone] > svg {
+  flex-shrink: 0;
+  color: var(--notice-tone);
+}
+
+.notice-action,
+.notice-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-popup-item);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.notice-action:hover,
+.notice-close:hover {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+/* A menu trigger is reset by its own rule (app.css); it keeps the notice action's look. */
+.menutrigger.notice-action {
+  gap: 5px;
+  padding: 0 10px;
+  border-radius: var(--r-popup-item);
+  font-weight: 500;
+}
+
+.menutrigger.notice-action:hover:not(:disabled) {
+  background: var(--menu-hover);
+}
+
+/* The one step the notice is about, e.g. Undo or Update. */
+.notice-action--primary {
+  background: #fff;
+  color: #171717;
+}
+
+.notice-action--primary:hover {
+  background: #eaeaea;
+  color: #171717;
+}
+
+.notice-action--danger {
+  color: var(--error);
+}
+
+.notice-action--danger:hover {
+  background: color-mix(in oklab, var(--error) 12%, transparent);
+  color: var(--error);
+}
+
+/* Optional, like Report: quieter than the notice's own action. */
+.notice-action--quiet {
+  color: var(--text-2);
+}
+
+.notice-close {
+  width: 24px;
+  padding: 0;
+  color: var(--text-2);
+}
+
+:is(.notice-action, .notice-close):focus-visible {
+  outline: 2px solid var(--focus, currentColor);
+  outline-offset: 2px;
+}

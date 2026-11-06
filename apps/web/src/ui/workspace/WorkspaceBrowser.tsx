@@ -11,14 +11,22 @@ import {
   IconRefresh as RefreshCw,
   IconDeviceMobile as Smartphone,
   IconDeviceTablet as Tablet,
+  IconMessagePlus as MessagePlus,
 } from '@tabler/icons-react'
+import type { BrowserCommand, BrowserConsoleEntry, BrowserResult } from '@harness/contracts'
 import {
+  agentBrowserIsolated,
   isDesktop,
+  canSavePastedFiles,
   isMacOS,
   onBrowserShortcut,
   openExternalUrl,
+  setAgentBrowserGuest,
   type BrowserShortcutAction,
 } from '../../bridge.js'
+import { BrowserAnnotations, type AnnotationGuest } from './BrowserAnnotations.js'
+import type { AnnotationDraft } from './browser-annotations.js'
+import { runAgentBrowserCommand } from './agent-browser-executor.js'
 import { errorMessage } from '../../boundary.js'
 import { IconMorph } from '../IconMorph.js'
 import { Skeleton, SkeletonLines, SkeletonStatus } from '../Skeleton.js'
@@ -31,6 +39,7 @@ import {
 import type { BrowserPageInfo } from './browser-page.js'
 import { browserShortcut, browserShortcutHints } from './browser-shortcuts.js'
 import { browserAddress } from './browser-url.js'
+import { scalePng } from './white-ground.js'
 import {
   BROWSER_VIEWPORTS,
   fitBrowserViewport,
@@ -53,7 +62,7 @@ type BrowserState = {
   canGoForward: boolean
 }
 
-type BrowserGuest = HTMLElement & {
+type BrowserGuest = AnnotationGuest & {
   canGoBack(): boolean
   canGoForward(): boolean
   getTitle(): string
@@ -65,7 +74,26 @@ type BrowserGuest = HTMLElement & {
   loadURL(url: string): Promise<void>
   reload(): void
   stop(): void
+  executeJavaScript(code: string): Promise<unknown>
+  capturePage(): Promise<{ toDataURL(): string }>
 }
+
+/** The agent's hold on this tab: the command it runs now, and the Stop the user can press. */
+export type AgentBrowserLink = {
+  command: BrowserCommand | undefined
+  /** Shows "Agent is using the browser" with Stop. */
+  active: boolean
+  onResult: (result: BrowserResult) => void
+  onStop: () => void
+}
+
+/** The console an agent reads: the newest entries, as the page logged them. */
+const AGENT_CONSOLE_KEPT = 200
+const CONSOLE_LEVELS = ['debug', 'log', 'warn', 'error'] as const
+const ConsoleMessageEventSchema = z.object({
+  level: z.union([z.number(), z.string()]).optional(),
+  message: z.string().optional(),
+})
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -73,8 +101,20 @@ declare global {
   }
 }
 
+/** The same document, ignoring the fragment, so a reload is not a move to another page. */
+function samePage(next: string | undefined, current: string): boolean {
+  if (!next) return false
+  try {
+    const [a, b] = [new URL(next), new URL(current)]
+    return a.origin === b.origin && a.pathname === b.pathname && a.search === b.search
+  } catch {
+    return false
+  }
+}
+
 const NavigationEventSchema = z.object({
   isMainFrame: z.boolean().optional(),
+  isInPlace: z.boolean().optional(),
   url: z.string().optional(),
 })
 const PageTitleEventSchema = z.object({ title: z.string() })
@@ -108,8 +148,13 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   tabId,
   onPageInfo,
   onClose,
+  imagesSupported = false,
+  onAnnotationDraft,
+  agent,
 }: {
   active: boolean
+  imagesSupported?: boolean | undefined
+  onAnnotationDraft?: ((draft: AnnotationDraft) => void) | undefined
   navigation?: BrowserNavigationRequest | undefined
   /** The user opened this tab to type a URL: focus the address once it mounts. */
   focusAddressOnOpen?: boolean | undefined
@@ -119,7 +164,12 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   onPageInfo?: ((tabId: string, page: BrowserPageInfo) => void) | undefined
   /** Closes this tab, for Ctrl+W pressed in the toolbar or inside the page. */
   onClose?: ((tabId: string) => void) | undefined
+  /** Set on the chat's agent tab only: the agent's commands run here. */
+  agent?: AgentBrowserLink | undefined
 }) {
+  const agentConsole = useRef<BrowserConsoleEntry[]>([])
+  const agentLink = useRef(agent)
+  agentLink.current = agent
   const canvas = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
   const guest = useRef<BrowserGuest | null>(null)
@@ -139,6 +189,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const [address, setAddress] = useState('')
   const [state, setState] = useState<BrowserState>(EMPTY_STATE)
   const [hasRenderedPage, setHasRenderedPage] = useState(false)
+  const [annotating, setAnnotating] = useState(false)
+  const [annotationRevision, setAnnotationRevision] = useState(0)
   const [viewport, setViewport] = useState<BrowserViewportId>('fluid')
   // A notice about the toolbar: an address it refused, a native call that failed.
   const [error, setError] = useState<string>()
@@ -220,6 +272,15 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       setState((current) => ({ ...current, loading: true }))
     }
     const onStop = () => syncGuestState(true)
+    const onNavigationStart = (event: Event) => {
+      const navigation = NavigationEventSchema.safeParse(event)
+      if (!navigation.success || navigation.data.isMainFrame === false) return
+      if (navigation.data.isInPlace) return
+      // A dev server reloads the page under an agent's edits: comments outlive that.
+      if (samePage(navigation.data.url, view.getURL())) return
+      setAnnotating(false)
+      setAnnotationRevision((revision) => revision + 1)
+    }
     const onNavigate = (event: Event) => {
       const navigation = NavigationEventSchema.safeParse(event)
       const url = webPageUrl(navigation.success ? navigation.data.url : undefined)
@@ -265,6 +326,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       syncGuestState()
     }
 
+    view.addEventListener('did-start-navigation', onNavigationStart)
     view.addEventListener('did-attach', onAttach)
     view.addEventListener('dom-ready', onReady)
     view.addEventListener('did-start-loading', onStart)
@@ -273,6 +335,26 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     view.addEventListener('did-navigate-in-page', onNavigateInPage)
     view.addEventListener('page-title-updated', onTitle)
     view.addEventListener('did-fail-load', onFail)
+    // Only the agent's tab keeps a console, and only the newest entries.
+    const onConsole = (event: Event) => {
+      if (!agentLink.current) return
+      const message = ConsoleMessageEventSchema.safeParse(event)
+      if (!message.success) return
+      const raw = message.data.level
+      const level =
+        typeof raw === 'number'
+          ? (CONSOLE_LEVELS[raw] ?? 'log')
+          : raw === 'warning'
+            ? 'warn'
+            : raw === 'error' || raw === 'debug' || raw === 'info'
+              ? raw
+              : 'log'
+      const entries = agentConsole.current
+      entries.push({ level, text: (message.data.message ?? '').slice(0, 2_000), at: Date.now() })
+      if (entries.length > AGENT_CONSOLE_KEPT)
+        entries.splice(0, entries.length - AGENT_CONSOLE_KEPT)
+    }
+    view.addEventListener('console-message', onConsole)
     view.addEventListener('render-process-gone', onRendererGone)
     element.append(view)
     guest.current = view
@@ -285,6 +367,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       guest.current = null
       readyGuest.current = null
       lastNavigationRequest.current = undefined
+      view.removeEventListener('did-start-navigation', onNavigationStart)
       view.removeEventListener('did-attach', onAttach)
       view.removeEventListener('dom-ready', onReady)
       view.removeEventListener('did-start-loading', onStart)
@@ -293,6 +376,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       view.removeEventListener('did-navigate-in-page', onNavigateInPage)
       view.removeEventListener('page-title-updated', onTitle)
       view.removeEventListener('did-fail-load', onFail)
+      view.removeEventListener('console-message', onConsole)
       view.removeEventListener('render-process-gone', onRendererGone)
       view.remove()
     }
@@ -472,6 +556,55 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   // Later loads keep the current page visible under a thin progress line.
   const loadingLaterPage = state.loading && hasRenderedPage && !failure
 
+  // The agent's command runs once on the ready guest; a later page load does not repeat it.
+  const agentCommand = agent?.command
+  const handledAgentCommand = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    const view = readyGuest.current
+    if (!agentCommand || !view || view !== guest.current) return
+    if (handledAgentCommand.current === agentCommand.commandId) return
+    handledAgentCommand.current = agentCommand.commandId
+    const id = view.getWebContentsId()
+    void runAgentBrowserCommand(
+      agentCommand,
+      {
+        loadURL: (url) => view.loadURL(url),
+        getURL: () => view.getURL(),
+        getTitle: () => view.getTitle(),
+        executeJavaScript: (code) => view.executeJavaScript(code),
+        executeIsolated: (code) => agentBrowserIsolated(id, code),
+        capturePng: async () => (await view.capturePage()).toDataURL(),
+      },
+      () => agentConsole.current,
+      scalePng,
+    ).then((result) => {
+      // A Stop or a cancel may have ended the command meanwhile; its answer then goes nowhere.
+      if (agentLink.current?.command?.commandId === result.commandId)
+        agentLink.current.onResult(result)
+    })
+  }, [agentCommand, guestReadyRevision])
+
+  // The desktop app drops downloads from the tab while it is the agent's.
+  const agentTab = agent !== undefined
+  const drivenGuest = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    const view = readyGuest.current
+    if (!agentTab || !view) return
+    const id = view.getWebContentsId()
+    if (drivenGuest.current === id) return
+    if (drivenGuest.current !== undefined)
+      void setAgentBrowserGuest(drivenGuest.current, false).catch(() => undefined)
+    drivenGuest.current = id
+    void setAgentBrowserGuest(id, true).catch(() => undefined)
+  }, [agentTab, guestReadyRevision])
+  useEffect(
+    () => () => {
+      if (drivenGuest.current !== undefined)
+        void setAgentBrowserGuest(drivenGuest.current, false).catch(() => undefined)
+    },
+    [],
+  )
+
   return (
     <div
       className="workspace-browser"
@@ -479,6 +612,11 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       onKeyDown={(event) => {
         if (event.defaultPrevented || event.nativeEvent.isComposing) return
         if (event.key === 'Escape') {
+          if (annotating) {
+            event.preventDefault()
+            setAnnotating(false)
+            return
+          }
           if (event.target !== addressInput.current || !editingAddress.current) return
           event.preventDefault()
           revertAddress()
@@ -491,6 +629,14 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         if (!event.repeat) runShortcut(shortcut)
       }}
     >
+      {agent?.active ? (
+        <div className="workspace-browser__agent" role="status">
+          <span>Agent is using the browser</span>
+          <button type="button" onClick={agent.onStop}>
+            Stop
+          </button>
+        </div>
+      ) : null}
       <div className="workspace-browser__toolbar">
         <button
           type="button"
@@ -563,6 +709,18 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           </button>
         </form>
 
+        {isDesktop && canSavePastedFiles && onAnnotationDraft ? (
+          <button
+            type="button"
+            aria-label="Annotate page"
+            title="Annotate page"
+            aria-pressed={annotating}
+            disabled={!state.url || state.loading || Boolean(failure)}
+            onClick={() => setAnnotating((value) => !value)}
+          >
+            <MessagePlus size={15} aria-hidden />
+          </button>
+        ) : null}
         <div className="workspace-browser__viewports" aria-label="Preview size">
           {BROWSER_VIEWPORTS.map((option) => {
             const Icon = VIEWPORT_ICONS[option.id]
@@ -593,8 +751,19 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           ref={host}
           className="workspace-browser__guest-host"
           data-visible={Boolean(state.url) && !failure}
+          data-painted={hasRenderedPage}
           aria-hidden={!active}
         >
+          {guest.current && onAnnotationDraft ? (
+            <BrowserAnnotations
+              key={annotationRevision}
+              view={guest.current}
+              enabled={annotating && active}
+              imagesSupported={imagesSupported}
+              onDraft={onAnnotationDraft}
+              onExit={() => setAnnotating(false)}
+            />
+          ) : null}
           {loadingFirstPage ? (
             <SkeletonStatus label="Loading page…" className="workspace-browser__skeleton">
               <div className="workspace-browser__skeleton-header">

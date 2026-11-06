@@ -4,7 +4,14 @@ import { resolve } from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import type { ProviderStatus } from '@harness/contracts'
-import { TUNING_LABELS, providerTuningEntries, tuningSearchId } from './provider-tuning-search.js'
+import {
+  EXECUTABLE_PATH_LABEL,
+  executablePathEntries,
+  executablePathSearchId,
+  TUNING_LABELS,
+  providerTuningEntries,
+  tuningSearchId,
+} from './provider-tuning-search.js'
 import { KEYBINDING_DEFINITIONS } from '../../shortcuts.js'
 import {
   searchSettings,
@@ -87,6 +94,28 @@ describe('settings search', () => {
       tuningSearchId('codex', 'Agent', TUNING_LABELS.access),
     ])
     expect(providerTuningEntries([provider], [], new Map())).toEqual([])
+  })
+
+  // #2175 added a per-provider executable path; search did not know it.
+  it('finds each CLI provider executable path by the label and anchor of its control', () => {
+    const statuses = [
+      { id: 'codex', displayName: 'Codex', installed: true, auth: 'authenticated' },
+      { id: 'cursor', displayName: 'Cursor', installed: false, auth: 'unknown' },
+      { id: 'api', displayName: 'API', installed: true, auth: 'unknown' },
+    ] as ProviderStatus[]
+    const entries = executablePathEntries(statuses)
+    expect(entries.map((entry) => entry.id)).toEqual([
+      executablePathSearchId('codex'),
+      executablePathSearchId('cursor'),
+    ])
+    expect(searchSettings('codex executable', entries).map((entry) => entry.id)).toEqual([
+      executablePathSearchId('codex'),
+    ])
+    expect(searchSettings('cli binary', entries)).toHaveLength(2)
+    const control = source('ProviderExecutablePath.tsx')
+    expect(control).toContain('data-settings-id={executablePathSearchId(props.source)}')
+    expect(control).toContain('{EXECUTABLE_PATH_LABEL}')
+    expect(EXECUTABLE_PATH_LABEL).toBe('Executable path')
   })
 
   it('offers every category in the settings rail, ahead of the rows that share its words', () => {

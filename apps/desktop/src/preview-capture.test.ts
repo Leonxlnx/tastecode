@@ -289,7 +289,8 @@ describe('desktop preview capture ownership', () => {
       expect(world).toBe(1001)
     expect(test.contents.debugger.attach).toHaveBeenCalledWith('1.3')
     expect(test.contents.debugger.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
-      format: 'png',
+      format: 'jpeg',
+      quality: 82,
       captureBeyondViewport: true,
       fromSurface: true,
       clip: { x: 0, y: 0, width: 1280, height: 12_000, scale: 1 },

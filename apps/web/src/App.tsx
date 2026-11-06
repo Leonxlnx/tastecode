@@ -15,7 +15,6 @@ import type {
   CSSProperties,
   TransitionEvent as ReactTransitionEvent,
 } from 'react'
-import { IconLoader2 as LoaderCircle } from '@tabler/icons-react'
 import type {
   Account,
   AccountId,
@@ -43,6 +42,11 @@ import {
   syncNativeMenuShortcuts,
 } from './bridge.js'
 import {
+  clearAgentBrowserEvents,
+  deliverAgentBrowserEvent,
+  showBrowserThread,
+} from './browser-capability.js'
+import {
   createDefaultKeybindings,
   DEBUG_SETTINGS_SHORTCUT,
   KEYBINDING_DEFINITIONS,
@@ -61,6 +65,7 @@ import { useChatNotifications } from './use-chat-notifications.js'
 import { useAppUpdateInstallGate } from './app-update-install.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
 import { AppUpdateToast } from './ui/AppUpdateToast.js'
+import { NoticeBody } from './ui/Notice.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
 import {
@@ -111,6 +116,7 @@ import {
 import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
 import type { AppScreen } from './app-commands.js'
+import { browserCommentImages, browserCommentsAsPlainText } from './ui/browser-comments.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
 import { composerWireText } from './ui/composer-chips.js'
 import {
@@ -248,6 +254,7 @@ import type {
   SideChatStartOptions,
 } from './ui/workspace/WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './ui/workspace/WorkspaceBrowser.js'
+import type { AnnotationDraft } from './ui/workspace/browser-annotations.js'
 import type { WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
 import { useCheckoutPullRequest } from './ui/pull-requests/useCheckoutPullRequest.js'
 import {
@@ -1957,6 +1964,16 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     setWorkspaceDesignPreviewRequest(preview)
   }, [activeId])
   activeIdRef.current = activeId
+  // The server sends the agent's browser commands only for the chat this window shows.
+  useEffect(() => {
+    // Commands that waited for the panel belong to the chat that was on screen.
+    clearAgentBrowserEvents()
+    if (!isDesktop || !activeId || activeId.startsWith('pending:')) return
+    return showBrowserThread(
+      (capabilities) => transport.request('client.capabilities', capabilities),
+      activeId,
+    )
+  }, [transport, activeId])
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
   useEffect(() => {
@@ -1975,6 +1992,19 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       request: ++composerDraftRequests.current,
     })
   }, [])
+  const stageBrowserAnnotations = useCallback(
+    (annotation: AnnotationDraft) => {
+      const owner = threadController.draftOwner
+      const current = threadController.draft(owner)
+      publishComposerDraft(
+        threadController.editDraft(owner, {
+          text: [current.text, annotation.text].filter(Boolean).join('\n\n'),
+          attachments: [...current.attachments, ...annotation.attachments],
+        }),
+      )
+    },
+    [publishComposerDraft],
+  )
   const restoreRejectedDraft = useCallback(
     (threadId: string, rejected: RecoverableDraft) => {
       const draft = threadController.recoverDraft(threadId, rejected)
@@ -2450,6 +2480,24 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       setWorkspacePanelHasMounted(true)
       setWorkspaceDesignPreviewRequest(preview)
     })
+    // The agent's browser runs in the shown chat's workspace panel, which loads on first use.
+    const offBrowserCommand = transport.on('browser.command', (command) => {
+      if (command.threadId !== activeIdRef.current) {
+        void transport
+          .request('browser.result', {
+            commandId: command.commandId,
+            ok: false,
+            error: 'TasteCode no longer shows this chat.',
+          })
+          .catch(() => undefined)
+        return
+      }
+      setWorkspacePanelHasMounted(true)
+      deliverAgentBrowserEvent({ kind: 'command', command })
+    })
+    const offBrowserCancel = transport.on('browser.commandCancelled', ({ commandId }) =>
+      deliverAgentBrowserEvent({ kind: 'cancel', commandId }),
+    )
     const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
     const offUsageChanged = transport.on('usage.changed', ({ provider, accountId }) => {
       usageController.changed(provider, accountId)
@@ -2524,6 +2572,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       offSettings()
       offLifecycle()
       offPreviewCapture()
+      offBrowserCommand()
+      offBrowserCancel()
       offSidebarSettings()
       offUsageChanged()
       offUsageLimits()
@@ -4666,7 +4716,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
 
   const send = useCallback(
     async (text: string, attachments: string[] = [], submission: 'queue' | 'steer' = 'queue') => {
-      const titlePrompt = text.trim() || attachments.map(basename).join(', ')
+      // A title reads the comment, not the page context sent along with it.
+      const titlePrompt =
+        browserCommentsAsPlainText(text.trim()) || attachments.map(basename).join(', ')
       // The composer clears itself the moment it hands the text over. Every
       // early bail below must put the words back — a toast is no substitute
       // for the paragraph someone just typed. A chat that is still starting
@@ -5540,7 +5592,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         })
         if (changes) setEarlierChanges((current) => ({ ...current, [threadId]: changes }))
         const request = lastRequest(threadController.snapshot(earlierId)?.items ?? [])
-        if (request) threadController.editDraft(threadId, { text: request })
+        if (request) threadController.editDraft(threadId, { text: request.text })
         const now = Date.now()
         const row: Session = {
           id: threadId,
@@ -5682,11 +5734,17 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       respondToUserInput(activeIdRef.current, requestId, answers),
     [respondToUserInput],
   )
-  const editMessage = useCallback((text: string) => {
+  const editMessage = useCallback((text: string, attachments: string[] = []) => {
     const owner = threadController.draftOwner
     const draft = threadController.draft(owner).text
     threadController.editDraft(owner, { text })
-    setComposerDraft({ text, undoable: true, request: ++composerDraftRequests.current })
+    setComposerDraft({
+      text,
+      undoable: true,
+      // A comment needs its screenshot back. Edit restores no other attachment.
+      commentImages: [...browserCommentImages(text, attachments)],
+      request: ++composerDraftRequests.current,
+    })
     setComposerFocusRequest((request) => request + 1)
     // An unsent draft must not vanish without a way back. The saved draft
     // holds chips where the sent prompt has their tokens, so the two are
@@ -5699,9 +5757,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   // Arrow Up in an empty composer takes the same path as the Edit action.
   const recallLastPrompt = useCallback(() => {
     if (!activeIdRef.current) return undefined
-    const text = lastSentPrompt(threadFrameStore.getStructureSnapshot())
-    if (text !== undefined) editMessage(text)
-    return text
+    const sent = lastSentPrompt(threadFrameStore.getStructureSnapshot())
+    if (sent) editMessage(sent.text, sent.attachments)
+    return sent?.text
   }, [editMessage, threadFrameStore])
   const restoreReplacedDraft = useCallback(() => {
     const replaced = replacedDraft
@@ -6344,9 +6402,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     [besideId, respondToUserInput],
   )
   const editBesideMessage = useCallback(
-    (text: string) => {
+    (text: string, attachments?: string[]) => {
       focusPane(otherSlot(focusedSlotRef.current))
-      editMessage(text)
+      editMessage(text, attachments)
     },
     [focusPane, editMessage],
   )
@@ -7443,7 +7501,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const switchAtLimit = (choice: ModelChoice) => {
     commitModelChoice(choice)
     const request = lastRequest(thread.items)
-    if (request) editMessage(request)
+    if (request) editMessage(request.text, request.attachments)
   }
   const continueOffer: Pick<ComposerError, 'action' | 'choices'> = continuedChat
     ? {
@@ -7635,6 +7693,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     onTranscribeVoice: transcribeVoice,
     onCancelVoice: cancelVoice,
     onProjectChange: selectProject,
+    onAddProject: addProject,
     onBranchChange: changeBranch,
     onProjectRequired: requireProject,
     onSetupProvider: sendAvailability === 'no-provider' ? openProviderPicker : openProviderSetup,
@@ -7675,6 +7734,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     />
   )
 
+  // Restores and sent feedback are confirmations; every other notice is neutral.
+  const noticeTone =
+    undoRestore || notice === 'Restore undone.' || notice === FEEDBACK_SENT_NOTICE
+      ? 'success'
+      : 'info'
   return (
     <div
       className={`shell ${collapsed ? 'is-narrow' : ''}${isDesktop && macOS ? ' is-macos' : ''}`}
@@ -8020,6 +8084,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                   providerStatuses.find((status) => status.id === activeSession?.provider)
                     ?.capabilities?.subagentTranscript
                 }
+                imagesSupported={attachmentsSupported}
+                onAnnotationDraft={stageBrowserAnnotations}
                 designPreviewRequest={workspaceDesignPreviewRequest}
                 onOpenPullRequest={openCheckoutPullRequest}
                 providerLogin={
@@ -8240,28 +8306,29 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       ) : null}
       <NoticePresence
         className="notice notice--offline"
+        tone="progress"
         role="status"
         visible={offline && (settingsOpen || surface !== 'chat')}
       >
-        <LoaderCircle className="spinner" size={12} aria-hidden />
-        <span className="notice__text">Reconnecting to the server…</span>
+        <NoticeBody tone="progress">Reconnecting to the server…</NoticeBody>
       </NoticePresence>
 
       <NoticePresence
         className="notice"
+        tone="error"
         role="alert"
         visible={Boolean(actionError) && (settingsOpen || surface !== 'chat')}
         onDismiss={() => setActionError(undefined)}
         dismissKey={actionError}
       >
-        <span className="notice__text">{actionError?.message}</span>
-        <button className="ghost" onClick={() => setActionError(undefined)}>
-          Dismiss
-        </button>
+        <NoticeBody tone="error" onDismiss={() => setActionError(undefined)}>
+          {actionError?.message}
+        </NoticeBody>
       </NoticePresence>
 
       <NoticePresence
-        className={`notice${undoRestore || notice === 'Restore undone.' || notice === FEEDBACK_SENT_NOTICE ? ' notice--success' : ''}`}
+        className="notice"
+        tone={noticeTone}
         role="alert"
         visible={Boolean(notice)}
         dismissKey={notice}
@@ -8272,26 +8339,33 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           setReplacedDraft(undefined)
         }}
       >
-        <span className="notice__text">{notice}</span>
-        {notice === DRAFT_REPLACED_NOTICE && replacedDraft ? (
-          <button className="ghost" onClick={restoreReplacedDraft}>
-            Restore
-          </button>
-        ) : null}
-        {undoRestore ? (
-          <button className="ghost" onClick={() => void reverseRestore()}>
-            Undo restore
-          </button>
-        ) : null}
-        <button
-          className="ghost"
-          onClick={() => {
+        <NoticeBody
+          tone={noticeTone}
+          actions={
+            <>
+              {notice === DRAFT_REPLACED_NOTICE && replacedDraft ? (
+                <button className="notice-action" type="button" onClick={restoreReplacedDraft}>
+                  Restore
+                </button>
+              ) : null}
+              {undoRestore ? (
+                <button
+                  className="notice-action notice-action--primary"
+                  type="button"
+                  onClick={() => void reverseRestore()}
+                >
+                  Undo restore
+                </button>
+              ) : null}
+            </>
+          }
+          onDismiss={() => {
             setNotice(undefined)
             setUndoRestore(undefined)
           }}
         >
-          Dismiss
-        </button>
+          {notice}
+        </NoticeBody>
       </NoticePresence>
     </div>
   )

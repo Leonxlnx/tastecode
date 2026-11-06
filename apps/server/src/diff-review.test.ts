@@ -10,7 +10,7 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   readSessionDiff,
   readWorkspaceDiff,
@@ -20,6 +20,7 @@ import {
   StaleDiffSnapshotError,
 } from './diff-review.js'
 import { SessionDiffSchema } from '@harness/contracts'
+import { gitRepositoryTemplate, removeTestFolder } from './git-fixture.test-support.js'
 import { Store } from './store.js'
 
 let repo: string
@@ -44,16 +45,20 @@ const absolutePatch = (patch: string) => {
   )
 }
 
+// One committed repository, copied for each test (git-fixture.test-support).
+const template = gitRepositoryTemplate('harness-diff-review-', {
+  'file.txt': lines(),
+  'staged.txt': 'original\n',
+})
+
+// Built once, before the first test's own hooks, with its own budget for a slow runner.
+beforeAll(() => {
+  template.build()
+}, 30_000)
+afterAll(() => template.dispose())
+
 beforeEach(() => {
-  repo = mkdtempSync(path.join(os.tmpdir(), 'harness-diff-review-'))
-  execFileSync('git', ['init', '-b', 'main', repo], { windowsHide: true })
-  git('config', 'user.email', 'test@example.com')
-  git('config', 'user.name', 'Test')
-  git('config', 'core.autocrlf', 'false')
-  writeFileSync(path.join(repo, 'file.txt'), lines())
-  writeFileSync(path.join(repo, 'staged.txt'), 'original\n')
-  git('add', '.')
-  git('commit', '-m', 'base')
+  repo = template.create()
 
   store = new Store(':memory:')
   store.addProject(repo)
@@ -62,7 +67,7 @@ beforeEach(() => {
 
 afterEach(() => {
   store.close()
-  rmSync(repo, { recursive: true, force: true })
+  removeTestFolder(repo)
 })
 
 describe('structured diff review', () => {
@@ -134,7 +139,7 @@ describe('structured diff review', () => {
         text: 'hello',
       })
     } finally {
-      rmSync(fresh, { recursive: true, force: true })
+      rmSync(fresh, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 

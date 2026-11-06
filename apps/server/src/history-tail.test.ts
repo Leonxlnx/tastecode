@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -6,6 +6,7 @@ import type { DomainEvent, Item } from '@harness/contracts'
 import { readHistoryPage } from './history-page.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { readIndexedNewestHistoryPage } from './history-tail.js'
+import { removeTestFolder } from './git-fixture.test-support.js'
 import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
 
@@ -13,7 +14,7 @@ const THREAD = 'thread'
 const directories: string[] = []
 
 afterEach(() => {
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
+  for (const directory of directories.splice(0)) removeTestFolder(directory)
 })
 
 function newStore(location = ':memory:'): Store {
@@ -312,9 +313,13 @@ describe('the indexed newest history page', () => {
   it('leaves imported provider turns and threads another build wrote to the full read', () => {
     const location = fileLocation()
     let store = newStore(location)
-    for (let index = 0; index < 30; index += 1) {
-      for (const event of plainTurn(index)) store.append(THREAD, event)
-    }
+    // One transaction on the file database, not one per event: on a busy Windows runner the
+    // per-event commits alone ran past the 20 s limit (CI 42109425713).
+    store.appendBatchWithSerializedEvents(
+      Array.from({ length: 30 }, (_, index) => plainTurn(index))
+        .flat()
+        .map((event) => ({ threadId: THREAD, event })),
+    )
     expect(readIndexedNewestHistoryPage(store, THREAD, 2, 8)).toEqual(expectedPage(store, 2))
     store.close()
 

@@ -5,6 +5,7 @@ import {
   capturePreview,
   reportStartupMilestone,
 } from './bridge.js'
+import { clientCapabilities } from './browser-capability.js'
 import { parseStartupMethodResult } from './transport-startup-validation.js'
 
 type WireError = { message?: string; detail?: string }
@@ -445,9 +446,8 @@ class WebSocketTransport implements Transport {
       // socket only after older queued mutations are on the wire, preserving
       // request order across the disconnect.
       this.#setState('open')
-      void this.request('client.capabilities', { previewCapture: canCapturePreview }).catch(
-        () => undefined,
-      )
+      // A reconnect announces the chats this window shows again, for agent browser commands.
+      void this.request('client.capabilities', clientCapabilities()).catch(() => undefined)
     }
 
     socket.onmessage = (event) => {

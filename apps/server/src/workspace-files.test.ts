@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, opendir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, opendir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -22,7 +22,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 afterEach(async () => {
   vi.mocked(opendir).mockReset()
-  await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
+  await Promise.all(
+    temporary
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, maxRetries: 5, retryDelay: 100 })),
+  )
 })
 
 async function fixture(): Promise<string> {
@@ -56,6 +60,8 @@ describe('workspace files', () => {
     const root = await fixture()
     const result = await listWorkspaceDirectory(root)
 
+    // Paths are relative to this folder, which the Files tab needs to show a file where it is.
+    expect(result.root).toBe(await realpath(root))
     expect(
       result.entries.map(({ name, kind, restricted }) => ({ name, kind, restricted })),
     ).toEqual([
@@ -69,7 +75,11 @@ describe('workspace files', () => {
     const outside = await mkdtemp(path.join(os.tmpdir(), 'harness-workspace-linked-file-'))
     temporary.push(root, outside)
 
-    await expect(listWorkspaceDirectory(root)).resolves.toEqual({ path: '', entries: [] })
+    await expect(listWorkspaceDirectory(root)).resolves.toEqual({
+      path: '',
+      root: await realpath(root),
+      entries: [],
+    })
 
     // A directory junction stands in for the link on hosts that deny symlinks,
     // so the listing rule stays covered on Windows without Developer Mode.
@@ -81,7 +91,11 @@ describe('workspace files', () => {
       await mkdir(path.join(outside, 'target-dir'))
       await symlink(outside, path.join(root, 'linked'), 'junction')
     }
-    await expect(listWorkspaceDirectory(root)).resolves.toEqual({ path: '', entries: [] })
+    await expect(listWorkspaceDirectory(root)).resolves.toEqual({
+      path: '',
+      root: await realpath(root),
+      entries: [],
+    })
   })
 
   it('reads bounded public text and rejects credentials', async () => {

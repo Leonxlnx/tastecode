@@ -15,7 +15,8 @@ const roots: string[] = []
 
 afterEach(() => {
   vi.restoreAllMocks()
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 function harness(input: Partial<CustomHarness> = {}): CustomHarness {

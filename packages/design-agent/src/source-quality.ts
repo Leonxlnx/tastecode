@@ -4,6 +4,7 @@ import type { AssetManifest } from './assets.js'
 import type { PageBlueprint } from './page.js'
 import {
   containedWorkspaceFile,
+  DesignScanLimitError,
   readWorkspaceFile,
   workspaceEntries,
   normalizeWorkspaceFile,
@@ -51,9 +52,18 @@ export function validateDesignSourceQuality(
   })
   if (violations.length) {
     throw new DesignSourceQualityError(
-      `design source quality failed; remove newly introduced card rails or unmanifested SVG substitutes: ${violations.join('; ')}`,
+      `design source quality failed; remove newly introduced card rails or unmanifested SVG substitutes: ${countedViolations(violations)}`,
     )
   }
+}
+
+/** One entry per distinct violation, so a repeated fragment reads once with its count. */
+function countedViolations(violations: readonly string[]): string {
+  const counts = new Map<string, number>()
+  for (const violation of violations) counts.set(violation, (counts.get(violation) ?? 0) + 1)
+  return [...counts]
+    .map(([violation, count]) => (count > 1 ? `${violation} (${count}×)` : violation))
+    .join('; ')
 }
 
 export function designSourceQualityBaseline(
@@ -101,12 +111,17 @@ function designSourceViolations(
     const bytes = readWorkspaceFile(absolute, MAX_SOURCE_SCAN_BYTES)
     totalBytes += bytes.length
     if (totalBytes > MAX_SOURCE_SCAN_BYTES)
-      throw new Error('Design source scan exceeds 32 MB; reduce the workspace scope')
+      throw new DesignScanLimitError('Design source scan exceeds 32 MB')
     const source = bytes.toString('utf8').replace(/\/\*[\s\S]*?\*\//g, '')
 
     if (extension === '.svg') {
-      // A standalone illustration in a dashboard is still a drawn substitute for real imagery.
-      if (!approvedSvgFiles.has(normalized) && !(nativeDashboard && isIconSvg(source))) {
+      // A browser or app icon file and a single icon glyph are interface, not a drawn substitute
+      // for imagery; a standalone illustration still is, in a dashboard too.
+      if (
+        !approvedSvgFiles.has(normalized) &&
+        !SITE_ICON_FILE.test(path.posix.basename(normalized)) &&
+        !isIconSvg(source)
+      ) {
         violations.push(
           `${normalized}: unmanifested standalone SVG substitute ${sourceFingerprint(source)}`,
         )
@@ -133,6 +148,8 @@ function designSourceViolations(
     scanMarkupCardRails(source, normalized, cardRails)
     if (!nativeDashboard && !approvedSvgFiles.has(normalized)) {
       for (const fragment of svgFragments(source)) {
+        // Inline arrows, checks and menu glyphs are icons, however often a page repeats them.
+        if (isIconSvg(fragment)) continue
         violations.push(
           `${normalized}: unmanifested inline SVG substitute ${sourceFingerprint(fragment)}`,
         )
@@ -142,8 +159,13 @@ function designSourceViolations(
   return (referenceBound ? violations : [...violations, ...cardRails]).sort()
 }
 
+/** Files a browser or OS shows as the site's icon (favicon.svg, Next.js app/icon.svg, …). */
+const SITE_ICON_FILE =
+  /^(?:favicon|icon|apple-icon|apple-touch-icon|mask-icon|safari-pinned-tab)(?:[-_.@][\w.@-]*)?\.svg$/i
+
 /** Icon sets ship glyphs of a few hundred bytes to a few KB; larger files are artwork. */
 const ICON_SVG_MAX_BYTES = 6_000
+const ICON_SVG_MAX_GRID = 640
 
 /**
  * A standalone SVG that reads as one icon glyph: small, roughly square, and free of raster
@@ -154,11 +176,15 @@ function isIconSvg(source: string): boolean {
   if (Buffer.byteLength(markup) > ICON_SVG_MAX_BYTES) return false
   if (/<(?:image|text|foreignObject|linearGradient|radialGradient|pattern|filter)\b/i.test(markup))
     return false
+  // An empty frame draws nothing; an icon draws at least one shape.
+  if (!/<(?:path|circle|ellipse|rect|line|polyline|polygon|use)\b/i.test(markup)) return false
   const root = /<svg\b[^>]*>/i.exec(markup)?.[0]
   const box = root ? svgBox(root) : undefined
   if (!box) return false
   const ratio = box.width / box.height
-  return ratio >= 0.5 && ratio <= 2
+  // Icon sets draw on grids of 16 to 512 units (Font Awesome up to 640x512); a scene drawn
+  // on a 1200-unit canvas is artwork even when it is small and square enough.
+  return ratio >= 0.5 && ratio <= 2 && Math.max(box.width, box.height) <= ICON_SVG_MAX_GRID
 }
 
 /** The drawing box of a root `<svg>` tag from its viewBox, or from numeric width and height. */
@@ -358,7 +384,9 @@ export function designSourceFiles(workspacePath: string): string[] {
       ({ relative, file }) =>
         file &&
         extensions.has(path.extname(relative).toLowerCase()) &&
-        !/(?:\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)__tests__\/)/i.test(relative),
+        !/(?:\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)__tests__\/)/i.test(relative) &&
+        // Minified and bundled files are shipped libraries or build output, not authored design.
+        !/[.-](?:min|bundle)\.(?:[cm]?js|css)$/i.test(relative),
     )
     .map(({ relative }) => relative)
 }

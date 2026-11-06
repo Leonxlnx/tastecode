@@ -13,6 +13,7 @@ import { createProjectListProjector, type ProjectListState } from './project-lis
 import {
   DESIGN_PHASE_MARKER,
   DESIGN_PHASE_NOTICE,
+  designPhaseLanguageReminder,
   designPhaseNotice,
   RESTORE_CONTEXT_NOTICE,
 } from './provider-session.js'
@@ -506,7 +507,7 @@ describe('provider history integration', () => {
       expect(store.thread('external:codex:elsewhere')).toBeUndefined()
       expect(store.project(spellings[0]!)).toBeUndefined()
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -649,6 +650,16 @@ describe('provider history integration', () => {
     expect(quote.startsWith('A one-page website for Brotzeit')).toBe(true)
     expect(quote.length).toBeLessThanOrEqual(120)
     expect(notice).not.toContain('Nymphenburger')
+  })
+
+  // A real Codex run narrated its third Review in German for this English request.
+  it('repeats the language rule at the end of a long phase prompt', () => {
+    const request =
+      'A one-page website for Brotzeit, a small sourdough bakery in Munich with a cafe corner.'
+    const prompt = `${designPhaseNotice(request)}${'Review context. '.repeat(5_000)}${designPhaseLanguageReminder(request)}`
+    expect(prompt.startsWith(DESIGN_PHASE_MARKER)).toBe(true)
+    expect(prompt.slice(-400)).toContain(`the language of the user's request ("${request}")`)
+    expect(designPhaseLanguageReminder()).toContain("the language of the user's request")
   })
 
   it('hides Design phase prompts that the provider saved as turns of their own', async () => {
@@ -819,7 +830,7 @@ describe('provider history integration', () => {
         await history.load('local')
         expect(messages('local').map((item) => item.text)).toEqual(['A bakery page', closing])
       } finally {
-        rmSync(root, { recursive: true, force: true })
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     })
 
@@ -2048,7 +2059,7 @@ describe('provider history after a restore', () => {
         second.close()
       }
     } finally {
-      rmSync(directory, { recursive: true, force: true })
+      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })
@@ -2173,7 +2184,7 @@ describe('a Claude chat that carried on by itself', () => {
         ),
       ).toHaveLength(2)
     } finally {
-      rmSync(configDir, { recursive: true, force: true })
+      rmSync(configDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })

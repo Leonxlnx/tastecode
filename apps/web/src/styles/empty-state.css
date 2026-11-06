@@ -1,0 +1,29 @@
+/* The one empty state (ui/EmptyState.tsx): quiet, centred in the space it was given. */
+.empty-state {
+  display: grid;
+  height: 100%;
+  place-content: center;
+  justify-items: center;
+  gap: 9px;
+  padding: 28px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.empty-state > svg {
+  width: 30px;
+  height: 30px;
+  stroke-width: 1.6;
+}
+
+.empty-state strong {
+  color: var(--text);
+  font-size: var(--t-lg);
+  font-weight: 540;
+}
+
+.empty-state span {
+  max-width: 340px;
+  font-size: var(--t-sm);
+  line-height: 1.5;
+}

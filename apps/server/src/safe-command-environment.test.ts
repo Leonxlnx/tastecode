@@ -15,7 +15,8 @@ import { commandRuntimeDirectory, safeCommandEnvironment } from './safe-command-
 const scratch: string[] = []
 
 afterEach(() => {
-  for (const directory of scratch.splice(0)) rmSync(directory, { recursive: true, force: true })
+  for (const directory of scratch.splice(0))
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 /** Isolated runtime path; never the shared live directory. */
