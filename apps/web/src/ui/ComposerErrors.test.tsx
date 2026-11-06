@@ -98,5 +98,9 @@ describe('ComposerErrors', () => {
     expect(shelf().classList.contains('composer__provider-shelf--info')).toBe(true)
     view.rerender(<ComposerErrors errors={[note, { id: 'turn:1', message: 'Request failed' }]} />)
     expect(shelf().classList.contains('composer__provider-shelf--info')).toBe(false)
+    // The note keeps its own tone beside the error.
+    const row = (text: string) => screen.getByText(text).closest('.composer__error-row')!
+    expect(row(note.message).classList.contains('composer__error-row--info')).toBe(true)
+    expect(row('Request failed').classList.contains('composer__error-row--info')).toBe(false)
   })
 })
