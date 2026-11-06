@@ -137,29 +137,6 @@
   padding-inline: 14px;
 }
 
-.workspace-empty {
-  display: grid;
-  height: 100%;
-  place-content: center;
-  justify-items: center;
-  gap: 9px;
-  padding: 28px;
-  color: var(--text-3);
-  text-align: center;
-}
-
-.workspace-empty strong {
-  color: var(--text);
-  font-size: var(--t-lg);
-  font-weight: 540;
-}
-
-.workspace-empty span {
-  max-width: 340px;
-  font-size: var(--t-sm);
-  line-height: 1.5;
-}
-
 .workspace-terminal {
   height: 100%;
   min-height: 0;
@@ -1365,7 +1342,7 @@ textarea.workspace-review__field {
   background: var(--bg);
 }
 
-.workspace-browser__failure .workspace-empty strong {
+.workspace-browser__failure .empty-state strong {
   max-width: 100%;
   overflow-wrap: anywhere;
 }
