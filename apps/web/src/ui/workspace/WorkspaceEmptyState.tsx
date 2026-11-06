@@ -24,6 +24,7 @@ export function WorkspaceEmptyState(props: {
   kind: keyof typeof ICONS
   title: string
   detail: string
+  role?: 'alert'
   /** Actions under the detail, e.g. Retry. */
   children?: ReactNode
 }) {
@@ -33,6 +34,7 @@ export function WorkspaceEmptyState(props: {
       icon={<Icon size={30} strokeWidth={1.6} aria-hidden />}
       title={props.title}
       detail={props.detail}
+      role={props.role}
     >
       {props.children}
     </EmptyState>
