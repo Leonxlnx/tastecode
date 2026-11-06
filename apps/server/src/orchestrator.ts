@@ -177,6 +177,7 @@ import {
   type AvailableBackgroundModelSource,
   type BackgroundModelSourceLoader,
 } from './background-model.js'
+import { designAttachedBeforeNote, designAttachmentKey } from './design-attachments.js'
 import { closestReasoningEffort } from './reasoning-effort.js'
 import { VoiceService, type VoiceTranscriber } from './voice.js'
 import {
@@ -801,6 +802,8 @@ export class Orchestrator {
    */
   #heldQueues = new Set<string>()
   #designFlows = new Map<string, DesignFlow>()
+  /** Per provider session and chat, the Design attachments it already holds (see designAttachmentKey). */
+  #designDelivered = new WeakMap<AgentSession, Map<string, Set<string>>>()
   #designTurns = new Map<string, string>()
   #designStartingThreads = new Set<string>()
   #designStartWaiters = new Map<string, (turnId: string) => void>()
@@ -6140,6 +6143,19 @@ ${JSON.stringify(deck, null, 2)}
       : []
   }
 
+  /**
+   * A new provider session, after a restart or a provider change, starts empty, so it is sent
+   * every image again once.
+   */
+  #deliveredDesignAttachments(threadId: string): Set<string> {
+    const session = this.#get(threadId).session
+    let chats = this.#designDelivered.get(session)
+    if (!chats) this.#designDelivered.set(session, (chats = new Map()))
+    let keys = chats.get(threadId)
+    if (!keys) chats.set(threadId, (keys = new Set()))
+    return keys
+  }
+
   #designReferenceAttachments(threadId: string, flow: DesignFlow): string[] {
     if (flow.phase === 'response') return flow.referenceAttachments
     if (!this.#get(threadId).session.capabilities.images) {
@@ -6197,6 +6213,14 @@ ${JSON.stringify(deck, null, 2)}
           ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
         ]
       }
+      // The provider keeps every image of the chat in its context and sends them all again with
+      // each request, so an image it already has is named instead of attached (#2240).
+      const delivered = this.#deliveredDesignAttachments(threadId)
+      const attachedBefore = attachments.filter((file) => delivered.has(designAttachmentKey(file)))
+      if (attachedBefore.length) {
+        attachments = attachments.filter((file) => !attachedBefore.includes(file))
+        prompt = `${prompt}\n\n${designAttachedBeforeNote(attachedBefore, this.#repoPath(threadId))}`
+      }
       const panicGeneration = this.#panicGeneration
       this.#checkoutAccess.beginTurn(this.#repoPath(threadId), threadId)
       for (const [turnId, owner] of this.#designTurns) {
@@ -6222,6 +6246,7 @@ ${JSON.stringify(deck, null, 2)}
             await session.interrupt(threadId)
             throw new Error('Design turn start was cancelled')
           }
+          for (const file of attachments) delivered.add(designAttachmentKey(file))
           return turnId
         })
       this.#designProviderStarts.set(threadId, providerStart)

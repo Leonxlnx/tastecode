@@ -21,6 +21,7 @@ const CLEANUP_TIMEOUT_MS = 2_000
 const MAX_PENDING_CAPTURES = 8
 const MAX_EARLY_CANCELLATIONS = 32
 const ISOLATED_WORLD = 1001
+const SCREENSHOT_JPEG_QUALITY = 82
 
 type CaptureJob = {
   request: PreviewCaptureRequest
@@ -283,17 +284,20 @@ export class PreviewCaptureOwner {
           viewport.height,
         )
         // capturePage clips to the visible viewport even when given the document height.
+        // JPEG, since the agent's provider sends every screenshot of the chat again with each
+        // request, and a lossless capture of a long, photo-heavy page is many times larger (#2240).
         const image: { data: string } = await whileActive(
           () =>
             preview!.webContents.debugger.sendCommand('Page.captureScreenshot', {
-              format: 'png',
+              format: 'jpeg',
+              quality: SCREENSHOT_JPEG_QUALITY,
               captureBeyondViewport: true,
               fromSurface: true,
               clip: { x: 0, y: 0, width: viewport.width, height, scale: 1 },
             }),
           signal,
         )
-        const destination = path.join(directory, `${key}.png`)
+        const destination = path.join(directory, `${key}.jpg`)
         await whileActive(
           () =>
             files.writeFile(destination, Buffer.from(image.data, 'base64'), {
