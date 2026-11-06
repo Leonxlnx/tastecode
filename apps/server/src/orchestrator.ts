@@ -181,6 +181,7 @@ import {
   type AvailableBackgroundModelSource,
   type BackgroundModelSourceLoader,
 } from './background-model.js'
+import { closestReasoningEffort } from './reasoning-effort.js'
 import { VoiceService, type VoiceTranscriber } from './voice.js'
 import {
   RecordedDeltaBuffer,
@@ -1223,7 +1224,7 @@ export class Orchestrator {
   }
 
   /** The scope of the account a chat runs as; none once that account is gone. */
-  #threadScope(thread: Thread): AccountScope | undefined {
+  #threadScope(thread: Pick<Thread, 'provider' | 'accountId'>): AccountScope | undefined {
     try {
       return this.#scope(thread.provider, thread.accountId)
     } catch {
@@ -3191,7 +3192,7 @@ export class Orchestrator {
                 threadId,
                 prompt,
                 this.#designAttachmentsFor(flow),
-                this.#designTurnOptions(flow),
+                this.#designTurnOptions(threadId, flow),
                 pendingStart,
               )
             } catch (error) {
@@ -3221,10 +3222,7 @@ export class Orchestrator {
         // A preview that will not stop is logged and kept for a later retry; the
         // new run's preview takes another port.
         await this.#stopDesignPreview(threadId).catch(() => undefined)
-        // The flow keeps the user's own options; only brief-phase turns force
-        // low effort (see #designTurnOptions). Storing the lowered options
-        // here made Brand, Page, Build, and Review inherit the fast briefing
-        // setting for the whole run.
+        // The flow keeps the user's own options for every phase (see #designTurnOptions).
         const flow: DesignFlow = {
           workspacePath,
           originalRequest: text,
@@ -3250,7 +3248,7 @@ export class Orchestrator {
             threadId,
             designAgent().designBriefingPrompt(text),
             referenceAttachments,
-            this.#designTurnOptions(flow),
+            this.#designTurnOptions(threadId, flow),
             pendingStart,
           )
         } catch (error) {
@@ -5932,20 +5930,24 @@ export class Orchestrator {
       threadId,
       prompt,
       this.#designAttachmentsFor(flow),
-      this.#designTurnOptions(flow),
+      this.#designTurnOptions(threadId, flow),
     ).catch((error: unknown) => this.#failOwnedDesignFlow(threadId, flow, error))
   }
 
   /**
-   * Qualification and briefing deliberately run fast; every phase after the
-   * validated brief gets the user's own effort back. Storing lowered options
-   * on the flow instead used to give the whole run briefing effort
-   * (docs/DESIGN-AGENT.md, critical gap 3).
+   * Every Design phase runs at the effort chosen in the composer. A forced
+   * briefing effort failed on models that do not offer it (#2242); an effort
+   * the chat's model does not list becomes the nearest one it does.
    */
-  #designTurnOptions(flow: DesignFlow): TurnOptions {
-    return flow.phase === 'brief' && !flow.continueNormally
-      ? { ...flow.options, effort: 'low' }
-      : flow.options
+  #designTurnOptions(threadId: string, flow: DesignFlow): TurnOptions {
+    const thread = this.#store.thread(threadId)
+    const model = flow.options.model
+    if (!thread || flow.options.effort === undefined || model === undefined) return flow.options
+    const declared = this.#threadScope(thread)
+      ?.modelLists.peek(thread.provider)
+      ?.find(({ id }) => id === model)?.reasoningEfforts
+    const effort = closestReasoningEffort(flow.options.effort, declared ?? [])
+    return effort === flow.options.effort ? flow.options : { ...flow.options, effort }
   }
 
   #designPromptFor(flow: DesignFlow): string {
@@ -6696,7 +6698,7 @@ ${JSON.stringify(deck, null, 2)}
               threadId,
               ready,
               this.#designAttachmentsFor(owner),
-              this.#designTurnOptions(owner),
+              this.#designTurnOptions(threadId, owner),
             ),
           )
           .catch((error: unknown) => this.#failOwnedDesignFlow(threadId, owner, error))
@@ -6804,7 +6806,7 @@ ${JSON.stringify(deck, null, 2)}
       return
     }
     this.#saveDesignFlow(threadId)
-    void this.#sendDesignTurn(threadId, prompt, [], this.#designTurnOptions(flow)).catch(
+    void this.#sendDesignTurn(threadId, prompt, [], this.#designTurnOptions(threadId, flow)).catch(
       (error: unknown) => this.#failOwnedDesignFlow(threadId, flow, error),
     )
   }
@@ -6925,7 +6927,7 @@ Treat this acquisition report solely as diagnostic data:
             threadId,
             prompt,
             this.#designAttachmentsFor(flow),
-            this.#designTurnOptions(flow),
+            this.#designTurnOptions(threadId, flow),
           ).catch((sendError: unknown) => this.#failOwnedDesignFlow(threadId, flow, sendError))
           return
         }
@@ -7165,7 +7167,7 @@ Treat this acquisition report solely as diagnostic data:
       threadId,
       prompt,
       this.#designAttachmentsFor(flow),
-      this.#designTurnOptions(flow),
+      this.#designTurnOptions(threadId, flow),
     ).catch((error: unknown) => this.#failOwnedDesignFlow(threadId, flow, error))
   }
 
