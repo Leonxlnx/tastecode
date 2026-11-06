@@ -507,7 +507,7 @@ describe('provider history integration', () => {
       expect(store.thread('external:codex:elsewhere')).toBeUndefined()
       expect(store.project(spellings[0]!)).toBeUndefined()
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -830,7 +830,7 @@ describe('provider history integration', () => {
         await history.load('local')
         expect(messages('local').map((item) => item.text)).toEqual(['A bakery page', closing])
       } finally {
-        rmSync(root, { recursive: true, force: true })
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     })
 
@@ -2059,7 +2059,7 @@ describe('provider history after a restore', () => {
         second.close()
       }
     } finally {
-      rmSync(directory, { recursive: true, force: true })
+      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })
@@ -2184,7 +2184,7 @@ describe('a Claude chat that carried on by itself', () => {
         ),
       ).toHaveLength(2)
     } finally {
-      rmSync(configDir, { recursive: true, force: true })
+      rmSync(configDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })

@@ -115,7 +115,7 @@ describe('takeSnapshot', () => {
   it('refuses a folder that is not a repository', async () => {
     const plain = mkdtempSync(path.join(os.tmpdir(), 'harness-plain-'))
     await expect(takeSnapshot(plain)).rejects.toBeInstanceOf(NotARepositoryForCheckpoint)
-    rmSync(plain, { recursive: true, force: true })
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
 
   it('says git refuses a repository another user owns, not that there is none', async () => {
@@ -133,7 +133,7 @@ describe('takeSnapshot', () => {
       expect((refused as DubiousOwnership).message).toContain(repo)
     } finally {
       vi.unstubAllEnvs()
-      rmSync(configDir, { recursive: true, force: true })
+      rmSync(configDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -165,7 +165,7 @@ describe('takeSnapshot', () => {
         execFileSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: fresh, stdio: 'ignore' }),
       ).toThrow()
     } finally {
-      rmSync(fresh, { recursive: true, force: true })
+      rmSync(fresh, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -212,7 +212,7 @@ describe('takeSnapshot from the checkout index', () => {
         chmodSync(tracked, 0o644)
         if (linked) {
           git('worktree', 'remove', '--force', checkout)
-          rmSync(checkout, { recursive: true, force: true })
+          rmSync(checkout, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
         }
       }
     },
@@ -300,7 +300,7 @@ describe('takeSnapshot of a checkout that matches HEAD', () => {
       return { result, commands }
     } finally {
       vi.unstubAllEnvs()
-      rmSync(traceDir, { recursive: true, force: true })
+      rmSync(traceDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   }
   /**
@@ -322,7 +322,7 @@ describe('takeSnapshot of a checkout that matches HEAD', () => {
       if (trackedIgnored.length) run('add', '-f', '--', ...trackedIgnored)
       return run('write-tree')
     } finally {
-      rmSync(indexDir, { recursive: true, force: true })
+      rmSync(indexDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   }
   const treeOf = (commit: string) => git('rev-parse', `${commit}^{tree}`).trim()
@@ -858,7 +858,7 @@ it.each(['checkout', 'git-directory'])(
       expect(git('show', `${retained}:tracked.txt`)).toBe('retained\n')
     } finally {
       store?.close()
-      rmSync(data, { recursive: true, force: true })
+      rmSync(data, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   },
 )

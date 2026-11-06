@@ -1739,7 +1739,7 @@ describe('live access level', () => {
         expect(store.threadApproval(thread.id)).toBe('auto')
       } finally {
         store.close()
-        rmSync(directory, { recursive: true, force: true })
+        rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
   )
@@ -1803,7 +1803,9 @@ describe('reply style', () => {
 describe('default skills', () => {
   const skillsHarness = async (services?: ProviderControlsOptions['services']) => {
     const parent = mkdtempSync(path.join(os.tmpdir(), 'tc-orchestrator-skills-'))
-    onTestFinished(() => rmSync(parent, { recursive: true, force: true }))
+    onTestFinished(() =>
+      rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
+    )
     const root = await writeDefaultSkillsFixture(parent)
     // A provider that loads `.agents/skills` lists the user's and the project's; keep both empty.
     const project = path.join(parent, 'project')
@@ -2346,7 +2348,7 @@ describe('queued Side-chat channel', () => {
         restartedStore.close()
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })
@@ -2530,7 +2532,7 @@ describe('durable turn timing', () => {
     } finally {
       now.mockRestore()
       await orchestrator.disposeAll()
-      rmSync(workspace, { recursive: true, force: true })
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -2783,7 +2785,7 @@ describe('history replay', () => {
         await orchestrator.disposeAll()
         store.close()
       } finally {
-        rmSync(directory, { recursive: true, force: true })
+        rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     })
 
@@ -2814,7 +2816,7 @@ describe('history replay', () => {
         await orchestrator.disposeAll()
       } finally {
         store.close()
-        rmSync(directory, { recursive: true, force: true })
+        rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     })
 
@@ -3469,7 +3471,7 @@ describe('provider-neutral design briefing', () => {
       expect(sessions[1]!.sent).toEqual([])
     } finally {
       await orchestrator.disposeAll()
-      rmSync(workspace, { recursive: true, force: true })
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -3692,7 +3694,7 @@ describe('provider-neutral design briefing', () => {
     } finally {
       await orchestrator.disposeAll()
       store.close()
-      rmSync(workspace, { recursive: true, force: true })
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -3842,7 +3844,7 @@ describe('provider-neutral design briefing', () => {
       } finally {
         await orchestrator.disposeAll()
         store.close()
-        rmSync(workspace, { recursive: true, force: true })
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
   )
@@ -3867,7 +3869,7 @@ describe('provider-neutral design briefing', () => {
       } finally {
         await orchestrator.disposeAll()
         store.close()
-        rmSync(workspace, { recursive: true, force: true })
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
   )
@@ -3908,7 +3910,7 @@ describe('provider-neutral design briefing', () => {
       } finally {
         await orchestrator.disposeAll()
         store.close()
-        rmSync(workspace, { recursive: true, force: true })
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
   )
@@ -3938,7 +3940,7 @@ describe('provider-neutral design briefing', () => {
     } finally {
       await orchestrator.disposeAll()
       store.close()
-      rmSync(workspace, { recursive: true, force: true })
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -3985,7 +3987,7 @@ describe('provider-neutral design briefing', () => {
     } finally {
       await orchestrator.disposeAll()
       store.close()
-      rmSync(workspace, { recursive: true, force: true })
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -4256,7 +4258,7 @@ describe('provider-neutral design briefing', () => {
       expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false)
     } finally {
       await orchestrator.disposeAll()
-      rmSync(workspace, { recursive: true, force: true })
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -4289,7 +4291,7 @@ describe('provider-neutral design briefing', () => {
       expect(sessions[0]?.sent).toHaveLength(2)
     } finally {
       await orchestrator.disposeAll()
-      rmSync(workspace, { recursive: true, force: true })
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -4321,7 +4323,7 @@ describe('provider-neutral design briefing', () => {
       expect(session.interrupted).toBe(true)
     } finally {
       await orchestrator.disposeAll()
-      rmSync(workspace, { recursive: true, force: true })
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -4361,7 +4363,7 @@ describe('provider-neutral design briefing', () => {
         expect(sessions[0]?.sent).toEqual(['Continue as a normal task.'])
       } finally {
         await orchestrator.disposeAll()
-        rmSync(workspace, { recursive: true, force: true })
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
   )
@@ -4414,7 +4416,7 @@ describe('provider-neutral design briefing', () => {
     } finally {
       await orchestrator.disposeAll()
       store.close()
-      rmSync(workspace, { recursive: true, force: true })
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -4477,7 +4479,7 @@ describe('provider-neutral design briefing', () => {
       } finally {
         await orchestrator.disposeAll()
         store.close()
-        rmSync(workspace, { recursive: true, force: true })
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
   )
@@ -4880,7 +4882,7 @@ describe('provider-neutral design briefing', () => {
     } finally {
       resolveCapture?.(undefined)
       await result.orchestrator.disposeAll()
-      rmSync(result.workspace, { recursive: true, force: true })
+      rmSync(result.workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -4938,7 +4940,7 @@ describe('provider-neutral design briefing', () => {
       releaseStart()
       await result.orchestrator.disposeAll()
       result.store.close()
-      rmSync(result.workspace, { recursive: true, force: true })
+      rmSync(result.workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -4968,7 +4970,7 @@ describe('provider-neutral design briefing', () => {
     } finally {
       await orchestrator.disposeAll()
       store.close()
-      rmSync(workspace, { recursive: true, force: true })
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -5011,7 +5013,7 @@ describe('provider-neutral design briefing', () => {
     } finally {
       await orchestrator.disposeAll()
       store.close()
-      rmSync(workspace, { recursive: true, force: true })
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -5039,7 +5041,7 @@ describe('provider-neutral design briefing', () => {
     } finally {
       await result.orchestrator.disposeAll()
       result.store.close()
-      rmSync(result.workspace, { recursive: true, force: true })
+      rmSync(result.workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -5072,7 +5074,7 @@ describe('provider-neutral design briefing', () => {
       releaseStart()
       await result.orchestrator.disposeAll()
       result.store.close()
-      rmSync(result.workspace, { recursive: true, force: true })
+      rmSync(result.workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -5096,7 +5098,7 @@ describe('provider-neutral design briefing', () => {
     } finally {
       resolveCapture?.(undefined)
       await result.orchestrator.disposeAll()
-      rmSync(result.workspace, { recursive: true, force: true })
+      rmSync(result.workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -5261,7 +5263,7 @@ describe('provider-neutral design briefing', () => {
       release()
       await result.orchestrator.disposeAll()
       result.store.close()
-      rmSync(result.workspace, { recursive: true, force: true })
+      rmSync(result.workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -5280,7 +5282,7 @@ describe('provider-neutral design briefing', () => {
       previewStops.failures.length = 0
       await result.orchestrator.disposeAll()
       result.store.close()
-      rmSync(result.workspace, { recursive: true, force: true })
+      rmSync(result.workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -5295,7 +5297,7 @@ describe('provider-neutral design briefing', () => {
       previewStops.failures.length = 0
       await result.orchestrator.disposeAll()
       result.store.close()
-      rmSync(result.workspace, { recursive: true, force: true })
+      rmSync(result.workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -5317,7 +5319,7 @@ describe('provider-neutral design briefing', () => {
       release()
       await result.orchestrator.disposeAll()
       result.store.close()
-      rmSync(result.workspace, { recursive: true, force: true })
+      rmSync(result.workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -5348,7 +5350,7 @@ describe('provider-neutral design briefing', () => {
       releaseStop()
       await result.orchestrator.disposeAll()
       result.store.close()
-      rmSync(result.workspace, { recursive: true, force: true })
+      rmSync(result.workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -5371,7 +5373,7 @@ describe('provider-neutral design briefing', () => {
       release()
       await result.orchestrator.disposeAll()
       result.store.close()
-      rmSync(result.workspace, { recursive: true, force: true })
+      rmSync(result.workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -5408,7 +5410,7 @@ describe('provider-neutral design briefing', () => {
       releaseStop()
       await result.orchestrator.disposeAll()
       result.store.close()
-      rmSync(result.workspace, { recursive: true, force: true })
+      rmSync(result.workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -5858,7 +5860,7 @@ describe('provider-neutral design briefing', () => {
         await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
       } finally {
         await orchestrator.disposeAll()
-        rmSync(workspace, { recursive: true, force: true })
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
   )
@@ -7448,7 +7450,7 @@ describe('persisted threads', () => {
     } finally {
       await orchestrator.disposeAll()
       store.close()
-      rmSync(worktreePath, { recursive: true, force: true })
+      rmSync(worktreePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -7528,7 +7530,7 @@ describe('persisted threads', () => {
         restartedStore.close()
       }
     } finally {
-      rmSync(directory, { recursive: true, force: true })
+      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -8259,7 +8261,7 @@ describe('provider commands', () => {
         expect(session.sent[2]!.endsWith('User request:\n/foo bar')).toBe(true)
       } finally {
         await orchestrator.disposeAll()
-        rmSync(workspace, { recursive: true, force: true })
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
   )
@@ -8322,8 +8324,8 @@ describe('skills inventory', () => {
     } finally {
       homedir.mockRestore()
       await orchestrator.disposeAll()
-      rmSync(project, { recursive: true, force: true })
-      rmSync(home, { recursive: true, force: true })
+      rmSync(project, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -9709,7 +9711,7 @@ describe('queued turns', () => {
         restartedStore.close()
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -10241,7 +10243,7 @@ describe('isolated sessions', { timeout: 60_000 }, () => {
   }, 60_000)
 
   afterAll(() => {
-    rmSync(fixtureRepo, { recursive: true, force: true })
+    rmSync(fixtureRepo, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
 
   beforeEach(() => {
@@ -10252,7 +10254,7 @@ describe('isolated sessions', { timeout: 60_000 }, () => {
   })
 
   afterEach(() => {
-    rmSync(path.dirname(repo), { recursive: true, force: true })
+    rmSync(path.dirname(repo), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
 
   it('places new private checkouts in the configured durable data directory', async () => {
@@ -10305,7 +10307,7 @@ describe('isolated sessions', { timeout: 60_000 }, () => {
       const workPath = store.thread(thread.id)!.worktreePath!
       const checkout = path.dirname(path.dirname(workPath))
       writeFileSync(path.join(checkout, 'file.txt'), 'agent work\n')
-      rmSync(workPath, { recursive: true, force: true })
+      rmSync(workPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 
       expect(await orchestrator.hasUnsavedWork(thread.id)).toBe(true)
       await expect(orchestrator.discardWorktree(thread.id)).rejects.toThrow(/uncommitted/i)
@@ -10333,7 +10335,12 @@ describe('isolated sessions', { timeout: 60_000 }, () => {
     try {
       const thread = await orchestrator.startThread('codex', nested, { isolate: true })
       const workPath = store.thread(thread.id)!.worktreePath!
-      rmSync(path.dirname(path.dirname(workPath)), { recursive: true, force: true })
+      rmSync(path.dirname(path.dirname(workPath)), {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      })
 
       expect(await orchestrator.hasUnsavedWork(thread.id)).toBe(false)
       await orchestrator.discardWorktree(thread.id)
@@ -10642,7 +10649,7 @@ describe('isolated sessions', { timeout: 60_000 }, () => {
       const gone = await orchestrator.startThread('codex', repo, { isolate: true })
       const alive = await orchestrator.startThread('codex', repo, { isolate: true })
       const missingPath = store.thread(gone.id)!.worktreePath!
-      rmSync(missingPath, { recursive: true, force: true })
+      rmSync(missingPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       await orchestrator.disposeAll()
 
       await orchestrator.recoverWorktrees()
@@ -10708,7 +10715,7 @@ describe('rolling a session back', () => {
   })
 
   afterEach(() => {
-    rmSync(repo, { recursive: true, force: true })
+    rmSync(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
 
   it('takes a checkpoint before the agent writes, not after', async () => {
@@ -11175,7 +11182,7 @@ describe('rolling a session back', () => {
     await expect(orchestrator.sendTurn(thread.id, 'a task')).resolves.toBeDefined()
     expect(orchestrator.checkpoints(thread.id)).toEqual([])
 
-    rmSync(plain, { recursive: true, force: true })
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
 })
 

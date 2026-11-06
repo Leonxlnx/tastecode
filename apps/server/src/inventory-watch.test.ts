@@ -173,7 +173,7 @@ describe('inventory watcher', () => {
       await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith(root), { timeout: 5_000 })
     } finally {
       watcher.clear()
-      rmSync(root, { recursive: true, force: true })
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -198,7 +198,7 @@ describe('inventory watcher', () => {
       })
     } finally {
       watcher.clear()
-      rmSync(root, { recursive: true, force: true })
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })

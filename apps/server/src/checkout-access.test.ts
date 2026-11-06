@@ -7,7 +7,8 @@ import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
 
 const dirs: string[] = []
 afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 function repo() {
   const base = mkdtempSync(path.join(os.tmpdir(), 'harness-access-'))

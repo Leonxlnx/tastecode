@@ -22,7 +22,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 afterEach(async () => {
   vi.mocked(opendir).mockReset()
-  await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
+  await Promise.all(
+    temporary
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, maxRetries: 5, retryDelay: 100 })),
+  )
 })
 
 async function fixture(): Promise<string> {

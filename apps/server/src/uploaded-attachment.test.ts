@@ -13,7 +13,11 @@ const directories: string[] = []
 
 afterEach(async () => {
   vi.restoreAllMocks()
-  await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })))
+  await Promise.all(
+    directories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, maxRetries: 5, retryDelay: 100 })),
+  )
 })
 
 describe('remote attachment materialization', () => {

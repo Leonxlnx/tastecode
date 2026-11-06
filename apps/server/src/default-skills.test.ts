@@ -14,7 +14,11 @@ async function tempDir(): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(temporary.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+  await Promise.all(
+    temporary
+      .splice(0)
+      .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })),
+  )
 })
 
 describe('default skills', () => {
