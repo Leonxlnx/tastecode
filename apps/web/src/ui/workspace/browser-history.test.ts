@@ -34,11 +34,11 @@ it('moves a page opened again to the top instead of listing it twice', () => {
   expect(readBrowserHistory()[0]?.visitedAt).toBe(3_000)
 })
 
-it('keeps one row for a page whose fragment moves, on the latest address', () => {
+it('keeps one row for a page whose fragment moves, and stores no fragment', () => {
   rememberBrowserVisit('https://docs.example/guide#start', 'Guide')
   rememberBrowserVisit('https://docs.example/guide#install', 'Guide')
 
-  expect(urls()).toEqual(['https://docs.example/guide#install'])
+  expect(urls()).toEqual(['https://docs.example/guide'])
 })
 
 it('keeps separate rows for different paths and queries', () => {
@@ -69,6 +69,30 @@ it('never stores a password from the address', () => {
 
   expect(urls()).toEqual(['https://site.example/admin'])
   expect(localStorage.getItem(STORAGE_KEY)).not.toContain('hunter2')
+})
+
+it('never stores a sign-in code, token or key from the address', () => {
+  rememberBrowserVisit(
+    'https://app.example/callback?code=abc123&state=xyz&Access_Token=tok1&id_token=tok2&key=k1&sig=s1&signature=s2&auth=a1&session=s3&password=p1&tab=files#access_token=frag',
+    'Signed in',
+  )
+
+  expect(urls()).toEqual(['https://app.example/callback?tab=files'])
+  const stored = localStorage.getItem(STORAGE_KEY) ?? ''
+  for (const secret of [
+    'abc123',
+    'xyz',
+    'tok1',
+    'tok2',
+    'k1',
+    's1',
+    's2',
+    'a1',
+    's3',
+    'p1',
+    'frag',
+  ])
+    expect(stored).not.toContain(secret)
 })
 
 it('lists only web pages', () => {

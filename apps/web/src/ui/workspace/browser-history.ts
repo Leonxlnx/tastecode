@@ -13,6 +13,20 @@ const BROWSER_HISTORY_LIMIT = 50
 // Some pages keep their whole document in the URL; that is not worth a slot.
 const MAX_URL_LENGTH = 2_048
 const MAX_TITLE_LENGTH = 300
+// Query parameters that carry sign-in codes, tokens or keys; they never reach storage.
+const SECRET_PARAMS = new Set([
+  'code',
+  'state',
+  'token',
+  'access_token',
+  'id_token',
+  'key',
+  'sig',
+  'signature',
+  'auth',
+  'session',
+  'password',
+])
 
 const BrowserHistorySchema = z.array(
   z.object({ url: z.string(), title: z.string(), visitedAt: z.number() }),
@@ -68,9 +82,13 @@ export function subscribeBrowserHistory(onChange: () => void): () => void {
 export function rememberBrowserVisit(url: string, title: string, now = Date.now()): void {
   const page = webPage(url)
   if (!page || page.href.length > MAX_URL_LENGTH) return
-  // A password in the address would otherwise sit in storage in plain text.
+  // A password, a sign-in code or a token in the address would otherwise sit in storage in
+  // plain text. The fragment can carry tokens too (implicit sign-in), and a row never needs it.
   page.username = ''
   page.password = ''
+  page.hash = ''
+  for (const name of [...page.searchParams.keys()])
+    if (SECRET_PARAMS.has(name.toLowerCase())) page.searchParams.delete(name)
   const key = pageKey(page)
   const visits = readBrowserHistory()
   const earlier = visits.find((visit) => pageKey(webPage(visit.url)) === key)
