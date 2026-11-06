@@ -6,7 +6,7 @@
   container-name: usage-reset;
 }
 
-.composer__usage-reset {
+.composer__error-row.composer__usage-reset {
   align-items: flex-start;
 }
 
@@ -60,7 +60,8 @@
     flex-basis: calc(100% - 32px);
   }
 
+  /* Under the copy: the action's label lines up with the text (icon 16 px + gap 8 px). */
   .composer__usage-reset > .composer__usage-reset-action {
-    margin-left: 24px;
+    margin-left: 14px;
   }
 }
