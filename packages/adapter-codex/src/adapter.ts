@@ -226,8 +226,19 @@ export function mapCodexError(notification: ErrorNotification): DomainEvent | un
   return {
     type: 'thread.error',
     threadId: notification.threadId,
-    message: notification.error.message,
+    message: requestTooLargeMessage(notification.error.message) ?? notification.error.message,
   }
+}
+
+/**
+ * Codex sends the whole chat, every image included, with each request, and the API refuses a
+ * body over its limit with raw JSON (#2240). The shape is from a user's report, not a capture.
+ */
+function requestTooLargeMessage(message: string): string | undefined {
+  const limit = /Encoded request body exceeds (\d+) bytes/u.exec(message)?.[1]
+  if (!limit) return undefined
+  const megabytes = Math.round(Number(limit) / (1024 * 1024))
+  return `This chat is too large for Codex to send: one request would pass its ${megabytes} MB limit, usually because of the images the chat holds. Continue in a new chat.`
 }
 
 export function mapCodexUsage(
