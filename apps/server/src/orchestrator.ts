@@ -159,6 +159,7 @@ import {
   AgentToolError,
   AgentToolsEndpoint,
   type AgentToolsGrant,
+  type BrowserToolsBroker,
 } from './agent-tools-mcp.js'
 import {
   SUBAGENT_INSTRUCTIONS,
@@ -953,6 +954,8 @@ export class Orchestrator {
       onSubagentEvent?: SubagentEventHandler
       /** Serve TasteCode's agent tools to chats on providers that take them. */
       agentTools?: boolean
+      /** Runs agent browser commands; without it the browser tools are not offered. */
+      browserTools?: BrowserToolsBroker
       onQueue?: (threadId: string, state: QueueState) => void
       onLog: (line: string) => void
       /** `accountId` is absent for the default account. */
@@ -1067,7 +1070,9 @@ export class Orchestrator {
       },
       interruptParent: (parentThreadId) => this.interrupt(parentThreadId),
     })
-    this.#agentTools = handlers.agentTools ? new AgentToolsEndpoint(this.#subagents) : undefined
+    this.#agentTools = handlers.agentTools
+      ? new AgentToolsEndpoint(this.#subagents, handlers.browserTools)
+      : undefined
     this.#onQueue = handlers.onQueue ?? (() => {})
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
