@@ -3377,11 +3377,14 @@
   align-items: center;
   gap: 8px;
   max-width: min(420px, calc(100vw - 36px));
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  padding: 9px 10px;
-  font-size: var(--t-sm);
+  padding: 5px 7px 5px 12px;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-popup);
+  color: var(--text);
+  box-shadow: var(--shadow-flyout);
+  font-size: 14px;
+  line-height: 20px;
   opacity: 1;
   transform: translateY(0) scale(1);
   transition:
@@ -3431,8 +3434,6 @@
 /* Sits above the error toast so the two never overlap when both are up. */
 .notice--offline {
   bottom: 62px;
-  border-color: color-mix(in srgb, var(--attention) 55%, var(--line-strong));
-  color: var(--text-2);
 }
 
 @media (max-width: 700px) {
@@ -3447,7 +3448,7 @@
   }
 }
 
-.notice__text {
+.notice .notice__text {
   /* Server error messages are the point of this toast; clamping to three
      lines beats truncating them to an unreadable single one. */
   display: -webkit-box;
