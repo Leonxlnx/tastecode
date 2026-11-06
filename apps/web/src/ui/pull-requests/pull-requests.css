@@ -494,9 +494,6 @@
   height: 100%;
 }
 
-.pr-list-message,
-.pr-detail-empty,
-.pr-detail-error,
 .pr-file-loading {
   display: grid;
   place-items: center;
@@ -508,34 +505,12 @@
   text-align: center;
 }
 
-.pr-list-message strong,
-.pr-detail-empty strong,
-.pr-detail-error strong {
-  color: var(--text);
-  font-size: var(--t-md);
-}
-
-.pr-list-message p,
-.pr-detail-empty p,
-.pr-detail-error p,
 .pr-no-patch p {
   max-width: 360px;
   margin: 0;
   color: var(--text-3);
   font-size: var(--t-sm);
   line-height: 1.45;
-}
-
-.pr-empty-emblem {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  background: var(--chrome-raised);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
-  box-shadow: var(--chrome-shadow);
-  color: var(--text-2);
 }
 
 /* Placeholder bars are the shared .skeleton primitive (styles/skeleton.css);
@@ -2742,6 +2717,23 @@
 
   .pr-summary-title h2 {
     font-size: var(--t-xl);
+  }
+}
+
+/* On a stage too narrow for both panes, the list takes the whole width until a pull request is
+   selected; the empty detail pane would only squeeze it. */
+@container chat-stage (max-width: 750px) {
+  .pr-workspace.is-unselected {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-x: hidden;
+  }
+
+  .pr-workspace.is-unselected .pr-detail-pane {
+    display: none;
+  }
+
+  .pr-workspace.is-unselected .pr-list-pane {
+    border-right: 0;
   }
 }
 

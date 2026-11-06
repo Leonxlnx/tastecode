@@ -116,6 +116,7 @@ import {
 import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
 import type { AppScreen } from './app-commands.js'
+import { browserCommentImages, browserCommentsAsPlainText } from './ui/browser-comments.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
 import { composerWireText } from './ui/composer-chips.js'
 import {
@@ -253,6 +254,7 @@ import type {
   SideChatStartOptions,
 } from './ui/workspace/WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './ui/workspace/WorkspaceBrowser.js'
+import type { AnnotationDraft } from './ui/workspace/browser-annotations.js'
 import type { WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
 import { useCheckoutPullRequest } from './ui/pull-requests/useCheckoutPullRequest.js'
 import {
@@ -1990,6 +1992,19 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       request: ++composerDraftRequests.current,
     })
   }, [])
+  const stageBrowserAnnotations = useCallback(
+    (annotation: AnnotationDraft) => {
+      const owner = threadController.draftOwner
+      const current = threadController.draft(owner)
+      publishComposerDraft(
+        threadController.editDraft(owner, {
+          text: [current.text, annotation.text].filter(Boolean).join('\n\n'),
+          attachments: [...current.attachments, ...annotation.attachments],
+        }),
+      )
+    },
+    [publishComposerDraft],
+  )
   const restoreRejectedDraft = useCallback(
     (threadId: string, rejected: RecoverableDraft) => {
       const draft = threadController.recoverDraft(threadId, rejected)
@@ -4701,7 +4716,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
 
   const send = useCallback(
     async (text: string, attachments: string[] = [], submission: 'queue' | 'steer' = 'queue') => {
-      const titlePrompt = text.trim() || attachments.map(basename).join(', ')
+      // A title reads the comment, not the page context sent along with it.
+      const titlePrompt =
+        browserCommentsAsPlainText(text.trim()) || attachments.map(basename).join(', ')
       // The composer clears itself the moment it hands the text over. Every
       // early bail below must put the words back — a toast is no substitute
       // for the paragraph someone just typed. A chat that is still starting
@@ -5717,11 +5734,17 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       respondToUserInput(activeIdRef.current, requestId, answers),
     [respondToUserInput],
   )
-  const editMessage = useCallback((text: string) => {
+  const editMessage = useCallback((text: string, attachments: string[] = []) => {
     const owner = threadController.draftOwner
     const draft = threadController.draft(owner).text
     threadController.editDraft(owner, { text })
-    setComposerDraft({ text, undoable: true, request: ++composerDraftRequests.current })
+    setComposerDraft({
+      text,
+      undoable: true,
+      // A comment needs its screenshot back. Edit restores no other attachment.
+      commentImages: [...browserCommentImages(text, attachments)],
+      request: ++composerDraftRequests.current,
+    })
     setComposerFocusRequest((request) => request + 1)
     // An unsent draft must not vanish without a way back. The saved draft
     // holds chips where the sent prompt has their tokens, so the two are
@@ -5734,9 +5757,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   // Arrow Up in an empty composer takes the same path as the Edit action.
   const recallLastPrompt = useCallback(() => {
     if (!activeIdRef.current) return undefined
-    const text = lastSentPrompt(threadFrameStore.getStructureSnapshot())
-    if (text !== undefined) editMessage(text)
-    return text
+    const sent = lastSentPrompt(threadFrameStore.getStructureSnapshot())
+    if (sent) editMessage(sent.text, sent.attachments)
+    return sent?.text
   }, [editMessage, threadFrameStore])
   const restoreReplacedDraft = useCallback(() => {
     const replaced = replacedDraft
@@ -6379,9 +6402,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     [besideId, respondToUserInput],
   )
   const editBesideMessage = useCallback(
-    (text: string) => {
+    (text: string, attachments?: string[]) => {
       focusPane(otherSlot(focusedSlotRef.current))
-      editMessage(text)
+      editMessage(text, attachments)
     },
     [focusPane, editMessage],
   )
@@ -8061,6 +8084,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                   providerStatuses.find((status) => status.id === activeSession?.provider)
                     ?.capabilities?.subagentTranscript
                 }
+                imagesSupported={attachmentsSupported}
+                onAnnotationDraft={stageBrowserAnnotations}
                 designPreviewRequest={workspaceDesignPreviewRequest}
                 onOpenPullRequest={openCheckoutPullRequest}
                 providerLogin={

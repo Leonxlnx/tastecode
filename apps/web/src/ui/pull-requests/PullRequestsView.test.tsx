@@ -150,6 +150,9 @@ describe('PullRequestsView', () => {
     expect(
       Array.from(document.querySelectorAll('.pr-list-item strong')).map((item) => item.textContent),
     ).toEqual(['Authored change', 'Needs my review', 'Closed draft change', 'Merged change'])
+    // A narrow stage hides the detail pane only while it has nothing to show.
+    const workspace = () => screen.getByRole('region', { name: 'Pull requests' })
+    expect(workspace().classList.contains('is-unselected')).toBe(false)
 
     fireEvent.click(screen.getByRole('tab', { name: 'Reviewing 1' }))
     expect(screen.getByText('Needs my review')).toBeTruthy()
@@ -160,6 +163,7 @@ describe('PullRequestsView', () => {
       target: { value: 'no-match' },
     })
     expect(screen.getByText('No matching pull requests')).toBeTruthy()
+    expect(workspace().classList.contains('is-unselected')).toBe(true)
     expect(transport.requests.filter(({ method }) => method === 'pullRequests.list')).toHaveLength(
       1,
     )
