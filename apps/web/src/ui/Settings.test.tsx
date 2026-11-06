@@ -759,7 +759,7 @@ describe('model sources that failed to load', () => {
     id: 'models:cursor:1',
     message: 'Could not load Cursor models. CLI did not respond within the time limit',
   }
-  const noticeText = (notice: HTMLElement) => notice.querySelector('.set-notice__text')?.textContent
+  const noticeText = (notice: HTMLElement) => notice.querySelector('.notice__text')?.textContent
   const sourceList = () => document.querySelector<HTMLElement>('.model-settings__sources')!
   const titles = () =>
     Array.from(sourceList().querySelectorAll('.set-section__title'), (title) => title.textContent)
