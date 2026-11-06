@@ -8,13 +8,9 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  IconAlertCircle as AlertCircle,
-  IconArrowLeft as ArrowLeft,
-  IconInfoCircle as Info,
-  IconLoader2 as LoaderCircle,
-} from '@tabler/icons-react'
+import { IconArrowLeft as ArrowLeft } from '@tabler/icons-react'
 import { EmptyState } from '../EmptyState.js'
+import { NoticeBody } from '../Notice.js'
 import { Skeleton, SkeletonStatus } from '../Skeleton.js'
 import '../../styles/settings-system.css'
 
@@ -177,24 +173,24 @@ export function SettingsRow(props: {
   )
 }
 
-const NOTICE_ICONS = { info: Info, progress: LoaderCircle, error: AlertCircle } as const
-
 /** A page-level message above the rows it concerns. A row-level error stays a RowIssue. */
 export function SettingsNotice(props: {
-  tone: keyof typeof NOTICE_ICONS
+  tone: 'info' | 'progress' | 'error'
   action?: ReactNode
   children: ReactNode
 }) {
-  const Icon = NOTICE_ICONS[props.tone]
   return (
     <div
       className="set-notice"
-      data-tone={props.tone}
+      data-notice-tone={props.tone}
       role={props.tone === 'error' ? 'alert' : 'status'}
     >
-      <Icon className="set-notice__icon" size={14} aria-hidden />
-      <p className="set-notice__text">{props.children}</p>
-      {props.action ? <div className="set-notice__action">{props.action}</div> : null}
+      <NoticeBody
+        tone={props.tone}
+        actions={props.action ? <div className="set-notice__action">{props.action}</div> : null}
+      >
+        {props.children}
+      </NoticeBody>
     </div>
   )
 }

@@ -15,7 +15,6 @@ import type {
   CSSProperties,
   TransitionEvent as ReactTransitionEvent,
 } from 'react'
-import { IconLoader2 as LoaderCircle } from '@tabler/icons-react'
 import type {
   Account,
   AccountId,
@@ -66,6 +65,7 @@ import { useChatNotifications } from './use-chat-notifications.js'
 import { useAppUpdateInstallGate } from './app-update-install.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
 import { AppUpdateToast } from './ui/AppUpdateToast.js'
+import { NoticeBody } from './ui/Notice.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
 import {
@@ -7734,6 +7734,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     />
   )
 
+  // Restores and sent feedback are confirmations; every other notice is neutral.
+  const noticeTone =
+    undoRestore || notice === 'Restore undone.' || notice === FEEDBACK_SENT_NOTICE
+      ? 'success'
+      : 'info'
   return (
     <div
       className={`shell ${collapsed ? 'is-narrow' : ''}${isDesktop && macOS ? ' is-macos' : ''}`}
@@ -8301,28 +8306,29 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       ) : null}
       <NoticePresence
         className="notice notice--offline"
+        tone="progress"
         role="status"
         visible={offline && (settingsOpen || surface !== 'chat')}
       >
-        <LoaderCircle className="spinner" size={12} aria-hidden />
-        <span className="notice__text">Reconnecting to the server…</span>
+        <NoticeBody tone="progress">Reconnecting to the server…</NoticeBody>
       </NoticePresence>
 
       <NoticePresence
         className="notice"
+        tone="error"
         role="alert"
         visible={Boolean(actionError) && (settingsOpen || surface !== 'chat')}
         onDismiss={() => setActionError(undefined)}
         dismissKey={actionError}
       >
-        <span className="notice__text">{actionError?.message}</span>
-        <button className="ghost" onClick={() => setActionError(undefined)}>
-          Dismiss
-        </button>
+        <NoticeBody tone="error" onDismiss={() => setActionError(undefined)}>
+          {actionError?.message}
+        </NoticeBody>
       </NoticePresence>
 
       <NoticePresence
-        className={`notice${undoRestore || notice === 'Restore undone.' || notice === FEEDBACK_SENT_NOTICE ? ' notice--success' : ''}`}
+        className="notice"
+        tone={noticeTone}
         role="alert"
         visible={Boolean(notice)}
         dismissKey={notice}
@@ -8333,26 +8339,33 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           setReplacedDraft(undefined)
         }}
       >
-        <span className="notice__text">{notice}</span>
-        {notice === DRAFT_REPLACED_NOTICE && replacedDraft ? (
-          <button className="ghost" onClick={restoreReplacedDraft}>
-            Restore
-          </button>
-        ) : null}
-        {undoRestore ? (
-          <button className="ghost" onClick={() => void reverseRestore()}>
-            Undo restore
-          </button>
-        ) : null}
-        <button
-          className="ghost"
-          onClick={() => {
+        <NoticeBody
+          tone={noticeTone}
+          actions={
+            <>
+              {notice === DRAFT_REPLACED_NOTICE && replacedDraft ? (
+                <button className="notice-action" type="button" onClick={restoreReplacedDraft}>
+                  Restore
+                </button>
+              ) : null}
+              {undoRestore ? (
+                <button
+                  className="notice-action notice-action--primary"
+                  type="button"
+                  onClick={() => void reverseRestore()}
+                >
+                  Undo restore
+                </button>
+              ) : null}
+            </>
+          }
+          onDismiss={() => {
             setNotice(undefined)
             setUndoRestore(undefined)
           }}
         >
-          Dismiss
-        </button>
+          {notice}
+        </NoticeBody>
       </NoticePresence>
     </div>
   )
