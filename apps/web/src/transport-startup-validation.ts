@@ -157,6 +157,13 @@ const isProvider = objectValidator<ProviderStatus>({
   problem: optional(isString),
   source: optional(isSourceShape),
 })
+/**
+ * Mirrors the contract's ThreadImageSchema without loading it: a capped PNG
+ * data URL, never a link and never markup.
+ */
+const THREAD_IMAGE = /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/u
+const isThreadImage = (value: unknown): value is string =>
+  typeof value === 'string' && value.length <= 32 * 1024 && THREAD_IMAGE.test(value)
 type Project = ResultOf<'projects.list'>['projects'][number]
 const isSession = objectValidator<Project['sessions'][number]>({
   id: isString,
@@ -174,6 +181,7 @@ const isSession = objectValidator<Project['sessions'][number]>({
   lifecycle: optional(isLifecycle),
   closedAt: optional(isFiniteNumber),
   worktreeBranch: optional(isString),
+  image: optional(isThreadImage),
   model: optional(isNonEmptyString),
   lastActiveAt: optional(isFiniteNumber),
 })
