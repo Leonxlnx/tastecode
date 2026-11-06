@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs'
+import { realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -21,13 +21,24 @@ export function designAttachmentKey(file: string): string {
  * relative inside the workspace, absolute outside it.
  */
 export function designAttachedBeforeNote(files: readonly string[], workspacePath: string): string {
+  // Both sides canonical: on macOS a temp workspace under /var is really /private/var.
+  const workspace = canonical(workspacePath)
   const paths = files
     .map((file) => {
-      const relative = path.relative(workspacePath, file)
+      const resolved = canonical(file)
+      const relative = path.relative(workspace, resolved)
       return relative && !relative.startsWith('..') && !path.isAbsolute(relative)
         ? relative
-        : path.resolve(file)
+        : resolved
     })
     .join(', ')
   return `These images were attached earlier in this chat and still apply unchanged; they are not attached again: ${paths}. If you no longer have them after a context compaction, open them from these paths.`
+}
+
+function canonical(file: string): string {
+  try {
+    return realpathSync.native(file)
+  } catch {
+    return path.resolve(file)
+  }
 }
