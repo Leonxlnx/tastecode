@@ -16,6 +16,7 @@ const target = {
   box: { x: 10, y: 20, width: 80, height: 40 },
 }
 const drawImage = vi.fn()
+const fillRect = vi.fn()
 beforeEach(() => {
   vi.spyOn(Image.prototype, 'decode').mockResolvedValue(undefined)
   vi.stubGlobal(
@@ -24,6 +25,7 @@ beforeEach(() => {
   )
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
     drawImage,
+    fillRect,
   } as unknown as CanvasRenderingContext2D)
   vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(
     'data:image/png;base64,cGl4ZWxz',
@@ -76,6 +78,11 @@ it('hands the round to the composer, and keeps it when an image cannot be saved'
   const { save, onDraft, props } = setup()
   await pin()
   expect(drawImage).toHaveBeenCalledWith(expect.anything(), 20, 40, 160, 80, 0, 0, 160, 80)
+  // A page without its own background crops onto white, not transparent.
+  expect(fillRect).toHaveBeenCalledWith(0, 0, 160, 80)
+  expect(fillRect.mock.invocationCallOrder[0]!).toBeLessThan(
+    drawImage.mock.invocationCallOrder.at(-1)!,
+  )
   save.mockRejectedValueOnce(new Error('offline'))
   fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }))
   await screen.findByText(/Could not add these/)

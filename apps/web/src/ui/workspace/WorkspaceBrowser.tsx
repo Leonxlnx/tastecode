@@ -39,6 +39,7 @@ import {
 import type { BrowserPageInfo } from './browser-page.js'
 import { browserShortcut, browserShortcutHints } from './browser-shortcuts.js'
 import { browserAddress } from './browser-url.js'
+import { scalePng } from './white-ground.js'
 import {
   BROWSER_VIEWPORTS,
   fitBrowserViewport,
@@ -93,20 +94,6 @@ const ConsoleMessageEventSchema = z.object({
   level: z.union([z.number(), z.string()]).optional(),
   message: z.string().optional(),
 })
-
-/** Scales a PNG data URL down to a width and returns its base64. */
-async function scalePng(dataUrl: string, width: number): Promise<string> {
-  const image = new Image()
-  image.src = dataUrl
-  await image.decode()
-  if (image.naturalWidth <= width) return dataUrl.slice(dataUrl.indexOf(',') + 1)
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = Math.round((image.naturalHeight * width) / image.naturalWidth)
-  canvas.getContext('2d')?.drawImage(image, 0, 0, canvas.width, canvas.height)
-  const scaled = canvas.toDataURL('image/png')
-  return scaled.slice(scaled.indexOf(',') + 1)
-}
 
 declare global {
   interface HTMLElementTagNameMap {
