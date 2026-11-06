@@ -1,8 +1,10 @@
 import { ACP_CAPABILITIES } from '@harness/adapter-acp/capabilities'
-import { ANTIGRAVITY_CAPABILITIES, antigravityInstallCommand } from '@harness/adapter-antigravity'
-import { CURSOR_CAPABILITIES, cursorInstallCommand } from '@harness/adapter-cursor'
-import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
-import { PI_CAPABILITIES } from '@harness/adapter-pi'
+import { ANTIGRAVITY_CAPABILITIES } from '@harness/adapter-antigravity/capabilities'
+import { antigravityInstallCommand } from '@harness/adapter-antigravity/install'
+import { CURSOR_CAPABILITIES } from '@harness/adapter-cursor/capabilities'
+import { cursorInstallCommand } from '@harness/adapter-cursor/install'
+import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode/capabilities'
+import { PI_CAPABILITIES } from '@harness/adapter-pi/capabilities'
 import { codexLoginStatus } from '@harness/adapter-codex/auth'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
@@ -14,6 +16,7 @@ import type { CliUpdateSource } from '@harness/proc/updates'
 import type { ProviderSetup, ProviderSourceShape, ProviderStatus } from '@harness/contracts'
 import { refreshWindowsPath } from '@harness/proc/desktop-path'
 import { cliProbe } from './cli-probe.js'
+import { PROVIDER_COMMANDS } from './provider-commands.js'
 import { assertProviderOffered, providerOffered } from './provider-edition.js'
 
 /**
@@ -73,7 +76,7 @@ const PROBES: Probe[] = [
     id: 'claude-code',
     updater: CLAUDE_UPDATES,
     displayName: 'Claude Code',
-    command: 'claude',
+    command: PROVIDER_COMMANDS['claude-code'],
     capabilities: CLAUDE_CAPABILITIES,
     setup: {
       installUrl: 'https://code.claude.com/docs/en/getting-started',
@@ -87,7 +90,7 @@ const PROBES: Probe[] = [
     id: 'codex',
     updater: CODEX_UPDATES,
     displayName: 'Codex',
-    command: 'codex',
+    command: PROVIDER_COMMANDS.codex,
     capabilities: CODEX_CAPABILITIES,
     setup: {
       installUrl: 'https://developers.openai.com/codex/cli',
@@ -102,7 +105,7 @@ const PROBES: Probe[] = [
     id: 'grok',
     updater: GROK_UPDATES,
     displayName: 'Grok',
-    command: 'grok',
+    command: PROVIDER_COMMANDS.grok,
     capabilities: GROK_CAPABILITIES,
     setup: {
       installUrl: 'https://x.ai/cli',
@@ -116,7 +119,7 @@ const PROBES: Probe[] = [
   {
     id: 'cursor',
     displayName: 'Cursor',
-    command: 'cursor-agent',
+    command: PROVIDER_COMMANDS.cursor,
     capabilities: CURSOR_CAPABILITIES,
     // No version gate: cursor-agent updates itself to a new date-stamped build
     // every month, and a gate blocked each working one. A changed wire still
@@ -130,7 +133,7 @@ const PROBES: Probe[] = [
   {
     id: 'opencode',
     displayName: 'OpenCode',
-    command: 'opencode',
+    command: PROVIDER_COMMANDS.opencode,
     capabilities: OPENCODE_CAPABILITIES,
     setup: {
       installUrl: 'https://opencode.ai/en/docs',
@@ -142,7 +145,7 @@ const PROBES: Probe[] = [
   {
     id: 'antigravity',
     displayName: 'Antigravity',
-    command: 'agy',
+    command: PROVIDER_COMMANDS.antigravity,
     capabilities: ANTIGRAVITY_CAPABILITIES,
     setup: {
       installUrl: 'https://antigravity.google/docs/cli',
@@ -162,7 +165,7 @@ const PROBES: Probe[] = [
   {
     id: 'pi',
     displayName: 'Pi',
-    command: 'pi',
+    command: PROVIDER_COMMANDS.pi,
     capabilities: PI_CAPABILITIES,
     setup: {
       installUrl: 'https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent',

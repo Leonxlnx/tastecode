@@ -24,6 +24,7 @@ import {
   systemPreferences,
   Tray,
   utilityProcess,
+  webContents,
   type Event as ElectronEvent,
   type WebContents,
 } from 'electron'
@@ -50,7 +51,12 @@ import { ChatNotifier, type ShownNotification } from './chat-notifier.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
 import { forwardBrowserShortcuts } from './browser-shortcuts.js'
-import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
+import {
+  browserGuestUrl,
+  configureEmbeddedBrowser,
+  isAgentDrivenGuest,
+  setAgentDrivenGuest,
+} from './embedded-browser.js'
 import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { localDiagnosticsDirectory, LocalDiagnostics } from './local-diagnostics.js'
@@ -1237,6 +1243,30 @@ ipcMain.handle('harness:previewViewedImage', async (event, reference: unknown) =
   return attachment.mediaType ? attachment : undefined
 })
 
+// The in-app browser tab an agent drives: its downloads are dropped while it does.
+ipcMain.handle('harness:agentBrowserGuest', (event, webContentsId: unknown, driven: unknown) => {
+  requireOwnRenderer(event.sender)
+  if (!Number.isSafeInteger(webContentsId) || typeof driven !== 'boolean')
+    throw new Error('Invalid agent browser guest')
+  setAgentDrivenGuest(webContentsId as number, driven)
+})
+
+// The agent's field check and typing run in their own JavaScript world: a page can replace its
+// own querySelector or property descriptors, but not the ones this world sees.
+const AGENT_BROWSER_WORLD = 1_917
+ipcMain.handle(
+  'harness:agentBrowserIsolated',
+  async (event, webContentsId: unknown, code: unknown) => {
+    requireOwnRenderer(event.sender)
+    if (!Number.isSafeInteger(webContentsId) || typeof code !== 'string' || code.length > 40_000)
+      throw new Error('Invalid agent browser script')
+    if (!isAgentDrivenGuest(webContentsId as number)) throw new Error('Not an agent browser tab')
+    const guest = webContents.fromId(webContentsId as number)
+    if (!guest || guest.getType() !== 'webview') throw new Error('Not an agent browser tab')
+    return guest.executeJavaScriptInIsolatedWorld(AGENT_BROWSER_WORLD, [{ code }])
+  },
+)
+
 ipcMain.handle('harness:revealPath', (event, value: unknown) => {
   requireOwnRenderer(event.sender)
   shell.showItemInFolder(revealablePath(value))
@@ -1246,7 +1276,11 @@ ipcMain.handle(
   'harness:revealProjectFile',
   async (event, value: unknown, projectRootValue: unknown) => {
     requireOwnRenderer(event.sender)
-    shell.showItemInFolder(await projectFilePath(value, projectRootValue))
+    const file = await projectFilePath(value, projectRootValue)
+    // A reply can name a file the project does not have (a bare name, a path from another
+    // checkout). Explorer then opens nothing, so the chat says it could not show the file.
+    await stat(file)
+    shell.showItemInFolder(file)
   },
 )
 

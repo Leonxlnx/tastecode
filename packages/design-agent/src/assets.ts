@@ -386,7 +386,66 @@ export function isAssetAcquisitionProgress(previous: string | undefined, next: s
 }
 
 export function readAssetManifest(workspacePath: string): AssetManifest {
-  return parseAssetManifest(readDesignArtifact(workspacePath, 'assets.json'))
+  return parseAssetManifest(
+    relativizeAssetPaths(readDesignArtifact(workspacePath, 'assets.json'), workspacePath),
+  )
+}
+
+/**
+ * A raw manifest whose destinations and project sources that name a file inside the workspace by
+ * its absolute path are rewritten to the workspace-relative path. A model often answers with the
+ * absolute path of a file it saved in the project; that is the same file, so the flow rewrites it
+ * rather than sending the agent back to edit the manifest. Paths outside the workspace are left
+ * as they are, for the validation to reject.
+ */
+export function relativizeAssetPaths(value: unknown, workspacePath: string) {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !Array.isArray((value as { assets?: unknown }).assets)
+  )
+    return value
+  // The workspace and a file in it may be named through a symlink or junction on either side:
+  // macOS temp folders are /var/… for /private/var/…, and a project may sit behind a link.
+  const real = (file: string) => {
+    try {
+      return realpathSync(file)
+    } catch {
+      return undefined
+    }
+  }
+  const realRoot = real(workspacePath)
+  if (!realRoot) return value
+  const roots = [...new Set([path.resolve(workspacePath), realRoot])]
+  const inside = (file: unknown) => {
+    if (typeof file !== 'string' || !/^(?:[a-z]:[\\/]|[\\/])/i.test(file)) return file
+    const names = [...new Set([path.resolve(file), real(file) ?? path.resolve(file)])]
+    for (const root of roots)
+      for (const name of names) {
+        const relative = path.relative(root, name)
+        if (relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+          return relative.split(path.sep).join('/')
+      }
+    return file
+  }
+  const manifest = value as { assets: unknown[] }
+  return {
+    ...manifest,
+    assets: manifest.assets.map((asset) => {
+      if (typeof asset !== 'object' || asset === null) return asset
+      const entry = asset as {
+        destination?: unknown
+        source?: { kind?: unknown; reference?: unknown }
+      }
+      return {
+        ...entry,
+        ...(entry.destination === undefined ? {} : { destination: inside(entry.destination) }),
+        ...(entry.source?.kind === 'project'
+          ? { source: { ...entry.source, reference: inside(entry.source.reference) } }
+          : {}),
+      }
+    }),
+  }
 }
 
 export function writeAssetManifest(workspacePath: string, value: unknown): AssetManifest {

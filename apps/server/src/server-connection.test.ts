@@ -76,6 +76,9 @@ vi.mock('./credentials.js', () => ({
 vi.mock('@harness/proc/desktop-path', () => ({ applyDesktopPath: () => undefined }))
 vi.mock('./store.js', () => ({
   Store: class {
+    providerExecutablePaths() {
+      return {}
+    }
     projects() {
       state.handled.push('projects.list')
       return state.projects
@@ -1225,7 +1228,7 @@ describe('attached images', () => {
         'no such image',
       )
     } finally {
-      await rm(directory, { recursive: true })
+      await rm(directory, { recursive: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1263,7 +1266,7 @@ describe('attached images', () => {
         'no such image',
       )
     } finally {
-      await rm(directory, { recursive: true })
+      await rm(directory, { recursive: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })
@@ -2090,14 +2093,20 @@ describe('phone links', () => {
       send(phone, { id: 'info', method: 'system.info', params: {} })
       send(phone, { id: 'shell', method: 'terminal.close', params: { terminalId: 't' } })
       send(phone, { id: 'pair', method: 'phone.startPairing', params: {} })
+      send(phone, {
+        id: 'path',
+        method: 'providers.updateExecutablePath',
+        params: { source: 'codex', path: process.execPath },
+      })
       send(phone, { id: 'rename', method: 'thread.rename', params: { threadId: 't', title: 'x' } })
-      await vi.waitFor(() => expect(phone.frames.filter((frame) => 'id' in frame)).toHaveLength(4))
+      await vi.waitFor(() => expect(phone.frames.filter((frame) => 'id' in frame)).toHaveLength(5))
       const answers = Object.fromEntries(
         phone.frames.filter((frame) => 'id' in frame).map((frame) => [frame['id'], frame]),
       )
       expect(answers['info']).toMatchObject({ result: { protocolVersion: expect.any(Number) } })
       expect(answers['shell']).toMatchObject({ error: { code: 'forbidden' } })
       expect(answers['pair']).toMatchObject({ error: { code: 'forbidden' } })
+      expect(answers['path']).toMatchObject({ error: { code: 'forbidden' } })
       expect(answers['rename']).toMatchObject({ result: {} })
       expect(state.renamed).toEqual(['t'])
       // The desktop's list follows what the phone changed.

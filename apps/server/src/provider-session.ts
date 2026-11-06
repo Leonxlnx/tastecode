@@ -22,9 +22,64 @@ export const HANDOVER_CONTEXT_NOTICE =
 /** Ends the earlier conversation in a continued chat's first prompt; the user's request follows. */
 export const CONTINUE_CONTEXT_REQUEST = '\n</earlier_conversation>\n\nUser request:\n'
 
-/** Opens every Design phase prompt; the user's own request never starts with it. */
-export const DESIGN_PHASE_NOTICE =
-  "Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n"
+/**
+ * The first sentence of every Design phase prompt, in every version so far. Provider history
+ * recognises phase prompts by it, so it must not change.
+ */
+export const DESIGN_PHASE_MARKER =
+  'Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying.'
+
+/** How much of the request the notice quotes: enough to show its language, not to restate it. */
+const REQUEST_QUOTE_CHARS = 120
+
+/**
+ * Opens every Design phase prompt; the user's own request never starts with it. "Use the user's
+ * language" alone let a model narrate in German for an English request about a Munich bakery.
+ * A run's own notice quotes its request (designPhaseNotice).
+ */
+export const DESIGN_PHASE_NOTICE = designPhaseNotice()
+
+/**
+ * The phase notice for one run. Correction and later phase prompts do not carry the user's
+ * request, so a real Codex run still narrated in German and then Spanish for an English
+ * request; the notice quotes the request's opening words, for its language only.
+ */
+export function designPhaseNotice(request?: string): string {
+  const quote = requestQuote(request)
+  const language = quote
+    ? `Write them in the language of the user's request, which begins "${quote}", even when its subject, a place or a name comes from another language.`
+    : 'Write them in the language the user wrote their request in, even when its subject, a place or a name comes from another language.'
+  return `${DESIGN_PHASE_MARKER} ${language} Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n`
+}
+
+/**
+ * Closes every Design phase prompt. Review and Repair prompts run to 80,000 characters, and a
+ * real Codex run whose earlier phases narrated in English switched to German in its third
+ * Review, with the opening notice unchanged. The language rule is repeated where the model
+ * reads last.
+ */
+export function designPhaseLanguageReminder(request?: string): string {
+  const quote = requestQuote(request)
+  return quote
+    ? `\n\nWrite every progress update in the language of the user's request ("${quote}"), not in the language of the place, the names or the earlier progress messages.`
+    : "\n\nWrite every progress update in the language of the user's request, not in the language of the place, the names or the earlier progress messages."
+}
+
+function requestQuote(request?: string): string | undefined {
+  return request?.replace(/\s+/g, ' ').trim().slice(0, REQUEST_QUOTE_CHARS).replaceAll('"', "'")
+}
+
+/**
+ * A resume the provider refused because it has no saved conversation for the session (Codex:
+ * "no rollout found for thread id"). Adapters mark it with this code; the server decides how
+ * the chat continues, from what its own history says the chat already did.
+ */
+export function isProviderSessionMissing(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { code?: unknown }).code === 'provider_session_missing'
+  )
+}
 
 /** Preserve the local identity while resuming an imported provider session. */
 export function mapProviderSession(

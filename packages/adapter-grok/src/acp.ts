@@ -1,4 +1,5 @@
 import { spawnOwned, StdioJsonRpc } from '@harness/proc'
+import { commandOverride, spawnCli } from '@harness/proc/cli'
 import { grokAccountEnvironment } from './account-home.js'
 import { grokCommand } from './adapter.js'
 
@@ -25,13 +26,17 @@ export async function requestGrokExtension(
   label: string,
   accountHome?: string,
 ): Promise<unknown> {
-  const child = spawnOwned(grokCommand(), ['agent', '--no-leader', 'stdio'], {
+  const options = {
     ...(accountHome === undefined
       ? {}
       : { env: { ...process.env, ...grokAccountEnvironment(accountHome) } }),
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'] as ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
-  })
+  }
+  const args = ['agent', '--no-leader', 'stdio']
+  const child = commandOverride('grok')
+    ? spawnCli(grokCommand(), args, options)
+    : spawnOwned(grokCommand(), args, options)
   const rpc = new StdioJsonRpc(child, label)
   try {
     await bounded(

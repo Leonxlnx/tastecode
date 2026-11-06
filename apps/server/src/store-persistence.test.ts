@@ -10,7 +10,8 @@ const stores: Store[] = []
 const roots: string[] = []
 afterEach(() => {
   for (const store of stores.splice(0)) store.close()
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 function setup() {

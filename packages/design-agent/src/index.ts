@@ -18,6 +18,13 @@ export {
   type ExplicitBriefAnswer,
 } from './brief.js'
 export { parseBrandSystem, readBrandSystem, writeBrandSystem, type BrandSystem } from './brand.js'
+export {
+  acquireBrandFonts,
+  localBrandFonts,
+  validateBrandFontsResolved,
+  withBrandFonts,
+  type BrandFont,
+} from './brand-fonts.js'
 export { designBrandPrompt, parseBrandPhaseOutput } from './brand-phase.js'
 export {
   generateGradientSet,
@@ -113,6 +120,7 @@ export {
   DesignSourceQualityError,
   ExactBuildFilesError,
 } from './build-phase.js'
+export { DesignScanLimitError } from './workspace-files.js'
 export {
   croppedReviewScreenshots,
   designRepairPrompt,

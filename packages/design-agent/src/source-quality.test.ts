@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { designSourceQualityBaseline, validateDesignSourceQuality } from './source-quality.js'
 import { parseAssetManifest, validateAssetManifestForPage } from './assets.js'
+import { DesignScanLimitError } from './workspace-files.js'
 
 const roots: string[] = []
 
@@ -67,7 +68,7 @@ describe('design source scan size limits', () => {
     ).toThrow('unmanifested standalone SVG')
   })
 
-  it('allows standalone icon files but not illustrations in reference-bound operating dashboards', () => {
+  it('allows standalone icon files but not illustrations, in dashboards and landing pages', () => {
     const root = workspace()
     mkdirSync(path.join(root, 'icons'))
     const dashboard = {
@@ -86,9 +87,7 @@ describe('design source scan size limits', () => {
     }
     for (const [file, source] of Object.entries(icons)) writeFileSync(path.join(root, file), source)
     expect(() => validateDesignSourceQuality(root, [], [], undefined, dashboard)).not.toThrow()
-    expect(() => validateDesignSourceQuality(root)).toThrow(
-      'icons/bell.svg: unmanifested standalone SVG',
-    )
+    expect(() => validateDesignSourceQuality(root)).not.toThrow()
 
     const illustrations = {
       'gradient.svg':
@@ -106,8 +105,54 @@ describe('design source scan size limits', () => {
       expect(() => validateDesignSourceQuality(root, [], [], undefined, dashboard)).toThrow(
         `${file}: unmanifested standalone SVG`,
       )
+      expect(() => validateDesignSourceQuality(root)).toThrow(
+        `${file}: unmanifested standalone SVG`,
+      )
       rmSync(absolute)
     }
+  })
+
+  // #2188: a Codex run failed on "public/favicon.svg: unmanifested standalone SVG substitute".
+  it('accepts a site icon file, even one drawn with a gradient and a letter', () => {
+    const root = workspace()
+    mkdirSync(path.join(root, 'public'))
+    mkdirSync(path.join(root, 'app'))
+    const favicon =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="b"><stop offset="0" stop-color="#f0440a"/><stop offset="1" stop-color="#b8300a"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="url(#b)"/><text x="32" y="44" font-size="36" text-anchor="middle" fill="#fff">B</text></svg>'
+    for (const file of ['public/favicon.svg', 'app/icon.svg', 'public/safari-pinned-tab.svg'])
+      writeFileSync(path.join(root, file), favicon)
+    expect(() => validateDesignSourceQuality(root, ['public/favicon.svg'])).not.toThrow()
+    writeFileSync(path.join(root, 'public', 'hero.svg'), favicon)
+    expect(() => validateDesignSourceQuality(root)).toThrow(
+      'public/hero.svg: unmanifested standalone SVG',
+    )
+  })
+
+  // #2191: a Claude Code run failed on index.html listing the same inline glyphs over and over.
+  it('accepts repeated inline icon glyphs and names a repeated illustration once', () => {
+    const root = workspace()
+    const check =
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>'
+    const arrow =
+      '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" fill="none"/></svg>'
+    const scene = `<svg viewBox="0 0 1200 600" role="img" aria-label="Bakery"><rect width="1200" height="600" fill="#f4e9dc"/><path d="${'M0 400Q300 250 600 400T1200 400'.repeat(3)}" fill="#d9b48f"/></svg>`
+    writeFileSync(
+      path.join(root, 'index.html'),
+      `<main>${`<li>${check} Fresh daily</li>`.repeat(13)}${`<a>${arrow} Visit</a>`.repeat(6)}</main>`,
+    )
+    expect(() => validateDesignSourceQuality(root, ['index.html'])).not.toThrow()
+    writeFileSync(
+      path.join(root, 'index.html'),
+      `<main>${check.repeat(13)}${scene}<footer>${scene}</footer></main>`,
+    )
+    let message = ''
+    try {
+      validateDesignSourceQuality(root, ['index.html'])
+    } catch (error) {
+      message = (error as Error).message
+    }
+    expect(message).toMatch(/index\.html: unmanifested inline SVG substitute [0-9a-f]{12} \(2×\)$/)
+    expect(message.match(/unmanifested inline SVG substitute/g)).toHaveLength(1)
   })
 
   it('accepts an unchanged uploaded SVG logo after the Assets phase', () => {
@@ -199,6 +244,29 @@ describe('design source scan size limits', () => {
     const baseline = designSourceQualityBaseline(root)
     writeFileSync(file, '<svg>' + 'x'.repeat(2_000) + '<svg />')
     expect(() => validateDesignSourceQuality(root, [], baseline)).toThrow('SVG substitute')
+  })
+
+  it('leaves shipped bundles and build caches out of the source scan', () => {
+    const root = workspace()
+    const scene = '<svg viewBox="0 0 1200 600"><rect width="1200" height="600"/></svg>'
+    mkdirSync(path.join(root, 'public', 'vendor'), { recursive: true })
+    mkdirSync(path.join(root, '.output', 'public'), { recursive: true })
+    writeFileSync(path.join(root, 'public', 'vendor', 'three.min.js'), `var s='${scene}'`)
+    writeFileSync(path.join(root, 'public', 'app-bundle.js'), `var s='${scene}'`)
+    writeFileSync(path.join(root, '.output', 'public', 'index.html'), scene)
+    expect(designSourceQualityBaseline(root)).toEqual([])
+    writeFileSync(path.join(root, 'public', 'app.js'), `var s='${scene}'`)
+    expect(designSourceQualityBaseline(root)).toEqual([
+      expect.stringContaining('public/app.js: unmanifested inline SVG substitute'),
+    ])
+  })
+
+  it('reports an oversized scan as a scan limit, not a quality failure', () => {
+    const root = workspace()
+    const file = path.join(root, 'data.js')
+    writeFileSync(file, '')
+    truncateSync(file, 32_000_001)
+    expect(() => designSourceQualityBaseline(root)).toThrow(DesignScanLimitError)
   })
 
   it('accepts a source file at the 32 MB scan limit', () => {

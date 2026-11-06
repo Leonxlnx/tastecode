@@ -11,6 +11,14 @@
     "./inventory": {
       "types": "./dist/inventory.d.ts",
       "default": "./dist/inventory.js"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities.d.ts",
+      "default": "./dist/capabilities.js"
+    },
+    "./usage-history": {
+      "types": "./dist/usage-history.d.ts",
+      "default": "./dist/usage-history.js"
     }
   },
   "main": "./dist/index.js",

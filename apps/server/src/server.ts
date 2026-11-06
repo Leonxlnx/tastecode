@@ -15,6 +15,11 @@ import {
 } from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { cliProbe, invalidateCliProbes } from './cli-probe.js'
+import {
+  restoreProviderExecutablePaths,
+  selectedProviderShellCommand,
+  updateProviderExecutablePath,
+} from './provider-executable-paths.js'
 import { stopModelListings } from './runtime-loader.js'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
@@ -25,6 +30,7 @@ import { FeedbackService, providerVersionLabel } from './feedback.js'
 import { PushBus } from './push-bus.js'
 import { storeLocation } from './data-location.js'
 import { acquireDataLease } from './data-lease.js'
+import { BrowserCommandCoordinator } from './browser-commands.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 import type { CheckoutPullRequests } from './checkout-pull-request.js'
 import type { PullRequestService } from './pull-requests.js'
@@ -158,6 +164,7 @@ export function startServer(
     releaseDataLease()
     throw error
   }
+  restoreProviderExecutablePaths(store)
   let wss: WebSocketServer
   try {
     wss = new WebSocketServer({ port, host })
@@ -191,6 +198,11 @@ export function startServer(
     (socket, request) => push.send(socket, 'preview.captureRequested', request),
     35_000,
     (socket, requestId) => push.send(socket, 'preview.captureCancelled', { requestId }),
+  )
+  // Agent browser commands go only to a window that declared browserTools and shows the chat.
+  const browserCommands = new BrowserCommandCoordinator<ClientSocket>(
+    (socket, command) => push.send(socket, 'browser.command', command),
+    (socket, commandId) => push.send(socket, 'browser.commandCancelled', { commandId }),
   )
 
   // A port clash is the most likely startup failure — a previous run that did
@@ -268,6 +280,8 @@ export function startServer(
       if (event.type === 'item.delta') streamQuiet.noteDelta()
       else if (event.type === 'turn.completed') {
         turnEndedInCheckout(threadId)
+        // A stopped or finished turn ends its browser commands and clears the window's bar.
+        browserCommands.cancelThread(threadId)
         if (orchestrator.awaitsProviderTitle(threadId)) void nameUnnamedChat(threadId)
       }
       if (serializedEvent === undefined) {
@@ -293,6 +307,9 @@ export function startServer(
       }
     },
     agentTools: true,
+    browserTools: {
+      run: (caller, request, signal) => browserCommands.run(caller.threadId, request, signal),
+    },
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result, accountId) => {
@@ -696,6 +713,7 @@ export function startServer(
 
     const removeSocket = () => {
       previewCapture.remove(socket)
+      browserCommands.remove(socket)
       push.remove(socket)
     }
     listen(
@@ -777,8 +795,19 @@ export function startServer(
     params: unknown,
   ): Promise<unknown> {
     switch (method) {
-      case 'client.capabilities':
-        previewCapture.setCapability(socket, parseParams(method, params).previewCapture)
+      case 'client.capabilities': {
+        const capabilities = parseParams(method, params)
+        previewCapture.setCapability(socket, capabilities.previewCapture)
+        browserCommands.setCapability(
+          socket,
+          capabilities.browserTools,
+          capabilities.browserThreads,
+        )
+        return {}
+      }
+
+      case 'browser.result':
+        browserCommands.complete(socket, parseParams(method, params))
         return {}
 
       case 'preview.captureResult':
@@ -891,6 +920,18 @@ export function startServer(
         return { providers }
       }
 
+      case 'providers.executablePaths':
+        parseParams(method, params)
+        return store.providerExecutablePaths()
+
+      case 'providers.updateExecutablePath': {
+        const p = parseParams(method, params)
+        const paths = updateProviderExecutablePath(store, p.source, p.path)
+        invalidateCliProbes()
+        updatesService = undefined
+        return paths
+      }
+
       case 'providers.contextSettings':
         return orchestrator.contextSettings()
 
@@ -927,7 +968,12 @@ export function startServer(
         const command = await (await providerUpdates()).commandFor(p.provider)
         return {
           terminalId: setupTerminal(
-            orchestrator.installProvider(`update:${p.provider}`, command, p.columns, p.rows),
+            orchestrator.installProvider(
+              `update:${p.provider}`,
+              selectedProviderShellCommand(p.provider, command),
+              p.columns,
+              p.rows,
+            ),
           ),
         }
       }
@@ -979,7 +1025,16 @@ export function startServer(
             : { id: accountId, environment }
         return {
           terminalId: setupTerminal(
-            orchestrator.launchProviderLogin(target, command, p.columns, p.rows, account),
+            orchestrator.launchProviderLogin(
+              target,
+              selectedProviderShellCommand(
+                p.provider === 'acp' && p.agent ? `acp:${p.agent}` : p.agent ? '' : p.provider,
+                command,
+              ),
+              p.columns,
+              p.rows,
+              account,
+            ),
           ),
         }
       }

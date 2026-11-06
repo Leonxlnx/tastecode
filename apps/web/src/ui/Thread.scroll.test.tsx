@@ -14,6 +14,8 @@ const layout = vi.hoisted(() => ({
   heightReads: 0,
   /** Where each row starts, for the rows a test places. */
   starts: [] as number[],
+  /** Each placed row's measured height, where a test cares; a hidden row measures 0. */
+  sizes: [] as (number | undefined)[],
   /** The scroll function Thread gave the list, if any. */
   scrollToFn: undefined as ScrollToFn | undefined,
   /** How often the list's own scroll was written to the element. */
@@ -43,7 +45,7 @@ vi.mock('@tanstack/react-virtual', () => {
     getTotalSize: () => layout.height,
     measureElement: () => undefined,
     get measurementsCache() {
-      return layout.starts.map((start) => ({ start }))
+      return layout.starts.map((start, index) => ({ start, size: layout.sizes[index] }))
     },
     getOffsetForIndex: () => [0],
     scrollToIndex: () => undefined,
@@ -108,6 +110,7 @@ beforeEach(() => {
   layout.height = 1_200
   layout.heightReads = 0
   layout.starts = []
+  layout.sizes = []
   layout.listWrites = 0
   frames = []
   now = 1_000
@@ -787,6 +790,19 @@ describe('Thread scroll position', () => {
 
       expect(scroller.scrollTop).toBe(pinned)
       expect(room(scroller)).toBeGreaterThan(0)
+    })
+
+    it('pins no hidden row: a turn with nothing shown leaves no room and ends at the content', () => {
+      // A failed Design run: the last phase's own prompt and the error the composer
+      // shows are hidden rows. Pinning one left a blank screen under the error banner.
+      const { scroller, send } = chat()
+      layout.sizes = [600, 600, 0]
+
+      send()
+      settle(scroller)
+
+      expect(room(scroller)).toBe(0)
+      expect(scroller.scrollTop).toBe(layout.height - 200)
     })
 
     it('neither pins nor moves a turn that starts on its own while the user reads further up', () => {

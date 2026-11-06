@@ -10,7 +10,11 @@ const roots: string[] = []
 const previews: Awaited<ReturnType<typeof startStaticDesignPreview>>[] = []
 afterEach(async () => {
   await Promise.all(previews.splice(0).map((preview) => preview.stop()))
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  await Promise.all(
+    roots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })),
+  )
 })
 
 async function preview() {

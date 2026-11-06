@@ -1872,3 +1872,54 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.settings .settings-search__input {
+  width: 100%;
+  margin: 0 0 6px;
+}
+.settings-search__count,
+.settings-search__empty {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  padding: 4px 8px;
+  margin: 0;
+}
+.settings-search__results {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.settings [data-settings-found] {
+  background: var(--menu-hover);
+  border-radius: var(--r-md);
+}
+
+/* The narrow sidebar is one strip: the search shares the first line with the way
+   back, and the categories or results take a full line under it. */
+@media (max-width: 700px) {
+  .settings__sidebar {
+    flex-wrap: wrap;
+  }
+
+  .settings .settings-search__input {
+    flex: 1 1 120px;
+    width: auto;
+    min-width: 0;
+    margin: 0;
+  }
+
+  .settings__nav,
+  .settings-search__count {
+    flex: 1 0 100%;
+  }
+
+  .settings-search__results {
+    flex-direction: column;
+    max-height: 40vh;
+    overflow-x: hidden;
+  }
+
+  .settings-search__results .settings__nav-item {
+    width: 100%;
+    white-space: normal;
+  }
+}

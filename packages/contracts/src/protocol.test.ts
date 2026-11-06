@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { CapabilitiesSchema, DomainEventSchema, ItemSchema, ModelSchema } from './domain.js'
 import {
+  BROWSER_CONSOLE_MAX,
+  BROWSER_PNG_MAX,
   channels,
   DiffFileSchema,
   ErrorCode,
@@ -26,6 +28,116 @@ import {
   type ProviderLimit,
   type ProviderLimitSource,
 } from './protocol.js'
+
+describe('agent browser tools', () => {
+  const base = { threadId: 'chat-1', commandId: '00000000-0000-4000-8000-000000000001' }
+  const command = (value: object) => channels['browser.command'].safeParse({ ...base, ...value })
+
+  it('takes http and https pages only, loopback dev servers included', () => {
+    for (const url of ['https://example.com/a', 'http://127.0.0.1:5173/', 'http://localhost:3000'])
+      expect(command({ action: 'open', url }).success, url).toBe(true)
+    for (const url of [
+      'file:///C:/Users/me/secrets.txt',
+      'chrome://settings',
+      'devtools://devtools/bundled/inspector.html',
+      'data:text/html,<script>1</script>',
+      'javascript:alert(1)',
+      `https://example.com/${'a'.repeat(2_100)}`,
+    ])
+      expect(command({ action: 'navigate', url }).success, url).toBe(false)
+  })
+
+  it('asks every action for exactly what it needs', () => {
+    expect(command({ action: 'screenshot' }).success).toBe(true)
+    expect(command({ action: 'click', selector: '#buy' }).success).toBe(true)
+    expect(command({ action: 'click', x: 10, y: 20 }).success).toBe(true)
+    expect(command({ action: 'click' }).success).toBe(false)
+    expect(command({ action: 'click', x: 10 }).success).toBe(false)
+    expect(command({ action: 'click', selector: '#buy', x: 1, y: 1 }).success).toBe(false)
+    expect(command({ action: 'type', selector: 'input', text: 'hello' }).success).toBe(true)
+    expect(command({ action: 'type', text: 'hello' }).success).toBe(false)
+    expect(command({ action: 'scroll', dx: 0, dy: 600 }).success).toBe(true)
+    expect(command({ action: 'read_text' }).success).toBe(true)
+    expect(command({ action: 'console', since: 1 }).success).toBe(true)
+    expect(command({ action: 'download', url: 'https://example.com/a.zip' }).success).toBe(false)
+  })
+
+  it('caps every answer and requires a reason for a refusal', () => {
+    const result = methods['browser.result'].params
+    expect(
+      result.safeParse({ commandId: base.commandId, ok: true, url: 'http://127.0.0.1:5173/' })
+        .success,
+    ).toBe(true)
+    expect(result.safeParse({ commandId: base.commandId, ok: false }).success).toBe(false)
+    expect(
+      result.safeParse({ commandId: base.commandId, ok: false, error: 'password field' }).success,
+    ).toBe(true)
+    expect(
+      result.safeParse({
+        commandId: base.commandId,
+        ok: true,
+        png: 'a'.repeat(BROWSER_PNG_MAX + 1),
+      }).success,
+    ).toBe(false)
+    expect(
+      result.safeParse({
+        commandId: base.commandId,
+        ok: true,
+        console: Array.from({ length: BROWSER_CONSOLE_MAX + 1 }, () => ({
+          level: 'log',
+          text: 'x',
+          at: 1,
+        })),
+      }).success,
+    ).toBe(false)
+  })
+
+  it('lets a client say it can run them, and still reads older clients', () => {
+    const capabilities = methods['client.capabilities'].params
+    expect(capabilities.parse({ previewCapture: true, browserTools: true })).toEqual({
+      previewCapture: true,
+      browserTools: true,
+    })
+    expect(capabilities.parse({ previewCapture: true })).toEqual({ previewCapture: true })
+    // Which chats' tabs it can drive now, so a command for a chat no window shows fails at once.
+    expect(
+      capabilities.parse({ previewCapture: true, browserTools: true, browserThreads: ['chat-1'] }),
+    ).toMatchObject({ browserThreads: ['chat-1'] })
+    expect(
+      capabilities.safeParse({
+        previewCapture: true,
+        browserThreads: Array.from({ length: 17 }, (_, index) => `chat-${index}`),
+      }).success,
+    ).toBe(false)
+    expect(
+      channels['browser.commandCancelled'].safeParse({ commandId: base.commandId }).success,
+    ).toBe(true)
+  })
+})
+
+describe('workspace listing', () => {
+  it('names the folder its relative paths belong to, and still reads older servers', () => {
+    const listing = {
+      path: 'src',
+      root: 'C:\\projects\\site\\.worktrees\\chat-1',
+      entries: [
+        {
+          name: 'app.ts',
+          path: 'src/app.ts',
+          kind: 'file',
+          size: 12,
+          modifiedAt: 1,
+          restricted: false,
+        },
+      ],
+    }
+    const result = methods['workspace.listDirectory'].result
+    expect(result.parse(listing)).toEqual(listing)
+    const { root: _root, ...older } = listing
+    expect(result.parse(older)).toEqual(older)
+    expect(result.safeParse({ ...listing, root: '' }).success).toBe(false)
+  })
+})
 
 describe('audit recovery contracts', () => {
   it('preserves a named base branch and rejects empty or excessive refs', () => {
@@ -87,6 +199,24 @@ describe('domain events', () => {
       textDelta: 'hello',
     }
     expect(DomainEventSchema.parse(event)).toEqual(event)
+  })
+
+  it('says when a chat continued in a new session because the saved one was missing', () => {
+    const item = {
+      id: 'notice-1',
+      turnId: '',
+      type: 'notice',
+      status: 'completed',
+      notice: { kind: 'provider', provider: 'codex', reason: 'session_missing' },
+      createdAt: 1,
+    }
+    expect(ItemSchema.parse(item)).toEqual(item)
+    // A move the user made has no reason, as in history written before this field.
+    const moved = { ...item, notice: { kind: 'provider', provider: 'claude-code' } }
+    expect(ItemSchema.parse(moved)).toEqual(moved)
+    expect(() =>
+      ItemSchema.parse({ ...item, notice: { ...item.notice, reason: 'other' } }),
+    ).toThrow()
   })
 
   it('carries a durable turn completion boundary without rejecting legacy history', () => {

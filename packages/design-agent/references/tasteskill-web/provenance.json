@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "source": {
+    "name": "tasteskill",
+    "version": "2.5.0",
+    "repository": "https://github.com/Leonxlnx/taste-skill",
+    "ref": "v2.5.0",
+    "commit": "822e0b9d872e10deb931afad2c6c2bd943cf4c7b",
+    "release": "https://github.com/Leonxlnx/taste-skill/tree/822e0b9d872e10deb931afad2c6c2bd943cf4c7b",
+    "license": "MIT"
+  },
+  "files": [
+    {
+      "path": "SKILL.md",
+      "upstream": "skills/taste-skill/SKILL.md",
+      "sha256": "c16f47478c2da4911232de8210c938cb6efe41a78ae24bfdcc502d8336f2303b"
+    },
+    {
+      "path": "copy.md",
+      "upstream": "skills/taste-skill/references/copy.md",
+      "sha256": "2054ef857ba2ed39c763bbe62c6b635c1b7500a604e353c185166d14f497fd15"
+    },
+    {
+      "path": "layout-v4.md",
+      "upstream": "skills/taste-skill/references/layout-v4.md",
+      "sha256": "683a84965c0eecdff2a5c67c8ebc62248a4a46145814d0e812971a368615b840"
+    },
+    {
+      "path": "motion.md",
+      "upstream": "skills/taste-skill/references/motion.md",
+      "sha256": "14641584697e4d89553bfcc279f30f8a39db851a3586ce82e7799f92f2996ab7"
+    },
+    {
+      "path": "photos.md",
+      "upstream": "skills/taste-skill/references/photos.md",
+      "sha256": "cd7fd222a950c6a44159cf1679fe502ad897798f72a14968aae1cc73ce225d3f"
+    },
+    {
+      "path": "LICENSE",
+      "upstream": "LICENSE",
+      "sha256": "4575a543ab88dad12ccea7d97e563d0bce5b448b06072e65d3264497dad326df"
+    }
+  ]
+}

@@ -74,6 +74,7 @@ const REFERENCE_CODE_FILES = new Set([
   path.join('app-screens', 'LICENSE'),
   path.join('app-screens', 'app.css'),
   path.join('app-screens', 'charts.js'),
+  path.join('tasteskill-web', 'LICENSE'),
 ])
 
 export async function verifyBundledDesignReferences(

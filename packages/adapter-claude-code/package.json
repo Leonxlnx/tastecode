@@ -19,6 +19,10 @@
     "./updates": {
       "types": "./dist/updates.d.ts",
       "default": "./dist/updates.js"
+    },
+    "./usage-history": {
+      "types": "./dist/usage-history.d.ts",
+      "default": "./dist/usage-history.js"
     }
   },
   "main": "./dist/index.js",

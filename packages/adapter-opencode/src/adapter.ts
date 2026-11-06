@@ -33,17 +33,9 @@ import {
 } from './events.js'
 import { openCodePromptParts, openCodeV2Files } from './attachments.js'
 import { openCodeModels, type OpenCodeCatalogEntry } from './models.js'
+import { OPENCODE_CAPABILITIES } from './capabilities.js'
 
-export const OPENCODE_CAPABILITIES: Capabilities = {
-  steer: false,
-  fork: false,
-  interrupt: true,
-  reasoningItems: true,
-  approvals: true,
-  // opencode's `question` tool, answered through its v1 question routes.
-  userInput: true,
-  images: true,
-}
+export { OPENCODE_CAPABILITIES } from './capabilities.js'
 
 type Events = { event: [DomainEvent]; log: [string]; disconnected: [] }
 /** `/mcp` waits for the directory's servers to connect; a stuck one must not hold a read. */

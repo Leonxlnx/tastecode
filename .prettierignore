@@ -34,6 +34,11 @@ packages/design-agent/references/app-screens/app.json
 packages/design-agent/references/app-screens/app-screens.md
 packages/design-agent/references/app-screens/app.css
 packages/design-agent/references/app-screens/charts.js
+packages/design-agent/references/tasteskill-web/SKILL.md
+packages/design-agent/references/tasteskill-web/copy.md
+packages/design-agent/references/tasteskill-web/layout-v4.md
+packages/design-agent/references/tasteskill-web/motion.md
+packages/design-agent/references/tasteskill-web/photos.md
 
 # Expo generates these from app.json; they are not checked in.
 apps/mobile/ios/
@@ -42,3 +47,8 @@ apps/mobile/.expo/
 
 # Upstream skill files, fetched by packages/default-skills (gitignored).
 packages/default-skills/bundle/
+
+# Upstream skill text with TasteCode's edits; kept in the upstream's own wrapping so the
+# edits stay readable against it.
+packages/default-skills/patches/*/SKILL.md
+packages/default-skills/patches/*/references/

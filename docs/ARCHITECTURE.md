@@ -232,6 +232,52 @@ fixed modes retain their requested CSS viewport and scale the complete guest to 
 stretching it. All modes therefore share Electron's Chromium path across macOS, Windows, and
 Linux.
 
+Browser annotations live entirely in the trusted renderer: an overlay intercepts clicks,
+reads bounded DOM descriptions on demand, and captures the guest's visible pixels. There is no
+new guest preload, IPC, global, event listener, stylesheet or DOM mutation. Leaving the mode
+removes the overlay and stops polling. Going to another page discards the round; a reload of
+the same page keeps it, because dev servers reload pages under an agent's edits. Open shadow
+boundaries use `>>>` in a DOM path, while frames and closed roots are represented by their host elements.
+Pins follow current element rectangles; removed elements retain their captured reference with
+an explicit missing-element label. A replaced element with the same selector can inherit a pin.
+
+`executeJavaScript` runs in the page world. A hostile page can falsify DOM metadata or deny the
+read, so the host validates shapes, counts and finite coordinates, bounds and strips control
+characters, and quotes all page strings as untrusted JSON. Every read of the page has a time
+limit, and a selector it cannot resolve counts as a removed element, so neither a hung page nor
+a bad selector stalls the mode. It cannot supply user comments,
+create pins without a host click, invoke a host action or receive host state through this
+stateless pull. Screenshots are also untrusted reference content. Quoting reduces instruction
+confusion; it cannot guarantee that an agent will resist every visual or textual injection.
+Crops use the captured bitmap dimensions relative to the guest's CSS viewport, independently
+of host scaling and device pixel ratio. Only visible portions are captured, at selection time.
+
+Add to chat moves a round into the composer as one chip per comment and saves each crop. The
+draft holds only the chip; sending expands it into a quoted block and collects the screenshots
+of chips still in the draft, so the ordinary send, queue, Steer and rejection recovery stay
+authoritative. The block is also what lets the transcript draw the chip again after a restart.
+The comment itself is the user's request and keeps its lines and joining characters; the
+block's closing sentence separates it from the page data and is free text, so it can be
+reworded without old messages losing their chips. A comment belongs to its page, not a provider,
+so its chip survives a provider or project change. Copying one gives the user's words alone,
+and recalling a sent prompt brings each chip back with its screenshot.
+No protocol or shared-contract changes are required.
+
+_Rejected:_ guest-to-host message channels, privileged guest preloads, persistent injected
+listeners and DOM overlays would add an unnecessary trust boundary and cleanup obligation.
+
+**An agent drives only its own chat's tab, through the same guest.** The server routes a
+`browser.command` to the window that shows the chat; the renderer checks every page against
+the address bar's rule again, and the session filter above stays the last line. While a tab is
+agent-driven, the main process drops its downloads. The field check that keeps agents out of
+password, sign-in code and payment fields, the typing itself and clicks run in a JavaScript world
+of TasteCode's own (`executeJavaScriptInIsolatedWorld`): it shares the page's DOM but not its
+globals, so a page cannot replace `querySelector`, value setters or labels to slip a field past
+it. Clicks are DOM clicks there, because native input events do not reach a guest whose window
+is in the background. Reading text, scrolling and the console run in the page's own world on
+purpose: what they return is the page's word, which can lie, and it reaches the agent only as
+quoted, bounded data. A page that lies there can mislead the agent, not get past the field check.
+
 ### Desktop update assets
 
 The desktop updater finds releases in `Leonxlnx/tastecode` through the public release Atom
@@ -352,7 +398,11 @@ directory, and non-secret environment overrides in
 never belong in this file. Provider CLIs, terminals, and custom commands resolve against a
 desktop-safe PATH. GUI-launched Electron apps do not inherit a login shell, so the server
 adds conventional user locations such as `~/.local/bin`, Homebrew's prefix, and
-`%LOCALAPPDATA%/Programs/OpenAI/Codex/bin` rather than sourcing `.zshrc`. Codex's adapter
+`%LOCALAPPDATA%/Programs/OpenAI/Codex/bin` rather than sourcing `.zshrc`. Settings can also
+name one executable per built-in CLI provider or ACP agent. The server validates it, stores it
+with the app settings and applies it through one override table in `@harness/proc`, so
+detection, version checks, launches, and sign-in and update terminals all reach the same file;
+running processes keep theirs, and phone links may neither read nor change it. Codex's adapter
 owns its official standalone install command, so fresh desktops do not need npm to install
 their first provider. The server allowlists that same command for guided setup. When a mod boots
 from its own directory,
@@ -384,7 +434,8 @@ recoverable new-chat instruction rather than passing a synthetic TasteCode id to
 
 **Completed resumable runtimes are a hardware-scaled warm LRU.** Each attached adapter can own a
 child process, so keeping every completed thread attached makes idle memory grow without a bound.
-TasteCode keeps one warm idle runtime per 2 GiB of RAM, with a floor of four and a ceiling of 16.
+TasteCode keeps one warm idle runtime per 8 GiB of RAM, with a floor of two and a ceiling of six,
+and stops an idle runtime after two minutes. An idle Claude Code process holds about 0.5-1 GB.
 Viewing a thread refreshes its recency; an evicted thread resumes on its next submission. Running,
 queued, Side chat, provider-operation, and non-resumable runtimes are never evicted.
 

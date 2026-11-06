@@ -3424,6 +3424,10 @@ describe('web client', () => {
     render(<App />)
 
     expect(screen.getByRole('heading').textContent).toBe('What should we build in project?')
+    // The name wraps as one piece, never after a hyphen inside it ("atlas-" / "web?").
+    expect(screen.getByRole('heading').querySelector('.empty__project')?.textContent).toBe(
+      'project',
+    )
     expect(within(screen.getByRole('main')).queryByText('Loading projects…')).toBeNull()
     expect(within(screen.getByRole('navigation')).getByText('Loading projects…')).toBeTruthy()
 
@@ -10712,7 +10716,9 @@ describe('new chats', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
-    expect(screen.getAllByRole('menuitem')).toHaveLength(2)
+    // Both projects, then the entry that adds one.
+    expect(screen.getAllByRole('menuitem')).toHaveLength(3)
+    expect(screen.getByRole('menuitem', { name: 'New project' })).toBeTruthy()
     fireEvent.click(screen.getByRole('menuitem', { name: /Another Project/ }))
 
     expect(screen.getByRole('heading').textContent).toContain(

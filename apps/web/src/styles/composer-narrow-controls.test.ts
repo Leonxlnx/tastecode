@@ -46,20 +46,43 @@ describe('composer controls in a narrow chat column', () => {
 
   it('keeps the model trigger inside its shrinking wrapper', () => {
     expect(rule(triggerCss, '.menutrigger--model-selector')).toContain(
-      'max-width: min(270px, 42vw, 100%);',
+      'max-width: min(290px, 42vw, 100%);',
     )
   })
 
   it('truncates the model name with an ellipsis', () => {
     const truncating = rule(
       triggerCss,
-      '.model-selector__trigger-model,\n.model-selector__trigger-name,\n.model-selector__trigger-effort',
+      '.model-selector__trigger-model,\n.model-selector__trigger-name,\n.model-selector__trigger-short,\n.model-selector__trigger-effort',
     )
     expect(truncating).toContain('overflow: hidden;')
     expect(truncating).toContain('text-overflow: ellipsis;')
   })
 
-  it('keeps the effort name, with no level dots, in a narrow column', () => {
+  it('shrinks the effort before the model name, and never below its first letter', () => {
+    expect(rule(triggerCss, '.model-selector__trigger-model')).toContain('flex: 0 1 auto;')
+    // Its own rule, not the shared truncation rule whose selector list ends with it.
+    const effort =
+      triggerCss.match(/\*\/\n\.model-selector__trigger-effort \{(?<body>[\s\S]*?)\n\}/)?.groups?.[
+        'body'
+      ] ?? ''
+    expect(effort).toContain('flex: 0 1000 auto;')
+    expect(effort).toContain('min-width: 3ch;')
+  })
+
+  // A ~300px composer showed "G L…"; there the button is the provider icon and "Luna".
+  it('shows the short model name and leaves the effort to the menu in a narrow column', () => {
+    const narrow =
+      /@container chat-stage \(max-width: 620px\) \{(?<body>[\s\S]*?)\n\}\n/.exec(triggerCss)
+        ?.groups?.['body'] ?? ''
+    expect(narrow).toMatch(
+      /\.model-selector__trigger-name,\s*\.model-selector__trigger-effort \{\s*display: none;/,
+    )
+    expect(narrow).toMatch(/\.model-selector__trigger-short \{\s*display: inline;/)
+    expect(rule(triggerCss, '.model-selector__trigger-short')).toContain('display: none;')
+  })
+
+  it('shows no effort level dots', () => {
     expect(appCss).not.toContain('model-selector__trigger-level')
     expect(triggerCss).not.toContain('model-selector__trigger-level')
     expect(triggerCss).not.toContain('model-selector__trigger-dot')

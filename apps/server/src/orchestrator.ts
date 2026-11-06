@@ -2,6 +2,7 @@ import type {
   AppDirection,
   AssetManifest,
   BrandSystem,
+  BrandFont,
   BriefingQuestion,
   DesignBrief,
   DesignFileSnapshot,
@@ -75,7 +76,9 @@ import { compactHistoryReplay } from './history-replay.js'
 import { decodeHistoryCursor, readHistoryPage, type HistoryPage } from './history-page.js'
 import { readIndexedNewestHistoryPage } from './history-tail.js'
 import {
-  DESIGN_PHASE_NOTICE,
+  designPhaseLanguageReminder,
+  designPhaseNotice,
+  isProviderSessionMissing,
   mapProviderSession,
   RESTORE_CONTEXT_NOTICE,
   StartupCleanupError,
@@ -156,6 +159,7 @@ import {
   AgentToolError,
   AgentToolsEndpoint,
   type AgentToolsGrant,
+  type BrowserToolsBroker,
 } from './agent-tools-mcp.js'
 import {
   SUBAGENT_INSTRUCTIONS,
@@ -177,6 +181,8 @@ import {
   type AvailableBackgroundModelSource,
   type BackgroundModelSourceLoader,
 } from './background-model.js'
+import { designAttachedBeforeNote, designAttachmentKey } from './design-attachments.js'
+import { closestReasoningEffort } from './reasoning-effort.js'
 import { VoiceService, type VoiceTranscriber } from './voice.js'
 import {
   RecordedDeltaBuffer,
@@ -388,6 +394,8 @@ const StoredDesignFlowSchema = z.object({
   buildFileBaseline: z.array(z.string()).optional(),
   designSourceBaseline: z.array(z.string()).optional(),
   designConsistencyBaseline: z.array(z.string()).optional(),
+  buildFiles: z.array(z.string()).optional(),
+  designScanSkipped: z.string().optional(),
   buildSummary: z.string().optional(),
 })
 type DesignBriefInput = z.infer<typeof DesignBriefInputSchema>
@@ -427,7 +435,14 @@ type DesignFlow = {
   designSourceBaseline?: string[] | undefined
   /** Fonts and radii each file declared at run start; absent on runs saved before the audit. */
   designConsistencyBaseline?: string[] | undefined
+  /**
+   * Why the workspace was too large to scan at run start. The source-quality and exact-file
+   * checks then do not run for this run; the reason is logged instead of failing Design.
+   */
+  designScanSkipped?: string
   buildSummary?: string
+  /** The files Build reported, so Preview Setup targets the page this run made. */
+  buildFiles?: string[]
 }
 
 /**
@@ -551,11 +566,13 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     ...(approvedPage ? { approvedPage } : {}),
     ...(approvedAssets ? { approvedAssets } : {}),
     ...(stored.buildSummary ? { buildSummary: stored.buildSummary } : {}),
+    ...(stored.buildFiles ? { buildFiles: stored.buildFiles } : {}),
     ...(stored.buildFileBaseline ? { buildFileBaseline: stored.buildFileBaseline } : {}),
     ...(stored.designSourceBaseline ? { designSourceBaseline: stored.designSourceBaseline } : {}),
     ...(stored.designConsistencyBaseline
       ? { designConsistencyBaseline: stored.designConsistencyBaseline }
       : {}),
+    ...(stored.designScanSkipped ? { designScanSkipped: stored.designScanSkipped } : {}),
   }
 }
 
@@ -800,6 +817,10 @@ export class Orchestrator {
    */
   #heldQueues = new Set<string>()
   #designFlows = new Map<string, DesignFlow>()
+  /** Per provider session and chat, the Design attachments it already holds (see designAttachmentKey). */
+  #designDelivered = new WeakMap<AgentSession, Map<string, Set<string>>>()
+  /** Brand fonts TasteCode tried to download for a run's Asset phase; in memory only, the files are the record. */
+  #brandFontAttempts = new WeakMap<DesignFlow, BrandFont[]>()
   #designTurns = new Map<string, string>()
   #designStartingThreads = new Set<string>()
   #designStartWaiters = new Map<string, (turnId: string) => void>()
@@ -937,6 +958,8 @@ export class Orchestrator {
       onSubagentEvent?: SubagentEventHandler
       /** Serve TasteCode's agent tools to chats on providers that take them. */
       agentTools?: boolean
+      /** Runs agent browser commands; without it the browser tools are not offered. */
+      browserTools?: BrowserToolsBroker
       onQueue?: (threadId: string, state: QueueState) => void
       onLog: (line: string) => void
       /** `accountId` is absent for the default account. */
@@ -1051,7 +1074,9 @@ export class Orchestrator {
       },
       interruptParent: (parentThreadId) => this.interrupt(parentThreadId),
     })
-    this.#agentTools = handlers.agentTools ? new AgentToolsEndpoint(this.#subagents) : undefined
+    this.#agentTools = handlers.agentTools
+      ? new AgentToolsEndpoint(this.#subagents, handlers.browserTools)
+      : undefined
     this.#onQueue = handlers.onQueue ?? (() => {})
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
@@ -1202,7 +1227,7 @@ export class Orchestrator {
   }
 
   /** The scope of the account a chat runs as; none once that account is gone. */
-  #threadScope(thread: Thread): AccountScope | undefined {
+  #threadScope(thread: Pick<Thread, 'provider' | 'accountId'>): AccountScope | undefined {
     try {
       return this.#scope(thread.provider, thread.accountId)
     } catch {
@@ -3159,7 +3184,10 @@ export class Orchestrator {
             flow.options = { ...flow.options, ...options }
             try {
               this.#validateApprovedDesignArtifacts(flow)
-              const prompt = flow.pendingPrompt ?? this.#designPromptFor(flow)
+              const prompt = await this.#readyDesignPrompt(
+                flow,
+                flow.pendingPrompt ?? this.#designPromptFor(flow),
+              )
               delete flow.pendingPrompt
               this.#saveDesignFlow(threadId)
               this.#notePromptWrapping(threadId, true)
@@ -3167,7 +3195,7 @@ export class Orchestrator {
                 threadId,
                 prompt,
                 this.#designAttachmentsFor(flow),
-                this.#designTurnOptions(flow),
+                this.#designTurnOptions(threadId, flow),
                 pendingStart,
               )
             } catch (error) {
@@ -3191,24 +3219,22 @@ export class Orchestrator {
         await loadDesignAgent()
         const workspacePath = this.#repoPath(threadId)
         const referenceSnapshot = designAgent().snapshotDesignFiles(referenceAttachments)
-        const designSourceBaseline = designAgent().designSourceQualityBaseline(workspacePath)
+        const { designSourceBaseline, buildFileBaseline, designScanSkipped } =
+          this.#designScanBaselines(workspacePath)
         const designConsistencyBaseline = this.#designConsistencyBaseline(workspacePath)
-        const buildFileBaseline = designAgent().designWorkspaceFileBaseline(workspacePath)
         // A preview that will not stop is logged and kept for a later retry; the
         // new run's preview takes another port.
         await this.#stopDesignPreview(threadId).catch(() => undefined)
-        // The flow keeps the user's own options; only brief-phase turns force
-        // low effort (see #designTurnOptions). Storing the lowered options
-        // here made Brand, Page, Build, and Review inherit the fast briefing
-        // setting for the whole run.
+        // The flow keeps the user's own options for every phase (see #designTurnOptions).
         const flow: DesignFlow = {
           workspacePath,
           originalRequest: text,
           referenceAttachments,
           referenceSnapshot,
-          designSourceBaseline,
+          ...(designSourceBaseline ? { designSourceBaseline } : {}),
           ...(designConsistencyBaseline ? { designConsistencyBaseline } : {}),
-          buildFileBaseline,
+          ...(buildFileBaseline ? { buildFileBaseline } : {}),
+          ...(designScanSkipped ? { designScanSkipped } : {}),
           options,
           phase: 'brief',
           askedQuestions: false,
@@ -3225,7 +3251,7 @@ export class Orchestrator {
             threadId,
             designAgent().designBriefingPrompt(text),
             referenceAttachments,
-            this.#designTurnOptions(flow),
+            this.#designTurnOptions(threadId, flow),
             pendingStart,
           )
         } catch (error) {
@@ -4072,6 +4098,15 @@ export class Orchestrator {
   }
 
   settleThread(threadId: string): ThreadLifecycle {
+    // The server settles idle chats on its own, and the classic sidebar keeps listing them with
+    // an Archive action. Archiving one makes it the user's own archive instead of an error.
+    const thread = this.#store.thread(threadId)
+    const settled = thread?.closedAt === undefined ? thread?.lifecycle : undefined
+    if (settled?.state === 'settled') {
+      if (settled.reason === 'manual') return settled
+      this.#assertCanHide(threadId)
+      return this.#notifyLifecycle(threadId, this.#store.settleThread(threadId, 'manual'))
+    }
     this.#assertLifecycleState(threadId, 'active')
     this.#assertCanHide(threadId)
     return this.#notifyLifecycle(threadId, this.#store.settleThread(threadId, 'manual'))
@@ -5700,17 +5735,30 @@ export class Orchestrator {
       skills: !stored.ephemeral,
     })
     let freshSessionId: string | undefined
+    // The provider has no saved conversation for this chat's session. With no turn ever
+    // completed there is nothing to carry; otherwise (another account's folder, a moved file)
+    // the conversation goes to the new session as a handover, and the transcript says so.
+    let missingSession: { carried: boolean } | undefined
+    const startFresh = () =>
+      runtime.start(workspacePath, { ...options, ...sessionStart }).then((started) => {
+        freshSessionId = started.thread.id
+        return mapProviderSession(threadId, started)
+      })
     const result = await (
       fresh || !resume
-        ? runtime.start(workspacePath, { ...options, ...sessionStart }).then((started) => {
-            freshSessionId = started.thread.id
-            return mapProviderSession(threadId, started)
-          })
+        ? startFresh()
         : resume(threadId, workspacePath, {
             ...options,
             ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
             ...(resumeState === undefined ? {} : { resumeState }),
             ...sessionStart,
+          }).catch((error: unknown) => {
+            if (!isProviderSessionMissing(error)) throw error
+            missingSession = { carried: !this.#store.threadHasCompletedTurn(threadId) }
+            this.#onLog(
+              `[resume] ${errorMessage(error)}; continuing in a new ${stored.provider} session${missingSession.carried ? '' : ' with the conversation so far'}`,
+            )
+            return startFresh()
           })
     ).catch((error: unknown) => {
       if (!(error instanceof StartupCleanupError)) throw error
@@ -5753,6 +5801,8 @@ export class Orchestrator {
         ...(stored.agent ? { agent: stored.agent } : {}),
         ...(stored.accountId ? { accountId: stored.accountId } : {}),
         providerSessionId: freshSessionId,
+        // A pending handover stays pending; a missing session with turns starts one.
+        ...(missingSession?.carried ? { carried: true } : {}),
       })
     }
     this.#attachThread(
@@ -5761,6 +5811,27 @@ export class Orchestrator {
       stored.projectPath,
       runtime.resume !== undefined,
     )
+    if (missingSession && !missingSession.carried) {
+      this.#record(threadId, {
+        type: 'item.completed',
+        item: {
+          id: `notice-${crypto.randomUUID()}`,
+          turnId: '',
+          type: 'notice',
+          status: 'completed',
+          notice: {
+            kind: 'provider',
+            provider: stored.provider,
+            ...(stored.agent ? { agent: stored.agent } : {}),
+            ...(stored.accountId && stored.accountId !== DEFAULT_ACCOUNT_ID
+              ? { accountId: stored.accountId }
+              : {}),
+            reason: 'session_missing',
+          },
+          createdAt: Date.now(),
+        },
+      })
+    }
     // A resumed Side chat must rejoin its stream: the runtime routing maps
     // only cover threads created by this process, while the side-chat linkage
     // survives in the store across an orchestrator restart.
@@ -5862,20 +5933,24 @@ export class Orchestrator {
       threadId,
       prompt,
       this.#designAttachmentsFor(flow),
-      this.#designTurnOptions(flow),
+      this.#designTurnOptions(threadId, flow),
     ).catch((error: unknown) => this.#failOwnedDesignFlow(threadId, flow, error))
   }
 
   /**
-   * Qualification and briefing deliberately run fast; every phase after the
-   * validated brief gets the user's own effort back. Storing lowered options
-   * on the flow instead used to give the whole run briefing effort
-   * (docs/DESIGN-AGENT.md, critical gap 3).
+   * Every Design phase runs at the effort chosen in the composer. A forced
+   * briefing effort failed on models that do not offer it (#2242); an effort
+   * the chat's model does not list becomes the nearest one it does.
    */
-  #designTurnOptions(flow: DesignFlow): TurnOptions {
-    return flow.phase === 'brief' && !flow.continueNormally
-      ? { ...flow.options, effort: 'low' }
-      : flow.options
+  #designTurnOptions(threadId: string, flow: DesignFlow): TurnOptions {
+    const thread = this.#store.thread(threadId)
+    const model = flow.options.model
+    if (!thread || flow.options.effort === undefined || model === undefined) return flow.options
+    const declared = this.#threadScope(thread)
+      ?.modelLists.peek(thread.provider)
+      ?.find(({ id }) => id === model)?.reasoningEfforts
+    const effort = closestReasoningEffort(flow.options.effort, declared ?? [])
+    return effort === flow.options.effort ? flow.options : { ...flow.options, effort }
   }
 
   #designPromptFor(flow: DesignFlow): string {
@@ -5901,6 +5976,30 @@ ${JSON.stringify(deck, null, 2)}
 </selected-reference-workflow>`
   }
 
+  /** What TasteCode knows about the run's brand fonts: its own attempt, else the project's font folder. */
+  #brandFontsFor(flow: DesignFlow): BrandFont[] {
+    return (
+      this.#brandFontAttempts.get(flow) ??
+      designAgent().localBrandFonts(flow.approvedBrand!, flow.workspacePath)
+    )
+  }
+
+  /**
+   * Before the Asset phase's first prompt, TasteCode downloads the approved brand fonts into the
+   * project itself: a provider sandbox may block the agent's own downloads. The prompt is rebuilt
+   * so it names the files instead of asking the agent to fetch them.
+   */
+  async #readyDesignPrompt(flow: DesignFlow, prompt: string): Promise<string> {
+    if (flow.phase !== 'assets' || !flow.approvedBrand || this.#brandFontAttempts.has(flow))
+      return prompt
+    const fonts = await designAgent().acquireBrandFonts(flow.approvedBrand, flow.workspacePath)
+    this.#brandFontAttempts.set(flow, fonts)
+    for (const font of fonts)
+      if (font.status === 'failed')
+        this.#onLog(`[design] could not download ${font.family}: ${font.reason}`)
+    return flow.correcting ? prompt : this.#designPromptFor(flow)
+  }
+
   #designPhasePrompt(flow: DesignFlow): string {
     if (flow.phase === 'brief') return designAgent().designBriefingPrompt(flow.originalRequest)
     this.#validateApprovedDesignArtifacts(flow)
@@ -5923,7 +6022,13 @@ ${JSON.stringify(deck, null, 2)}
       )
     const page = flow.approvedPage!
     if (flow.phase === 'assets')
-      return designAgent().designAssetPrompt(brief, brand, page, flow.referenceAttachments)
+      return designAgent().designAssetPrompt(
+        brief,
+        brand,
+        page,
+        flow.referenceAttachments,
+        this.#brandFontsFor(flow),
+      )
     // Build and Repair copy from the kit; rewrite it in case the workspace lost it since Brief.
     if (flow.appDirection && (flow.phase === 'build' || flow.phase === 'repair'))
       designAgent().writeAppScreenKit(flow.workspacePath)
@@ -5937,7 +6042,7 @@ ${JSON.stringify(deck, null, 2)}
         flow.appDirection,
       )
     }
-    if (flow.phase === 'preview') return designAgent().designPreviewPrompt()
+    if (flow.phase === 'preview') return designAgent().designPreviewPrompt(flow.buildFiles)
     if (flow.phase === 'review' && flow.screenshots) {
       return designAgent().designReviewPrompt(
         brief,
@@ -6060,7 +6165,8 @@ ${JSON.stringify(deck, null, 2)}
     }
     if (
       phase >= 4 &&
-      (!flow.assetSnapshot || !flow.designSourceBaseline || !flow.buildFileBaseline)
+      (!flow.assetSnapshot ||
+        (!flow.designScanSkipped && (!flow.designSourceBaseline || !flow.buildFileBaseline)))
     ) {
       throw new Error('Design validation snapshots are unavailable; restart the Design run')
     }
@@ -6068,10 +6174,12 @@ ${JSON.stringify(deck, null, 2)}
 
   #validateDesignBuild(flow: DesignFlow, files: readonly string[]): void {
     this.#validateApprovedDesignArtifacts(flow)
-    designAgent().validateExactBuildFiles(
-      flow.workspacePath,
-      flow.approvedBrief!,
-      flow.buildFileBaseline,
+    this.#scannedDesignCheck(flow, () =>
+      designAgent().validateExactBuildFiles(
+        flow.workspacePath,
+        flow.approvedBrief!,
+        flow.buildFileBaseline,
+      ),
     )
     const assets = designAgent().validateAssetManifestForPage(
       flow.approvedAssets!,
@@ -6080,13 +6188,55 @@ ${JSON.stringify(deck, null, 2)}
       flow.referenceAttachments,
     )
     designAgent().validateResolvedDesignAssets(assets)
-    designAgent().validateDesignSourceQuality(
-      flow.workspacePath,
-      files,
-      flow.designSourceBaseline,
-      assets,
-      flow.approvedPage,
+    this.#scannedDesignCheck(flow, () =>
+      designAgent().validateDesignSourceQuality(
+        flow.workspacePath,
+        files,
+        flow.designSourceBaseline,
+        assets,
+        flow.approvedPage,
+      ),
     )
+  }
+
+  /**
+   * Run a check that scans the whole workspace. When the workspace was or has grown too large
+   * to scan, the check does not run, which is no reason to discard the page Build made.
+   */
+  #scannedDesignCheck(flow: DesignFlow, check: () => void): void {
+    if (flow.designScanSkipped) {
+      this.#onLog(`[design] source check not run: ${flow.designScanSkipped}`)
+      return
+    }
+    try {
+      check()
+    } catch (error) {
+      if (!(error instanceof designAgent().DesignScanLimitError)) throw error
+      this.#onLog(`[design] source check not run: ${errorMessage(error)}`)
+    }
+  }
+
+  /**
+   * The source-quality and exact-file baselines need a full workspace scan. A project too large
+   * for it still gets a Design run; those two checks are then left out, as the consistency
+   * audit already is.
+   */
+  #designScanBaselines(workspacePath: string) {
+    try {
+      return {
+        designSourceBaseline: designAgent().designSourceQualityBaseline(workspacePath),
+        buildFileBaseline: designAgent().designWorkspaceFileBaseline(workspacePath),
+        designScanSkipped: undefined,
+      }
+    } catch (error) {
+      if (!(error instanceof designAgent().DesignScanLimitError)) throw error
+      this.#onLog(`[design] source checks skipped for this run: ${errorMessage(error)}`)
+      return {
+        designSourceBaseline: undefined,
+        buildFileBaseline: undefined,
+        designScanSkipped: errorMessage(error),
+      }
+    }
   }
 
   /** The audit is advisory: a scan that cannot run leaves it out instead of blocking Design. */
@@ -6127,6 +6277,19 @@ ${JSON.stringify(deck, null, 2)}
     return flow.phase === 'review' || flow.phase === 'repair'
       ? (flow.screenshots?.map(({ path }) => path) ?? [])
       : []
+  }
+
+  /**
+   * A new provider session, after a restart or a provider change, starts empty, so it is sent
+   * every image again once.
+   */
+  #deliveredDesignAttachments(threadId: string): Set<string> {
+    const session = this.#get(threadId).session
+    let chats = this.#designDelivered.get(session)
+    if (!chats) this.#designDelivered.set(session, (chats = new Map()))
+    let keys = chats.get(threadId)
+    if (!keys) chats.set(threadId, (keys = new Set()))
+    return keys
   }
 
   #designReferenceAttachments(threadId: string, flow: DesignFlow): string[] {
@@ -6180,11 +6343,20 @@ ${JSON.stringify(deck, null, 2)}
           delete designFlow.continueNormally
           this.#saveDesignFlow(threadId)
         }
-        if (designFlow.phase !== 'response') prompt = `${DESIGN_PHASE_NOTICE}${prompt}`
+        if (designFlow.phase !== 'response')
+          prompt = `${designPhaseNotice(designFlow.originalRequest)}${prompt}${designPhaseLanguageReminder(designFlow.originalRequest)}`
         this.#validateApprovedDesignArtifacts(designFlow)
         attachments = [
           ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
         ]
+      }
+      // The provider keeps every image of the chat in its context and sends them all again with
+      // each request, so an image it already has is named instead of attached (#2240).
+      const delivered = this.#deliveredDesignAttachments(threadId)
+      const attachedBefore = attachments.filter((file) => delivered.has(designAttachmentKey(file)))
+      if (attachedBefore.length) {
+        attachments = attachments.filter((file) => !attachedBefore.includes(file))
+        prompt = `${prompt}\n\n${designAttachedBeforeNote(attachedBefore, this.#repoPath(threadId))}`
       }
       const panicGeneration = this.#panicGeneration
       this.#checkoutAccess.beginTurn(this.#repoPath(threadId), threadId)
@@ -6211,6 +6383,7 @@ ${JSON.stringify(deck, null, 2)}
             await session.interrupt(threadId)
             throw new Error('Design turn start was cancelled')
           }
+          for (const file of attachments) delivered.add(designAttachmentKey(file))
           return turnId
         })
       this.#designProviderStarts.set(threadId, providerStart)
@@ -6486,25 +6659,21 @@ ${JSON.stringify(deck, null, 2)}
     ) {
       this.#designMessageItems.delete(event.item.id)
       if (this.#acceptedDesignOutputs.has(turnId)) return
+      // Providers without commentary phases put progress text in the same message as the
+      // phase result, before its JSON (Claude Code does). That prose is the agent's own
+      // progress and shows whether or not the JSON parses; the JSON itself never shows.
+      const text = event.item.text ?? ''
+      const json = text.search(/^\s*(?:[{[]|```)/m)
+      const prose = (json < 0 ? text : text.slice(0, json)).trim()
       try {
-        this.#handleDesignOutput(threadId, turnId, event.item.text ?? '')
+        this.#handleDesignOutput(threadId, turnId, text)
         // A completed or failed phase can release ownership inside the handler.
         if (this.#designTurns.get(turnId) === threadId) {
           this.#acceptedDesignOutputs.add(turnId)
         }
+        if (prose && json > 0) this.#recordDesignProse(threadId, event, prose)
       } catch (error) {
-        // Providers without commentary phases still expose completed progress text,
-        // but not a phase result: one that opens with prose and puts its JSON on a
-        // line of its own fails the parse too (Claude Code's asset manifest did).
-        const text = event.item.text ?? ''
-        const json = text.search(/^\s*(?:[{[]|```)/m)
-        const prose = (json < 0 ? text : text.slice(0, json)).trim()
-        if (prose) {
-          this.#record(threadId, {
-            ...event,
-            item: { ...event.item, text: prose, phase: 'commentary' },
-          })
-        }
+        if (prose) this.#recordDesignProse(threadId, event, prose)
         this.#designOutputErrors.set(turnId, error)
       }
       return
@@ -6548,12 +6717,16 @@ ${JSON.stringify(deck, null, 2)}
         delete flow.pendingPrompt
         this.#saveDesignFlow(threadId)
         this.#record(threadId, event)
-        void this.#sendDesignTurn(
-          threadId,
-          prompt,
-          this.#designAttachmentsFor(flow),
-          this.#designTurnOptions(flow),
-        ).catch((error: unknown) => this.#failOwnedDesignFlow(threadId, owner, error))
+        void this.#readyDesignPrompt(owner, prompt)
+          .then((ready) =>
+            this.#sendDesignTurn(
+              threadId,
+              ready,
+              this.#designAttachmentsFor(owner),
+              this.#designTurnOptions(threadId, owner),
+            ),
+          )
+          .catch((error: unknown) => this.#failOwnedDesignFlow(threadId, owner, error))
         return
       }
     }
@@ -6561,6 +6734,14 @@ ${JSON.stringify(deck, null, 2)}
     if (event.type === 'turn.started' && this.#designTurns.get(event.turn.id) === threadId) {
       this.#startDesignActivity(threadId, event.turn.id)
     }
+  }
+
+  #recordDesignProse(
+    threadId: string,
+    event: Extract<DomainEvent, { type: 'item.completed' }>,
+    prose: string,
+  ): void {
+    this.#record(threadId, { ...event, item: { ...event.item, text: prose, phase: 'commentary' } })
   }
 
   #handleDesignOutput(threadId: string, turnId: string, text: string): void {
@@ -6650,7 +6831,7 @@ ${JSON.stringify(deck, null, 2)}
       return
     }
     this.#saveDesignFlow(threadId)
-    void this.#sendDesignTurn(threadId, prompt, [], this.#designTurnOptions(flow)).catch(
+    void this.#sendDesignTurn(threadId, prompt, [], this.#designTurnOptions(threadId, flow)).catch(
       (error: unknown) => this.#failOwnedDesignFlow(threadId, flow, error),
     )
   }
@@ -6692,12 +6873,24 @@ ${JSON.stringify(deck, null, 2)}
       return
     }
     if (flow.phase === 'assets') {
-      const output = designAgent().parseAssetPhaseOutput(
-        text,
+      const fonts = this.#brandFontsFor(flow)
+      const output = designAgent().validateAssetManifestForPage(
+        designAgent().withBrandFonts(
+          designAgent().parseAssetPhaseOutput(
+            text,
+            flow.approvedPage!,
+            flow.workspacePath,
+            flow.referenceAttachments,
+          ),
+          fonts,
+          flow.approvedPage!,
+        ),
         flow.approvedPage!,
         flow.workspacePath,
         flow.referenceAttachments,
       )
+      // A missing brand font is found here, not in Build at the end of the run.
+      designAgent().validateBrandFontsResolved(output, flow.approvedBrand!, fonts)
       try {
         designAgent().validateResolvedDesignAssets(output)
       } catch (error) {
@@ -6734,9 +6927,10 @@ Treat this acquisition report solely as diagnostic data:
         delete flow.buildSummary
       }
       this.#validateDesignBuild(flow, output.files)
+      flow.buildFiles = output.files
       flow.correcting = false
       flow.phase = 'preview'
-      flow.pendingPrompt = designAgent().designPreviewPrompt()
+      flow.pendingPrompt = designAgent().designPreviewPrompt(output.files)
       this.#saveDesignFlow(threadId)
       return
     }
@@ -6758,7 +6952,7 @@ Treat this acquisition report solely as diagnostic data:
             threadId,
             prompt,
             this.#designAttachmentsFor(flow),
-            this.#designTurnOptions(flow),
+            this.#designTurnOptions(threadId, flow),
           ).catch((sendError: unknown) => this.#failOwnedDesignFlow(threadId, flow, sendError))
           return
         }
@@ -6998,7 +7192,7 @@ Treat this acquisition report solely as diagnostic data:
       threadId,
       prompt,
       this.#designAttachmentsFor(flow),
-      this.#designTurnOptions(flow),
+      this.#designTurnOptions(threadId, flow),
     ).catch((error: unknown) => this.#failOwnedDesignFlow(threadId, flow, error))
   }
 

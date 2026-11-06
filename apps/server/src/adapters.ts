@@ -181,6 +181,10 @@ export type ProviderRuntime = {
     workspacePath: string,
     options: StartOptions,
   ): Promise<{ thread: Thread; session: AgentSession }>
+  /**
+   * Rejects with `code: 'provider_session_missing'` (isProviderSessionMissing) when the provider
+   * has no saved conversation for the chat's session, so the server can continue it elsewhere.
+   */
   resume?(
     threadId: string,
     workspacePath: string,

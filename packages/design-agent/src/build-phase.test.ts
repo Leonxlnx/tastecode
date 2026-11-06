@@ -116,21 +116,31 @@ describe('build phase', () => {
     expect(prompt).not.toContain('<reference-reveal-source>')
     expect(prompt).not.toContain('installReferenceReveals')
     expect(prompt).not.toContain('Verify an actual hero animation')
-    expect(designBuildPrompt(...artifacts)).toContain('<reference-reveal-source>')
+    expect(designBuildPrompt(...artifacts)).not.toContain('<reference-reveal-source>')
+    expect(prompt).not.toContain('TASTESKILL WEBSITE RULES')
   })
 
   it('requires the existing architecture and leaves preview to the harness', () => {
     const prompt = designBuildPrompt(...artifacts)
-    expect(prompt).toContain('Build must wire the triggers and classes')
-    expect(prompt).toContain('Verify an actual hero animation')
+    expect(prompt).toContain(
+      'Do not add scroll reveals, a reveal helper or an entrance to any other section',
+    )
+    expect(prompt).toContain(
+      'that the hover layer answers on a button, a linked card and a linked photograph',
+    )
+    expect(prompt).toContain('## 4. Equal edges and the grid')
     expect(prompt).toContain('Build and Review must preserve it')
     expect(prompt).toContain('only fulfilled image needs may reach Build')
     expect(prompt).toContain('Do not scaffold a second app')
     expect(prompt).toContain('TasteCode owns Preview next')
-    expect(prompt).toContain('The reference is the primary hard composition requirement')
-    expect(prompt).toContain("Implement each section's recorded motion decision")
+    // A real Codex run without a browser host stopped on the font check it could not run.
     expect(prompt).toContain(
-      "Implement the page's motion vocabulary once, as two or three named reveal types with shared timing",
+      'Where no browser can launch, check instead that every approved family',
+    )
+    expect(prompt).toContain('A local browser that cannot launch is not a blocker')
+    expect(prompt).toContain('The reference is the primary hard composition requirement')
+    expect(prompt).toContain(
+      "Implement the hover layer on every interactive element, the hero's one load motion, the one creative moment",
     )
     expect(prompt).toContain('never use transition: all')
     expect(prompt).toContain('replace the reference with a generic centered heading')
@@ -194,7 +204,7 @@ describe('build phase', () => {
       'Every section reads colors, font families, font sizes, radii and section spacing only through these variables',
     )
     expect(prompt).toContain(
-      'The only permitted font families are "Fraunces" and "Hanken Grotesk". Do not add any other font-family, @font-face, Google Fonts or Fontsource import',
+      'The only permitted font families are "Fraunces" and "Hanken Grotesk". Load them only from their font files in the project: link the stylesheet the asset manifest records for them, or write @font-face rules pointing at those files. Do not add a font-family or @font-face for any other family, a Google Fonts or Fontsource import',
     )
     expect(prompt).toContain('an icon font required by the project')
     expect(prompt).toContain('exactly one primary and one secondary button style from designTokens')
@@ -247,6 +257,21 @@ describe('build phase', () => {
         }),
       ),
     ).toMatchObject({ status: 'complete', files: ['src/App.tsx'] })
+  })
+
+  it('reads a failed Build that names its blocker as summary, as Codex answered', () => {
+    const failed = (fields: Record<string, string>) =>
+      parseBuildPhaseOutput(
+        JSON.stringify({ status: 'failed', ...fields, files: ['.taste/assets.json'], checks: [] }),
+      )
+    expect(failed({ summary: 'Syne remains unavailable.' })).toMatchObject({
+      status: 'failed',
+      error: 'Syne remains unavailable.',
+    })
+    expect(failed({ error: 'Port in use.', summary: 'Other.' })).toMatchObject({
+      error: 'Port in use.',
+    })
+    expect(() => failed({})).toThrow('build error must be a non-empty string')
   })
 
   it('accepts reported folders, as Codex lists generated output', () => {
@@ -437,7 +462,7 @@ describe('build phase', () => {
 
       writeFileSync(
         path.join(workspace, 'App.tsx'),
-        'export const Art = () => <svg viewBox="0 0 100 100"><path d="M0 0h100v100z" /></svg>',
+        'export const Art = () => <svg viewBox="0 0 800 600"><path d="M0 0h800v600z" /></svg>',
       )
       expect(() => validateDesignSourceQuality(workspace, [], baseline, approvedAssets)).toThrow(
         'unmanifested inline SVG substitute',

@@ -97,7 +97,7 @@ export function AppBackgroundSettings(props: {
 
   return (
     <SettingsSection title="Window background">
-      <SettingsRow name="Style" note={transparentNote}>
+      <SettingsRow searchId="window-style" name="Style" note={transparentNote}>
         <SettingsSegmented
           ariaLabel="Window background"
           value={background.mode}
@@ -108,7 +108,7 @@ export function AppBackgroundSettings(props: {
         />
       </SettingsRow>
       {background.mode === 'transparent' && support === 'material' ? (
-        <SettingsRow name="Material">
+        <SettingsRow searchId="window-material" name="Material">
           <SettingsSegmented
             ariaLabel="Window material"
             value={background.material}
@@ -134,12 +134,14 @@ export function AppBackgroundSettings(props: {
             images={props.images ?? indexedDbBackgroundImages}
           />
           <LevelRow
+            searchId="window-dim"
             name="Dim"
             value={background.dim}
             max={MAX_APP_BACKGROUND_DIM}
             onChange={(dim) => writeAppBackground({ dim })}
           />
           <LevelRow
+            searchId="window-blur"
             name="Blur"
             value={background.blur}
             max={MAX_APP_BACKGROUND_BLUR}
@@ -149,7 +151,7 @@ export function AppBackgroundSettings(props: {
       ) : null}
       {background.mode === 'effect' ? (
         <>
-          <SettingsRow name="Effect">
+          <SettingsRow searchId="window-effect" name="Effect">
             <SettingsSegmented
               ariaLabel="Background effect"
               value={background.effect}
@@ -164,6 +166,7 @@ export function AppBackgroundSettings(props: {
             images={props.images ?? indexedDbBackgroundImages}
           />
           <LevelRow
+            searchId="window-dim"
             name="Dim"
             value={background.dim}
             max={MAX_APP_BACKGROUND_DIM}
@@ -181,12 +184,13 @@ export function AppBackgroundSettings(props: {
  */
 function LevelRow(props: {
   name: string
+  searchId: string
   value: number
   max: number
   onChange: (value: number) => void
 }) {
   return (
-    <SettingsRow name={props.name}>
+    <SettingsRow searchId={props.searchId} name={props.name}>
       <input
         className="app-bg-settings__range"
         type="range"
@@ -398,6 +402,7 @@ function BackgroundImageRow(props: {
 
   return (
     <SettingsRow
+      searchId="window-image"
       name="Image"
       tone={problem ? 'error' : props.hasImage ? undefined : 'muted'}
       note={

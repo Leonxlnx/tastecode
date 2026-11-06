@@ -40,8 +40,8 @@
   --menu-hover: var(--surface-3);
   --menu-line: var(--chrome-border);
 
-  --line: #262626;
-  --line-strong: #333333;
+  --line: #2b2b2b;
+  --line-strong: #3b3b3b;
   --queue-line: #2b2b2b;
   /* Loading placeholders: the resting bar and the shine that passes over it.
      Light themes flip the pair so a bar still reads against a near-white page. */
@@ -49,8 +49,8 @@
   --skeleton-shine: color-mix(in srgb, var(--text-3) 18%, var(--surface-2));
 
   --text: #ededed;
-  --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));
-  --text-2: #a3a3a3;
+  --response-text: color-mix(in srgb, var(--text) 90%, var(--text-2));
+  --text-2: #adadad;
   /* Muted copy (section labels, meta, timestamps) still has to be read: this
      grey clears 4.5:1 on every dark surface up to --surface-2 and stays a
      clear step below --text-2. */
@@ -176,10 +176,10 @@
      background and follows every backdrop preset or custom colour. */
   --terminal-workspace-bg: var(--bg);
 
-  --t-xs: 11.5px;
-  --t-sm: 12.5px;
-  --t-md: 13.5px;
-  --t-lg: 15px;
+  --t-xs: 12.5px;
+  --t-sm: 13.5px;
+  --t-md: 14.5px;
+  --t-lg: 16px;
   --t-xl: 20px;
   --t-2xl: 26px;
 
@@ -362,8 +362,8 @@
   --menu-hover: var(--surface-3);
   --menu-line: var(--chrome-border);
 
-  --line: #ebebed;
-  --line-strong: #dedee2;
+  --line: #e5e5e8;
+  --line-strong: #d5d5da;
   --queue-line: #eeeeef;
   /* A bare --surface-3 bar is 1.18:1 on white, so loading controls read as
      missing. A step of text keeps it quiet but visible, and follows the
@@ -371,10 +371,10 @@
   --skeleton: color-mix(in srgb, var(--text) 9%, var(--surface-3));
   --skeleton-shine: color-mix(in srgb, var(--bg-prompt) 70%, var(--surface-3));
 
-  --text: #27272a;
-  --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));
-  --text-2: #52525b;
-  --text-3: #71717a;
+  --text: #1f1f22;
+  --response-text: color-mix(in srgb, var(--text) 90%, var(--text-2));
+  --text-2: #4b4b53;
+  --text-3: #68686f;
   --queue-text: #18181b;
   --queue-action: #96969a;
   --queue-hover: #f5f5f6;
@@ -424,7 +424,7 @@
   --chrome-raised: var(--control-hover);
   --chrome-raised-hover: var(--menu-hover);
   --chrome-recessed: var(--bg);
-  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%209l6%206l6%20-6'/%3E%3C/svg%3E");
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2368686f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%209l6%206l6%20-6'/%3E%3C/svg%3E");
   --chrome-border: #e3e3e6;
   --chrome-highlight: transparent;
   --chrome-shadow: none;

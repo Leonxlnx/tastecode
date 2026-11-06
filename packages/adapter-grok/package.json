@@ -23,6 +23,10 @@
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "default": "./dist/mcp.js"
+    },
+    "./usage-history": {
+      "types": "./dist/usage-history.d.ts",
+      "default": "./dist/usage-history.js"
     }
   },
   "main": "./dist/index.js",

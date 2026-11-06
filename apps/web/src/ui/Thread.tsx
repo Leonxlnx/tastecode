@@ -70,11 +70,13 @@ import { Approval } from './Approval.js'
 import { ChangeStats, Diff, parseDiff } from './Diff.js'
 import { ProjectRootContext, projectRelativePath } from './project-relative-path.js'
 import { parseToolCall, toolArgumentEntries, toolArgumentSnippet } from './tool-call-text.js'
+import { browserCommentsAsPlainText } from './browser-comments.js'
 import { CopyButton } from './CopyButton.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { PromptText } from './PromptText.js'
+import { browserCommentImages } from './browser-comments.js'
 import { ThreadSkeleton } from './Skeleton.js'
 import {
   REVEAL_CLOSE_MS,
@@ -148,6 +150,8 @@ const EMPTY_RAIL_ENTRIES: readonly TurnRailEntry[] = []
 /** Space kept between a disclosure's summary and the viewport edge it moves toward. */
 const HEADER_MARGIN = 12
 
+type EditMessage = (text: string, attachments?: string[] | undefined) => void
+
 /**
  * The thread.
  *
@@ -179,7 +183,7 @@ export interface ThreadProps {
   revealRequest?: number | undefined
   checkpoints?: Checkpoint[] | undefined
   keyboardActive?: boolean | undefined
-  onEditMessage?: ((text: string) => void) | undefined
+  onEditMessage?: EditMessage | undefined
   onRevertCheckpoint?: ((checkpoint: Checkpoint) => void) | undefined
   onUndoChanges?:
     ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined
@@ -679,6 +683,23 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     [settledHeight, virtualizer],
   )
   /**
+   * Where the pinned turn's first shown row starts. Rows the transcript hides
+   * measure 0: a Design phase's own prompt and answer, or the error the
+   * composer shows instead. A failed Design run pinned such a row at the top
+   * with room below it, so the chat looked empty under the error banner while
+   * every step of the run sat just above the edge. With no shown row left in
+   * the turn, nothing is pinned and the chat ends at its last shown row.
+   */
+  const visibleStartFrom = useCallback(
+    (index: number) => {
+      const rows = virtualizer.measurementsCache
+      for (let row = index; row < rows.length; row += 1)
+        if (rows[row]?.size !== 0) return rows[row]?.start
+      return undefined
+    },
+    [virtualizer],
+  )
+  /**
    * The settled end of the scroll, from the virtual total and what was last
    * measured, held at a pinned prompt while its answer is shorter than the
    * screen; and the room below the content that makes that end reachable.
@@ -686,13 +707,11 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const endAndRoom = useCallback(() => {
     const state = follow.current
     const natural = Math.round(virtualizer.getTotalSize() + state.extra) - state.clientHeight
-    const start = state.pinned
-      ? virtualizer.measurementsCache[anchorIndex.current]?.start
-      : undefined
+    const start = state.pinned ? visibleStartFrom(anchorIndex.current) : undefined
     const pinned =
       start === undefined ? undefined : Math.round(state.contentTop + start - TURN_TOP_GAP)
     return turnRoom(natural, pinned)
-  }, [virtualizer])
+  }, [virtualizer, visibleStartFrom])
   const endOf = useCallback(() => endAndRoom().end, [endAndRoom])
   const roomRef = useRef<HTMLDivElement>(null)
   /**
@@ -1981,7 +2000,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   /** A steered prompt the running turn has not answered yet. */
   steerPending: boolean
   projectPath: string | undefined
-  onEditMessage: ((text: string) => void) | undefined
+  onEditMessage: EditMessage | undefined
   checkpointIndex: CheckpointIndex<Checkpoint>
   onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
 }) {
@@ -2286,7 +2305,7 @@ const Row = memo(function Row({
   responseText: string | undefined
   finalResponse: boolean
   settling: boolean
-  onEditMessage: ((text: string) => void) | undefined
+  onEditMessage: EditMessage | undefined
   checkpoint: Checkpoint | undefined
   onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
   /** The answer of a turn the user stopped ends on the stopped marker. */
@@ -2319,7 +2338,11 @@ const Row = memo(function Row({
   // The user's own words get a surface so the eye can find where each exchange
   // begins; the agent's answer is plain prose, which is what you actually read.
   if (item.type === 'message' && item.role === 'user') {
-    const imageAttachments = item.attachments?.filter(isImageAttachment) ?? []
+    const commentImages = browserCommentImages(item.text ?? '', item.attachments ?? [])
+    const imageAttachments =
+      item.attachments?.filter(
+        (attachment) => isImageAttachment(attachment) && !commentImages.has(attachment),
+      ) ?? []
     return (
       <div className="said">
         {imageAttachments.length > 0 ? (
@@ -2336,16 +2359,16 @@ const Row = memo(function Row({
         ) : null}
         {item.text ? (
           <p className="said__text">
-            <PromptText text={item.text} />
+            <PromptText text={item.text} attachments={item.attachments} />
           </p>
         ) : null}
         {item.text ? (
           <div className="response-actions said__actions" aria-label="Prompt actions">
-            <CopyButton text={item.text} label="Copy prompt" />
+            <CopyButton text={browserCommentsAsPlainText(item.text)} label="Copy prompt" />
             {onEditMessage ? (
               <button
                 type="button"
-                onClick={() => onEditMessage(item.text!)}
+                onClick={() => onEditMessage(item.text!, item.attachments)}
                 aria-label="Edit as new prompt"
                 title="Edit as new prompt"
               >
@@ -2462,6 +2485,9 @@ export function providerNoticeLabel(
   // Another account of a provider is named, so a move between two accounts says where.
   if (notice.accountId && accountLabel) parts.push(accountLabel(notice.provider, notice.accountId))
   if (notice.model) parts.push(modelName?.(notice.provider, notice.model) ?? notice.model)
+  // The chat stayed where it was; only its saved session could not be reopened.
+  if (notice.reason === 'session_missing')
+    return `New ${parts.join(' · ')} session: the saved one could not be reopened, so the chat so far was carried over`
   return `Switched to ${parts.join(' · ')}`
 }
 

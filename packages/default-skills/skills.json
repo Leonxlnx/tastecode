@@ -25,15 +25,39 @@
       "folder": "design-taste-frontend",
       "summary": "art direction for websites and app screens (tasteskill)",
       "repository": "Leonxlnx/taste-skill",
-      "ref": "v2.5",
-      "commit": "939b5640b56614f0e4cd1189311d106c451497e6",
+      "ref": "v2.5.0",
+      "commit": "822e0b9d872e10deb931afad2c6c2bd943cf4c7b",
       "path": "skills/taste-skill",
       "license": "MIT",
       "licenseFile": "LICENSE",
-      "archiveSha256": "e16faf9fc55ce08d0472b440b6e5a37f6386c4982b269d6ae87a4f69abc8cb67",
-      "treeSha256": "9e16a4b47eae6ccf8784da95555977b02d40ae5df129a585bf69d2eafe307fa6",
-      "files": 212,
-      "bytes": 9693274
+      "archiveSha256": "f7995b87905c1881e48fad6aa0c6ba4ad871bded5e673ecc455a085f922da2e5",
+      "treeSha256": "68c80a9007a7d14fe435d373cf3f2eda245840dd96d8be424e44efba3915537a",
+      "files": 496,
+      "bytes": 5611599,
+      "omit": {
+        "about": "Never bundled and never fetched: the photo library, the sample photographs of the demos and hero templates, the demo icon sets, the objects kit's sample posters and sample product specs, and their credits files. TasteCode gives no default images (Leon, 2026-11-05).",
+        "paths": [
+          "assets/photos/",
+          "assets/layout/img/",
+          "assets/icons/demo/",
+          "assets/ui/icons/",
+          "assets/moments/_demo/",
+          "assets/scenes/_demo/",
+          "assets/objects/photo-kit/photos/",
+          "assets/objects/photo-kit/photos.json",
+          "assets/components/fx-photo/meeting-room.jpg",
+          "assets/objects/*/fallback*.png",
+          "assets/objects/product-render/specs/"
+        ]
+      },
+      "patch": {
+        "about": "TasteCode copies in patches/design-taste-frontend/ that point the skill at the user's own pictures; each value is the sha256 of the upstream file the copy was written against.",
+        "files": {
+          "SKILL.md": "c16f47478c2da4911232de8210c938cb6efe41a78ae24bfdcc502d8336f2303b",
+          "references/photos.md": "cd7fd222a950c6a44159cf1679fe502ad897798f72a14968aae1cc73ce225d3f",
+          "scripts/photos.mjs": "a28a0b72af753e74f7a8f5f28fb83666e233662a6655227d130b80894086c223"
+        }
+      }
     },
     {
       "folder": "cook",

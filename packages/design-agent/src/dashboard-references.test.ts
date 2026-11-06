@@ -118,7 +118,7 @@ describe('dashboards as tasteskill app screens, dashboard images parked', () => 
       architecture: { mode: 'operate_monitor' },
     } as PageBlueprint)
     expect(guidance).not.toContain('DASHBOARD INTERACTION')
-    expect(guidance).toContain('VISIBLE MOTION')
+    expect(guidance).toContain('WEBSITE MOTION')
   })
 
   it('ignores dashboard catalogs and entries and draws no images for a dashboard', () => {

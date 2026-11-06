@@ -9,6 +9,7 @@ import {
   IconBulb,
   IconChartDonut,
   IconChecklist,
+  IconClick,
   IconCode,
   IconCoins,
   IconDownload,
@@ -109,6 +110,7 @@ export function commandIcon(name: string): TablerIcon {
 }
 
 export function chipIcon(kind: ComposerChipKind, name: string): TablerIcon {
+  if (kind === 'browser') return IconClick
   if (kind === 'skill') return SKILL_ICON
   if (kind === 'mcp') return MCP_ICON
   return commandIcon(name)

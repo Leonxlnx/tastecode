@@ -39,6 +39,7 @@
   /* Rail colour behind everything in this row: it is what shows through the
      stage's rounded top-left corner, so the notch reads as part of the rail. */
   background: var(--bg-rail);
+  overflow-x: clip; /* the closed workspace panel rests 24px out */
 }
 
 :root[data-glass='on'][data-shell='desktop']:not([data-theme='light']) .shell__body {
@@ -121,7 +122,7 @@
 
 .rail {
   --rail-text: #dcdcda;
-  --rail-font-size: 13px;
+  --rail-font-size: 14px;
   --rail-font-weight: 400;
   --rail-letter-spacing: -0.01em;
   /* One raised surface for the rail: the account card and the active chat. */
@@ -1699,7 +1700,7 @@
   border-color: var(--composer-hairline-focus);
 }
 
-.composer__box.is-dropping .composer__prompt {
+.composer__box.is-dropping :is(.composer__prompt, .composer__shelf--project) {
   border-color: var(--text-2);
   background: var(--surface-2);
 }
@@ -1714,9 +1715,7 @@
   min-height: 32px;
   margin: 0;
   padding: 1px 10px;
-  background: var(--bg-shelf);
   border-radius: var(--r-composer) var(--r-composer) 0 0;
-  box-shadow: inset 0 -1px color-mix(in srgb, var(--line) 70%, transparent);
 }
 
 .composer__shelf::after {
@@ -1725,9 +1724,34 @@
   bottom: calc(-1 * var(--r-composer));
   left: 0;
   height: calc(var(--r-composer) + 2px);
-  background: var(--bg-shelf);
   content: '';
   pointer-events: none;
+}
+
+/* New chat: shelf and prompt are one surface with one edge and shadow. */
+.is-new-session .composer__box {
+  box-shadow: var(--composer-shadow);
+}
+
+.composer__shelf--project {
+  background: var(--composer-surface);
+  border: 1px solid var(--composer-hairline);
+  border-bottom: 0;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.composer__shelf--project::after {
+  content: none;
+}
+
+.composer__box:has(.composer__prompt:focus-within) .composer__shelf--project {
+  border-color: var(--composer-hairline-focus);
+}
+
+.is-shelved .composer__prompt {
+  border-top: 0;
+  border-radius: 0 0 var(--r-composer) var(--r-composer);
+  box-shadow: none;
 }
 
 .composer__shelf .menuwrap {
@@ -2401,7 +2425,7 @@
 
 :root[data-theme='light']
   .composer__design-beam:is([data-active], [data-fading])
-  .composer__prompt {
+  :is(.composer__prompt, .composer__shelf--project) {
   border-color: var(--composer-design-prompt-border);
 }
 
@@ -3328,6 +3352,10 @@
   text-align: center;
 }
 
+.empty__project {
+  white-space: nowrap;
+}
+
 .empty__detail {
   color: var(--text-2);
   font-size: var(--t-sm);
@@ -3349,11 +3377,14 @@
   align-items: center;
   gap: 8px;
   max-width: min(420px, calc(100vw - 36px));
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  padding: 9px 10px;
-  font-size: var(--t-sm);
+  padding: 5px 7px 5px 12px;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-popup);
+  color: var(--text);
+  box-shadow: var(--shadow-flyout);
+  font-size: 14px;
+  line-height: 20px;
   opacity: 1;
   transform: translateY(0) scale(1);
   transition:
@@ -3403,8 +3434,6 @@
 /* Sits above the error toast so the two never overlap when both are up. */
 .notice--offline {
   bottom: 62px;
-  border-color: color-mix(in srgb, var(--attention) 55%, var(--line-strong));
-  color: var(--text-2);
 }
 
 @media (max-width: 700px) {
@@ -3419,7 +3448,7 @@
   }
 }
 
-.notice__text {
+.notice .notice__text {
   /* Server error messages are the point of this toast; clamping to three
      lines beats truncating them to an unreadable single one. */
   display: -webkit-box;

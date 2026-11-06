@@ -66,6 +66,7 @@ const PROVIDER_CONTEXT_SETTING = 'provider-context'
 const ACCOUNT_CONTEXT_SETTING = 'provider-account-context'
 /** The runtime each provider launches through; a provider without one uses its default. */
 const PROVIDER_RUNTIME_SETTING = 'provider-runtime'
+const PROVIDER_EXECUTABLE_PATHS_SETTING = 'provider-executable-paths'
 const FEEDBACK_LEDGER_SETTING = 'feedback-ledger'
 const MODEL_LISTS_SETTING = 'model-lists'
 const PHONE_ACCESS_SETTING = 'phone-access'
@@ -1030,6 +1031,7 @@ export class Store {
   #providerContextSettingsCache: ProviderContextSettingsMap | undefined
   #accountContextSettingsCache: readonly AccountContextSettings[] | undefined
   #providerRuntimeSettingsCache: ProviderRuntimeSettings | undefined
+  #providerExecutablePathsCache: Readonly<Record<string, string>> | undefined
   /**
    * Compact replays by thread. `tail` is false once an event lands after the
    * snapshot: the entry still serves as a base and for older history pages.
@@ -2515,6 +2517,33 @@ export class Store {
     this.#writeAppSetting.run(PROVIDER_RUNTIME_SETTING, JSON.stringify(next))
     this.#providerRuntimeSettingsCache = Object.freeze(next)
     return this.#providerRuntimeSettingsCache
+  }
+
+  providerExecutablePaths(): Readonly<Record<string, string>> {
+    if (this.#providerExecutablePathsCache) return this.#providerExecutablePathsCache
+    const row = sqliteRow<StringValueRow>(this.#readAppSetting, PROVIDER_EXECUTABLE_PATHS_SETTING)
+    let paths: Record<string, string> = {}
+    if (row) {
+      try {
+        paths = z.record(z.string(), z.string()).parse(JSON.parse(row.value))
+      } catch {
+        console.warn('[store] unreadable provider executable paths, using discovery')
+      }
+    }
+    this.#providerExecutablePathsCache = Object.freeze(paths)
+    return this.#providerExecutablePathsCache
+  }
+
+  updateProviderExecutablePath(
+    source: string,
+    executable: string,
+  ): Readonly<Record<string, string>> {
+    const next = { ...this.providerExecutablePaths() }
+    if (executable === '') delete next[source]
+    else next[source] = executable
+    this.#writeAppSetting.run(PROVIDER_EXECUTABLE_PATHS_SETTING, JSON.stringify(next))
+    this.#providerExecutablePathsCache = Object.freeze(next)
+    return this.#providerExecutablePathsCache
   }
 
   accountContextSettings(): readonly AccountContextSettings[] {
@@ -4742,6 +4771,16 @@ export class Store {
         ...(next.accountId === undefined ? {} : { accountId: next.accountId }),
       }
     })
+  }
+
+  /** Whether any turn of this chat ever completed, on any provider session it ran on. */
+  threadHasCompletedTurn(threadId: string): boolean {
+    for (let before = Number.MAX_SAFE_INTEGER; ;) {
+      const entry = this.#lastHistoryStateEvent(threadId, 'turn.completed', before)
+      if (!entry) return false
+      if (entry.event.type === 'turn.completed' && entry.event.status === 'completed') return true
+      before = entry.seq
+    }
   }
 
   /** The chat moved to another provider and its conversation has not gone there yet. */

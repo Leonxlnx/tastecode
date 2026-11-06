@@ -98,7 +98,7 @@ describe('settings layout primitives', () => {
     const alert = screen.getByRole('alert')
     expect(alert.textContent).toContain('Connection to the server was lost.')
     expect(within(alert).getByRole('button', { name: 'Try again' })).toBeTruthy()
-    expect(screen.getByText('No MCP servers yet').className).toBe('set-empty__title')
+    expect(screen.getByText('No MCP servers yet').closest('.empty-state')).toBeTruthy()
     expect(screen.getByText('Add one to use it in every chat.')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
   })

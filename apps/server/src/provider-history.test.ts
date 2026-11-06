@@ -10,8 +10,18 @@ import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
-import { DESIGN_PHASE_NOTICE, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
+import {
+  DESIGN_PHASE_MARKER,
+  DESIGN_PHASE_NOTICE,
+  designPhaseLanguageReminder,
+  designPhaseNotice,
+  RESTORE_CONTEXT_NOTICE,
+} from './provider-session.js'
 import { continuationPromptFromReplay } from './side-chat.js'
+
+/** The Design phase notice as provider histories saved before 2026-11-05 hold it. */
+const EARLIER_DESIGN_NOTICE =
+  "Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n"
 
 let store: Store
 const histories: ProviderHistory[] = []
@@ -497,7 +507,7 @@ describe('provider history integration', () => {
       expect(store.thread('external:codex:elsewhere')).toBeUndefined()
       expect(store.project(spellings[0]!)).toBeUndefined()
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -624,6 +634,34 @@ describe('provider history integration', () => {
     ])
   })
 
+  it('asks for progress in the language of the request, under the marker history matches', () => {
+    expect(DESIGN_PHASE_NOTICE.startsWith(DESIGN_PHASE_MARKER)).toBe(true)
+    expect(EARLIER_DESIGN_NOTICE.startsWith(DESIGN_PHASE_MARKER)).toBe(true)
+    expect(DESIGN_PHASE_NOTICE).toContain('in the language the user wrote their request in')
+    expect(DESIGN_PHASE_NOTICE).not.toContain("Use the user's language")
+  })
+
+  it("quotes the opening of a run's request, so a correction prompt still knows its language", () => {
+    const notice = designPhaseNotice(
+      'A one-page website for Brotzeit, a small sourdough bakery in Munich with a cafe corner. Warm, calm, modern. Opening hours Tue-Sat 7-15, address "Nymphenburger Str. 12".',
+    )
+    expect(notice.startsWith(DESIGN_PHASE_MARKER)).toBe(true)
+    const quote = /which begins "([^"]*)"/.exec(notice)?.[1] ?? ''
+    expect(quote.startsWith('A one-page website for Brotzeit')).toBe(true)
+    expect(quote.length).toBeLessThanOrEqual(120)
+    expect(notice).not.toContain('Nymphenburger')
+  })
+
+  // A real Codex run narrated its third Review in German for this English request.
+  it('repeats the language rule at the end of a long phase prompt', () => {
+    const request =
+      'A one-page website for Brotzeit, a small sourdough bakery in Munich with a cafe corner.'
+    const prompt = `${designPhaseNotice(request)}${'Review context. '.repeat(5_000)}${designPhaseLanguageReminder(request)}`
+    expect(prompt.startsWith(DESIGN_PHASE_MARKER)).toBe(true)
+    expect(prompt.slice(-400)).toContain(`the language of the user's request ("${request}")`)
+    expect(designPhaseLanguageReminder()).toContain("the language of the user's request")
+  })
+
   it('hides Design phase prompts that the provider saved as turns of their own', async () => {
     store.addThread({
       id: 'local',
@@ -659,7 +697,13 @@ describe('provider history integration', () => {
       message('brief-json', 'native-brief', 'assistant', '{"status":"complete"}'),
       { type: 'turn.completed', turnId: 'native-brief', status: 'completed' },
       started('native-page', 'native'),
-      message('page', 'native-page', 'user', `${RESTORE_CONTEXT_NOTICE}${DESIGN_PHASE_NOTICE}Page`),
+      // A run saved before 2026-11-05 opened its phases with the earlier notice.
+      message(
+        'page',
+        'native-page',
+        'user',
+        `${RESTORE_CONTEXT_NOTICE}${EARLIER_DESIGN_NOTICE}Page`,
+      ),
       message('page-json', 'native-page', 'assistant', '{"version":1}'),
       { type: 'turn.completed', turnId: 'native-page', status: 'interrupted' },
       started('native-outside', 'native'),
@@ -786,7 +830,7 @@ describe('provider history integration', () => {
         await history.load('local')
         expect(messages('local').map((item) => item.text)).toEqual(['A bakery page', closing])
       } finally {
-        rmSync(root, { recursive: true, force: true })
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     })
 
@@ -2015,7 +2059,7 @@ describe('provider history after a restore', () => {
         second.close()
       }
     } finally {
-      rmSync(directory, { recursive: true, force: true })
+      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })
@@ -2140,7 +2184,7 @@ describe('a Claude chat that carried on by itself', () => {
         ),
       ).toHaveLength(2)
     } finally {
-      rmSync(configDir, { recursive: true, force: true })
+      rmSync(configDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })

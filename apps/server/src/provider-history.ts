@@ -12,7 +12,7 @@ import type {
 } from '@harness/contracts'
 import { Store, type ProviderHistoryListing } from './store.js'
 import { projectHistoryItems, withoutContinuationContext } from './side-chat.js'
-import { DESIGN_PHASE_NOTICE, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
+import { DESIGN_PHASE_MARKER, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
 
 type Source = {
   provider: ProviderId
@@ -598,7 +598,7 @@ export function importedEvents(
     if (
       (event.type === 'item.completed' || event.type === 'item.started') &&
       event.item.role === 'user' &&
-      withoutRestoreNotice(event.item.text)?.startsWith(DESIGN_PHASE_NOTICE)
+      withoutRestoreNotice(event.item.text)?.startsWith(DESIGN_PHASE_MARKER)
     )
       echoed.add(id)
   }

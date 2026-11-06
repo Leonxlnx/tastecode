@@ -19,6 +19,7 @@ import {
   IconCornerDownRight as CornerDownRight,
   IconFile as FileIcon,
   IconFolder as Folder,
+  IconFolderPlus as FolderPlus,
   IconGitBranch as GitBranch,
   IconGripVertical as GripVertical,
   IconPhoto as ImageIcon,
@@ -69,13 +70,16 @@ import {
   composerSelectionOverChips,
   composerSlashCanLead,
   composerTextWithoutPicks,
+  composerBrowserImages,
+  composerCopyText,
   composerWireText,
   createComposerChipTextStore,
   hasComposerChips,
   repairComposerChips,
   type ComposerChipKind,
 } from './composer-chips.js'
-import { composerTextWithChips } from './message-chips.js'
+import { browserCommentImages, browserCommentsAsPlainText } from './browser-comments.js'
+import { composerTextWithChips, composerTextWithCommentChips } from './message-chips.js'
 import { Menu, MenuItem } from './Menu.js'
 import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
@@ -386,8 +390,11 @@ export type SendAvailability =
   /** A new chat with no provider added under Settings › Providers. */
   | 'no-provider'
 
-function QueuedMediaPreview({ attachments }: { attachments: string[] }) {
-  const reference = attachments.find((attachment) => previewMediaType('', attachment))
+function QueuedMediaPreview({ attachments, text }: { attachments: string[]; text: string }) {
+  const commentImages = browserCommentImages(text, attachments)
+  const reference = attachments.find(
+    (attachment) => !commentImages.has(attachment) && previewMediaType('', attachment),
+  )
   return reference ? <QueuedMediaPreviewCard key={reference} reference={reference} /> : null
 }
 
@@ -604,6 +611,8 @@ function ComposerComponent(props: {
     | {
         text: string
         attachments?: string[] | undefined
+        /** Screenshots of a sent prompt's comments, which Edit brings back with their chips. */
+        commentImages?: string[] | undefined
         resources?: ComposerResource[] | undefined
         /** Insert the text as one native edit, so Ctrl+Z brings back what it replaced. */
         undoable?: boolean | undefined
@@ -644,6 +653,8 @@ function ComposerComponent(props: {
   onTranscribeVoice: (requestId: string, recording: VoiceRecording) => Promise<string>
   onCancelVoice: (requestId: string) => void
   onProjectChange: (path: string) => void
+  /** Opens the folder picker and makes the chosen folder a project. */
+  onAddProject: () => void
   onBranchChange: (branch: string) => void
   onProjectRequired: () => void
   onSetupProvider: () => void
@@ -1261,8 +1272,12 @@ function ComposerComponent(props: {
     const legacyResources = props.draftRequest.resources ?? []
     const text = draftTextWithResources(
       props.draftRequest.undoable
-        ? composerTextWithChips(props.draftRequest.text, rememberedChipTokens())
-        : props.draftRequest.text,
+        ? composerTextWithChips(
+            props.draftRequest.text,
+            rememberedChipTokens(),
+            props.draftRequest.attachments ?? props.draftRequest.commentImages,
+          )
+        : composerTextWithCommentChips(props.draftRequest.text, props.draftRequest.attachments),
       legacyResources,
     )
     // A draft that brings chips (restored, edited, recalled) starts loading
@@ -1280,7 +1295,8 @@ function ComposerComponent(props: {
       for (const attachment of attachments) releasePreview(attachment.previewUrl)
       setViewingMedia(undefined)
       attachmentsEdited.current = false
-      const paths = props.draftRequest.attachments
+      const linked = browserCommentImages(props.draftRequest.text, props.draftRequest.attachments)
+      const paths = props.draftRequest.attachments.filter((path) => !linked.has(path))
       setAttachments(
         paths.map((path) => {
           const name = basename(path)
@@ -1504,7 +1520,7 @@ function ComposerComponent(props: {
   const sendContent = (content: string, submission: RunningSubmission = 'queue') => {
     // Chips are only how the draft looks: the provider and TasteCode's own
     // commands read the tokens they stand for.
-    const prompt = composerWireText(content)
+    const prompt = composerWireText(content, { images: props.attachmentsSupported })
     const feedback = parseFeedbackCommand(prompt)
     if (feedback && props.onFeedbackCommand) {
       updateText('')
@@ -1537,10 +1553,16 @@ function ComposerComponent(props: {
       return true
     }
     const trimmed = prompt.trim()
-    const paths = attachments.flatMap((attachment) => attachment.path ?? [])
+    const pickedPaths = attachments.flatMap((attachment) => attachment.path ?? [])
+    const paths = [
+      ...new Set([
+        ...pickedPaths,
+        ...(props.attachmentsSupported ? composerBrowserImages(content) : []),
+      ]),
+    ]
     if (
       (trimmed === '' && paths.length === 0) ||
-      paths.length !== attachments.length ||
+      pickedPaths.length !== attachments.length ||
       props.disabled ||
       sendAvailabilityRef.current !== 'ready' ||
       (!props.attachmentsSupported && attachments.length > 0)
@@ -1623,8 +1645,10 @@ function ComposerComponent(props: {
       }
       // Preserve text typed while the deletion was in flight.
       const draft = textRef.current.trim()
-      setValue(draft === '' ? queuedTurn.text : `${queuedTurn.text}\n\n${draft}`)
-      addFiles(queuedTurn.attachments)
+      const recalled = composerTextWithCommentChips(queuedTurn.text, queuedTurn.attachments)
+      setValue(draft === '' ? recalled : `${recalled}\n\n${draft}`)
+      const linked = browserCommentImages(queuedTurn.text, queuedTurn.attachments)
+      addFiles(queuedTurn.attachments.filter((path) => !linked.has(path)))
     } catch (error) {
       if (mounted.current && draftRequestRef.current?.request === owner) {
         setQueueError(
@@ -1838,7 +1862,7 @@ function ComposerComponent(props: {
     return false
   }
 
-  /** Copy and cut hand out the tokens a selection's chips stand for. */
+  /** Copy and cut hand out what a selection's chips stand for, as text that reads on its own. */
   const copyChips = (event: ClipboardEvent<HTMLTextAreaElement>, cut: boolean) => {
     if (chipStore.get() === '') return
     const el = event.currentTarget
@@ -1846,7 +1870,7 @@ function ComposerComponent(props: {
     const selected = el.value.slice(from, to)
     if (!hasComposerChips(selected)) return
     event.preventDefault()
-    event.clipboardData.setData('text/plain', composerWireText(selected))
+    event.clipboardData.setData('text/plain', composerCopyText(selected))
     if (cut) deleteRange(from, to)
   }
 
@@ -1982,7 +2006,7 @@ function ComposerComponent(props: {
                     type="button"
                     className="queue-row__handle"
                     title="Drag to reorder"
-                    aria-label={`Drag ${queuedTurn.text} to reorder`}
+                    aria-label={`Drag ${browserCommentsAsPlainText(queuedTurn.text)} to reorder`}
                     onKeyDown={(event) => {
                       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
                       event.preventDefault()
@@ -1996,9 +2020,12 @@ function ComposerComponent(props: {
                   >
                     <GripVertical size={14} aria-hidden />
                   </button>
-                  <QueuedMediaPreview attachments={queuedTurn.attachments} />
-                  <span className="queue-row__text" title={queuedTurn.text}>
-                    {queuedTurn.text}
+                  <QueuedMediaPreview attachments={queuedTurn.attachments} text={queuedTurn.text} />
+                  <span
+                    className="queue-row__text"
+                    title={browserCommentsAsPlainText(queuedTurn.text)}
+                  >
+                    {browserCommentsAsPlainText(queuedTurn.text)}
                   </span>
                   {props.canSteerQueue ? (
                     <button
@@ -2016,7 +2043,7 @@ function ComposerComponent(props: {
                     className="queue-row__action"
                     onClick={() => void editQueuedTurn(queuedTurn)}
                     title="Edit prompt"
-                    aria-label={`Edit ${queuedTurn.text}`}
+                    aria-label={`Edit ${browserCommentsAsPlainText(queuedTurn.text)}`}
                   >
                     <Pencil size={14} aria-hidden />
                   </button>
@@ -2025,7 +2052,7 @@ function ComposerComponent(props: {
                     className="queue-row__action"
                     onClick={() => void removeQueuedTurn(queuedTurn.id)}
                     title="Remove from queue"
-                    aria-label={`Remove ${queuedTurn.text} from queue`}
+                    aria-label={`Remove ${browserCommentsAsPlainText(queuedTurn.text)} from queue`}
                   >
                     <Trash2 size={14} aria-hidden />
                   </button>
@@ -2039,126 +2066,6 @@ function ComposerComponent(props: {
             visible={props.errorsVisible ?? true}
             onDismiss={() => area.current?.focus()}
           />
-          {props.newSession ? (
-            <div className="composer__shelf">
-              <Menu
-                label="Choose project"
-                drop="down"
-                triggerClassName="shelf-control shelf-control--project"
-                panelClassName="menu--compact menu--project-picker"
-                trigger={() => (
-                  <span className="shelf-control__content">
-                    <Folder size={15} aria-hidden />
-                    {props.projectName === undefined && props.projectsLoading ? (
-                      <Skeleton className="skeleton-group" width={56} height={9} />
-                    ) : (
-                      <span>{props.projectName ?? 'Choose project'}</span>
-                    )}
-                  </span>
-                )}
-              >
-                {(close) => (
-                  <>
-                    {props.projects.map((project) => (
-                      <MenuItem
-                        key={project.path}
-                        title={project.name ?? basename(project.path)}
-                        icon={<Folder size={14} aria-hidden />}
-                        detail={project.path}
-                        active={project.path === props.projectPath}
-                        onClick={() => {
-                          props.onProjectChange(project.path)
-                          close()
-                        }}
-                      />
-                    ))}
-                  </>
-                )}
-              </Menu>
-
-              <Menu
-                label="Workspace mode"
-                drop="down"
-                triggerClassName="shelf-control shelf-control--mode"
-                panelClassName="menu--compact menu--mode"
-                shortcutAria={shortcutAria(keybindings.toggleIsolatedSession)}
-                trigger={() => (
-                  <span className="shelf-control__content">
-                    <IconMorph active={props.isolate ? 1 : 0}>
-                      <Laptop size={15} aria-hidden />
-                      <GitBranch size={15} aria-hidden />
-                    </IconMorph>
-                    <span>{props.isolate ? 'Isolated' : 'Local'}</span>
-                  </span>
-                )}
-              >
-                {(close) => (
-                  <>
-                    <MenuItem
-                      title="Local"
-                      icon={<Laptop size={14} aria-hidden />}
-                      checked={!props.isolate}
-                      onClick={() => {
-                        props.onIsolateChange(false)
-                        close()
-                      }}
-                    />
-                    <MenuItem
-                      title="Isolated"
-                      icon={<GitBranch size={14} aria-hidden />}
-                      detail={props.isolateUnavailable}
-                      disabled={props.isolateUnavailable !== undefined}
-                      checked={props.isolate}
-                      onClick={() => {
-                        props.onIsolateChange(true)
-                        close()
-                      }}
-                    />
-                  </>
-                )}
-              </Menu>
-
-              {props.branches.length > 0 ? (
-                <Menu
-                  label="Choose branch"
-                  drop="down"
-                  triggerClassName="shelf-control shelf-control--branch"
-                  panelRole="dialog"
-                  panelLabel="Choose branch"
-                  panelClassName="branch-menu"
-                  onOpen={props.onBranchMenuOpen}
-                  trigger={() => (
-                    <span className="shelf-control__content">
-                      <GitBranch size={15} aria-hidden />
-                      <span>{props.branch ?? 'No branch'}</span>
-                    </span>
-                  )}
-                >
-                  {(close) => (
-                    <BranchMenu
-                      branches={props.branches}
-                      activeBranch={props.branch}
-                      onSelect={(branch) => {
-                        props.onBranchChange(branch)
-                        close()
-                      }}
-                    />
-                  )}
-                </Menu>
-              ) : props.branchesLoading ? (
-                <SkeletonStatus
-                  label="Loading branches"
-                  className="menutrigger shelf-control shelf-control--branch composer-skeleton-branch"
-                >
-                  <span className="shelf-control__content">
-                    <Skeleton className="skeleton--icon" />
-                    <Skeleton width={64} height={9} />
-                  </span>
-                </SkeletonStatus>
-              ) : null}
-            </div>
-          ) : null}
-
           {resourcePickerMounted ? (
             <Suspense
               fallback={
@@ -2184,6 +2091,136 @@ function ComposerComponent(props: {
             strength={1}
             active={props.designMode}
           >
+            {/* New chat: the beam wraps shelf and prompt, so its clip and glow follow the one surface. */}
+            {props.newSession ? (
+              <div className="composer__shelf composer__shelf--project">
+                <Menu
+                  label="Choose project"
+                  drop="down"
+                  triggerClassName="shelf-control shelf-control--project"
+                  panelClassName="menu--compact menu--project-picker"
+                  trigger={() => (
+                    <span className="shelf-control__content">
+                      <Folder size={15} aria-hidden />
+                      {props.projectName === undefined && props.projectsLoading ? (
+                        <Skeleton className="skeleton-group" width={56} height={9} />
+                      ) : (
+                        <span>{props.projectName ?? 'Choose project'}</span>
+                      )}
+                    </span>
+                  )}
+                >
+                  {(close) => (
+                    <>
+                      {props.projects.map((project) => (
+                        <MenuItem
+                          key={project.path}
+                          title={project.name ?? basename(project.path)}
+                          icon={<Folder size={14} aria-hidden />}
+                          detail={project.path}
+                          active={project.path === props.projectPath}
+                          onClick={() => {
+                            props.onProjectChange(project.path)
+                            close()
+                          }}
+                        />
+                      ))}
+                      {/* With no project yet the list was empty, and no folder could be chosen here (#2194). */}
+                      <MenuItem
+                        title="New project"
+                        icon={<FolderPlus size={14} aria-hidden />}
+                        onClick={() => {
+                          close()
+                          props.onAddProject()
+                        }}
+                      />
+                    </>
+                  )}
+                </Menu>
+
+                <Menu
+                  label="Workspace mode"
+                  drop="down"
+                  triggerClassName="shelf-control shelf-control--mode"
+                  panelClassName="menu--compact menu--mode"
+                  shortcutAria={shortcutAria(keybindings.toggleIsolatedSession)}
+                  trigger={() => (
+                    <span className="shelf-control__content">
+                      <IconMorph active={props.isolate ? 1 : 0}>
+                        <Laptop size={15} aria-hidden />
+                        <GitBranch size={15} aria-hidden />
+                      </IconMorph>
+                      <span>{props.isolate ? 'Isolated' : 'Local'}</span>
+                    </span>
+                  )}
+                >
+                  {(close) => (
+                    <>
+                      <MenuItem
+                        title="Local"
+                        icon={<Laptop size={14} aria-hidden />}
+                        checked={!props.isolate}
+                        onClick={() => {
+                          props.onIsolateChange(false)
+                          close()
+                        }}
+                      />
+                      <MenuItem
+                        title="Isolated"
+                        icon={<GitBranch size={14} aria-hidden />}
+                        detail={props.isolateUnavailable}
+                        disabled={props.isolateUnavailable !== undefined}
+                        checked={props.isolate}
+                        onClick={() => {
+                          props.onIsolateChange(true)
+                          close()
+                        }}
+                      />
+                    </>
+                  )}
+                </Menu>
+
+                {props.branches.length > 0 ? (
+                  <Menu
+                    label="Choose branch"
+                    drop="down"
+                    triggerClassName="shelf-control shelf-control--branch"
+                    panelRole="dialog"
+                    panelLabel="Choose branch"
+                    panelClassName="branch-menu"
+                    onOpen={props.onBranchMenuOpen}
+                    trigger={() => (
+                      <span className="shelf-control__content">
+                        <GitBranch size={15} aria-hidden />
+                        <span>{props.branch ?? 'No branch'}</span>
+                      </span>
+                    )}
+                  >
+                    {(close) => (
+                      <BranchMenu
+                        branches={props.branches}
+                        activeBranch={props.branch}
+                        onSelect={(branch) => {
+                          props.onBranchChange(branch)
+                          close()
+                        }}
+                      />
+                    )}
+                  </Menu>
+                ) : props.branchesLoading ? (
+                  <SkeletonStatus
+                    label="Loading branches"
+                    className="menutrigger shelf-control shelf-control--branch composer-skeleton-branch"
+                  >
+                    <span className="shelf-control__content">
+                      <Skeleton className="skeleton--icon" />
+                      <Skeleton width={64} height={9} />
+                    </span>
+                  </SkeletonStatus>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="composer__prompt">
               <div className="chips">
                 {attachments.map((attachment) =>

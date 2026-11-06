@@ -83,7 +83,8 @@
 .md h2,
 .md h3,
 .md h4 {
-  font-weight: 580;
+  color: var(--text);
+  font-weight: 600;
   letter-spacing: -0.014em;
   line-height: 1.3;
   margin: 18px 0 6px;
@@ -92,10 +93,13 @@
 .md h1 {
   font-size: var(--t-xl);
 }
+/* Each level a clear step: body sits at --t-md, so h3 starts one size above it. */
 .md h2 {
+  font-size: calc(var(--t-lg) + 2px);
+}
+.md h3 {
   font-size: var(--t-lg);
 }
-.md h3,
 .md h4 {
   font-size: var(--t-md);
 }

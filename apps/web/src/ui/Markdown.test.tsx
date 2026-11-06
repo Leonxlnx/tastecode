@@ -217,6 +217,41 @@ describe('Markdown inline references', () => {
     expect(container.querySelector('a[href^="javascript:"]')).toBeNull()
   })
 
+  it('reveals file and folder paths a reply names in inline code', async () => {
+    vi.mocked(revealProjectFile).mockClear()
+    render(
+      <Markdown
+        text={
+          'Changed `src/ui/Sidebar.tsx:42` in `src/ui/`, not `../secret.ts` or `../`; ran `pnpm test`.'
+        }
+        projectPath="/home/u/project"
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'src/ui/Sidebar.tsx:42' }))
+    const folder = screen.getByRole('button', { name: 'src/ui/' })
+    expect(folder.querySelector('[data-file-icon="folder"]')).toBeTruthy()
+    fireEvent.click(folder)
+    expect(vi.mocked(revealProjectFile).mock.calls).toEqual([
+      ['/home/u/project/src/ui/Sidebar.tsx', '/home/u/project'],
+      ['/home/u/project/src/ui', '/home/u/project'],
+    ])
+    expect(screen.queryByRole('button', { name: '../secret.ts' })).toBeNull()
+    expect(screen.getByText('../').tagName).toBe('CODE')
+    expect(screen.getByText('pnpm test').tagName).toBe('CODE')
+  })
+
+  it('reveals a Windows path named in inline code inside a Windows project', async () => {
+    vi.mocked(revealProjectFile).mockClear()
+    render(<Markdown text={'Edited `apps\\web\\main.ts`.'} projectPath="E:\work\site" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'apps\\web\\main.ts' }))
+    expect(revealProjectFile).toHaveBeenCalledWith(
+      'E:\\work\\site\\apps\\web\\main.ts',
+      'E:\\work\\site',
+    )
+  })
+
   it('shows a retryable error when the native reveal request fails', async () => {
     vi.mocked(revealProjectFile).mockRejectedValueOnce(new Error('reveal failed'))
     render(

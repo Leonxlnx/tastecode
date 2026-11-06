@@ -124,7 +124,8 @@ describe('review and repair phases', () => {
     )
     expect(prompt).toContain('A Hero stacks a headline with multiple descriptions')
     expect(prompt).not.toContain('The app shell is inconsistent')
-    expect(prompt).toContain('flag missing planned motion when browser evidence proves it')
+    expect(prompt).toContain('a missing hero load motion, a missing or generic creative moment')
+    expect(prompt).toContain('## 5. Checklist')
     expect(prompt).toContain(
       'Preserve concise identification of concept work or an illustrative catalog',
     )
@@ -135,8 +136,8 @@ describe('review and repair phases', () => {
     expect(prompt).toContain('footer content overlaps')
     expect(prompt).toContain('visibly stretched, cropped, cut off, or oversized')
     expect(prompt).toContain('replaces the reference alignment')
-    expect(prompt).toContain("each section's recorded motion decision")
-    expect(prompt).toContain("reuse the page's two or three named reveal types")
+    expect(prompt).toContain('Judge motion against the motion block')
+    expect(prompt).not.toContain("reuse the page's two or three named reveal types")
     expect(prompt).toContain('referenceDirectionId')
     expect(prompt).toContain('Invented grids, separator rules, card-edge rails')
     expect(prompt).toContain('SVG is acceptable only for an explicit functional icon, logo')

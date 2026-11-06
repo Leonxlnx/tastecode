@@ -1,9 +1,16 @@
-import { parseAssetManifest, validateAssetManifestForPage, type AssetManifest } from './assets.js'
+import {
+  parseAssetManifest,
+  relativizeAssetPaths,
+  validateAssetManifestForPage,
+  type AssetManifest,
+} from './assets.js'
 import path from 'node:path'
+import type { BrandFont } from './brand-fonts.js'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import type { PageBlueprint } from './page.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
+import { parsePhaseJson } from './phase-json.js'
 
 const ASSET_PROTOCOL = `Return the final asset manifest as JSON only, without Markdown fences:
 
@@ -14,6 +21,7 @@ export function designAssetPrompt(
   brand: BrandSystem,
   page: PageBlueprint,
   suppliedReferences: readonly string[] = [],
+  brandFonts: readonly BrandFont[] = [],
 ): string {
   const suppliedReferenceCatalog = suppliedReferences.map((filePath, index) => ({
     id: `user-reference-${index + 1}`,
@@ -31,7 +39,7 @@ For generation, use an available image tool with the selected reference composit
 
 Prefer meaningful photography, product imagery, and real interface captures over decorative SVGs. Every image-led selected layout case must receive the meaningful image or capture it describes; do not quietly replace it with a generic vector, gradient, empty card, or fake product UI. Never generate a raster screenshot for a simple form, calendar, dashboard, chart, or interface that Build can implement faithfully with native components. Use the project's established icon set for functional icons; do not generate or hand-draw arbitrary SVG icons. SVG is allowed only for an explicit functional icon, logo, or truthful data diagram. It is never acceptable for photography, a product image, editorial art, an interface capture, or a general visual placeholder, even when renamed with another extension. Do not satisfy an open visual need with an abstract diagram, fake dashboard, sonar graphic, line-grid ornament, or generic geometric filler. If generation and licensed search are both unavailable, leave a precise image need unresolved instead of inventing an unclear substitute.
 
-Acquire every approved brand typeface as actual local font files with its license, including when Page omitted a font asset ID. Use only available weights. Verify the official Google Fonts repository or the family's official source; never mark Arial or a system fallback as the acquired custom family. Check the downloaded font's magic bytes and response Content-Type; record that header in source.contentType when available. An HTML error response renamed to .woff2 is not a font. Record each font file, including real italic and weight variants, with its actual consuming sections. A family folder is also accepted and expanded into its concrete font files. Preserve valid raster provenance metadata; an embedded metadata icon does not turn a PNG photograph into an SVG.
+${brandFontRules(brandFonts)} Preserve valid raster provenance metadata; an embedded metadata icon does not turn a PNG photograph into an SVG.
 
 Videos also require actual local files. Use existing only for a project or attached user file. For an external video, download it first and use ready with a workspace destination and recorded reuse license; a remote URL alone is unresolved.
 
@@ -71,9 +79,32 @@ export function parseAssetPhaseOutput(
   workspacePath?: string,
   suppliedReferences: readonly string[] = [],
 ): AssetManifest {
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const manifest = parseAssetManifest(JSON.parse(fenced?.[1] ?? text))
+  const raw = parsePhaseJson(text)
+  const manifest = parseAssetManifest(
+    workspacePath ? relativizeAssetPaths(raw, workspacePath) : raw,
+  )
   return page
     ? validateAssetManifestForPage(manifest, page, workspacePath, suppliedReferences)
     : manifest
+}
+
+/** The agent acquires fonts itself only for the brand families TasteCode could not download. */
+const AGENT_FONT_RULES =
+  "Acquire every approved brand typeface as actual local font files with its license, including when Page omitted a font asset ID. Use only available weights. Verify the official Google Fonts repository or the family's official source; never mark Arial or a system fallback as the acquired custom family. Check the downloaded font's magic bytes and response Content-Type; record that header in source.contentType when available. An HTML error response renamed to .woff2 is not a font. Record each font file, including real italic and weight variants, with its actual consuming sections. A family folder is also accepted and expanded into its concrete font files."
+
+function brandFontRules(fonts: readonly BrandFont[]): string {
+  const ready = fonts.filter((font) => font.status === 'ready')
+  const failed = fonts.filter((font) => font.status === 'failed')
+  if (!ready.length) return AGENT_FONT_RULES
+  const done = `TasteCode already downloaded the approved typefaces ${ready
+    .map(
+      (font) =>
+        `${font.family} (${font.files.join(', ')}; licence ${font.license}; load ${font.stylesheet}, which declares every @font-face)`,
+    )
+    .join(
+      '; ',
+    )} into the project and records them in the manifest itself. Do not download, copy, rename or record those font files; leave them out of your manifest.`
+  return failed.length
+    ? `${done} TasteCode could not download ${failed.map((font) => `${font.family} (${font.reason})`).join(', ')}; for those: ${AGENT_FONT_RULES}`
+    : done
 }

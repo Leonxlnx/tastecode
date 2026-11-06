@@ -1,12 +1,13 @@
 .composer__shelf.composer__provider-shelf {
-  /* Errors tint the shelf; a shelf holding only notes stays neutral. */
+  /* Errors tint the shelf; a shelf holding only notes stays neutral. The rows inside are the
+     one notice look (styles/notice.css): the tone colours the icon, the text keeps its ink. */
   --provider-shelf-tint: var(--error);
   --provider-shelf-bg: color-mix(in oklab, var(--provider-shelf-tint) 12%, var(--bg-shelf));
   display: block;
   min-height: 36px;
-  padding: 4px 10px 4px 16px;
+  padding: 4px 7px 4px 16px;
   background: var(--provider-shelf-bg);
-  color: var(--provider-shelf-tint);
+  color: var(--text);
   font-size: var(--t-sm);
   line-height: 1.4;
   box-shadow: none;
@@ -21,64 +22,17 @@
   background: var(--provider-shelf-bg);
 }
 
-.composer__error-row > svg {
-  flex: none;
-}
-
 .composer__provider-message {
   flex: 1;
   min-width: 0;
   padding-block: 3px;
+  overflow-wrap: anywhere;
   text-wrap: pretty;
-}
-
-.composer__provider-action {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 5px;
-  min-height: 26px;
-  padding: 3px 7px;
-  border: 1px solid color-mix(in oklab, var(--provider-shelf-tint) 20%, transparent);
-  border-radius: var(--r-md);
-  background: color-mix(in oklab, var(--provider-shelf-tint) 7%, transparent);
-  color: inherit;
-  font: inherit;
-  font-weight: 500;
-  line-height: 1.2;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out);
-}
-
-.composer__provider-action:hover {
-  background: color-mix(in oklab, var(--provider-shelf-tint) 15%, transparent);
-}
-
-.composer__provider-action:active {
-  background: color-mix(in oklab, var(--provider-shelf-tint) 20%, transparent);
 }
 
 /* The same action when it opens a menu: the shared trigger resets buttons. */
 .composer__error-row > .menuwrap {
   flex: none;
-}
-
-.menutrigger.composer__provider-action {
-  gap: 5px;
-  padding: 3px 7px;
-  border: 1px solid color-mix(in oklab, var(--provider-shelf-tint) 20%, transparent);
-  background: color-mix(in oklab, var(--provider-shelf-tint) 7%, transparent);
-  font-weight: 500;
-}
-
-.menutrigger.composer__provider-action:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--provider-shelf-tint) 15%, transparent);
-}
-
-.composer__provider-action:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
 }
 
 .composer__error-row {
@@ -92,61 +46,4 @@
   margin-top: 4px;
   padding-top: 4px;
   border-top: 1px solid color-mix(in oklab, var(--provider-shelf-tint) 12%, transparent);
-}
-
-.composer__provider-message {
-  overflow-wrap: anywhere;
-}
-
-/* Quieter than the row's own action: reporting is optional, fixing is not. */
-.composer__error-report {
-  flex: none;
-  min-height: 26px;
-  padding: 3px 7px;
-  border: 0;
-  border-radius: var(--r-md);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 500;
-  line-height: 1.2;
-  opacity: 0.75;
-  white-space: nowrap;
-}
-
-.composer__error-report:hover {
-  background: color-mix(in oklab, var(--provider-shelf-tint) 10%, transparent);
-  opacity: 1;
-}
-
-.composer__error-report:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
-  opacity: 1;
-}
-
-.composer__error-dismiss {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-md);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  opacity: 0.7;
-}
-
-.composer__error-dismiss:hover {
-  background: color-mix(in oklab, var(--provider-shelf-tint) 10%, transparent);
-  opacity: 1;
-}
-
-.composer__error-dismiss:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
 }

@@ -29,7 +29,14 @@ import { approvalFor } from './permission-mode.js'
 export type ClaudeHistoryOptions = {
   /** Claude Code's config directory, containing projects/. Never reads credentials. */
   configDir?: string
+  /** The clock that decides which transcripts are recent; tests pass their own. */
+  now?: () => number
 }
+
+// A listing stats only new transcripts and those changed within a day; the rest, which a busy
+// machine counts in tens of thousands and which almost never change, every ten minutes.
+const RECENT_TRANSCRIPT_MS = 24 * 60 * 60_000
+const FULL_LISTING_MS = 10 * 60_000
 
 const SESSION_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i
 const LINE_FEED = 0x0a
@@ -903,8 +910,15 @@ export function createClaudeHistorySource(
   // listing the server kept from an earlier run.
   const cache = new Map<
     string,
-    { key: string; session: ProviderHistorySession | undefined; progress: Progress | undefined }
+    {
+      key: string
+      session: ProviderHistorySession | undefined
+      progress: Progress | undefined
+      mtimeMs: number
+    }
   >()
+  const now = options.now ?? Date.now
+  let lastFullListing = -Infinity
   const validLocator = (locator: string) => isClaudeSessionFile(projects, locator)
   const subagents: SubagentCache = { files: new Map(), reading: new Map(), agents: new Map() }
   return {
@@ -915,6 +929,9 @@ export function createClaudeHistorySource(
       const directories = await readdir(projects, { withFileTypes: true }).catch(() => [])
       const sessions = new Map<string, ProviderHistorySession>()
       const present = new Set<string>()
+      const listedAt = now()
+      const full = listedAt - lastFullListing >= FULL_LISTING_MS
+      if (full) lastFullListing = listedAt
       for (const directory of directories) {
         if (!directory.isDirectory()) continue
         const project = path.join(projects, directory.name)
@@ -932,20 +949,35 @@ export function createClaudeHistorySource(
         const transcripts = files.flatMap((file) =>
           file.isFile() && SESSION_FILE.test(file.name) ? [path.join(project, file.name)] : [],
         )
+        // A transcript that was listed before and has not changed for a day keeps its listing
+        // until the next full listing; new and recent ones are checked every time.
+        const due = transcripts.filter((locator) => {
+          const known = cache.get(locator)
+          return full || !known || listedAt - known.mtimeMs < RECENT_TRANSCRIPT_MS
+        })
         // Stat a folder's transcripts together; one at a time, every refresh waited on
         // each file in turn before it could skip the unchanged ones.
-        const infos: Array<Stats | undefined> = []
-        for (let index = 0; index < transcripts.length; index += STAT_BATCH)
-          infos.push(
-            ...(await Promise.all(
-              transcripts
-                .slice(index, index + STAT_BATCH)
-                .map((locator) => stat(locator).catch(() => undefined)),
-            )),
+        const infos = new Map<string, Stats | undefined>()
+        for (let index = 0; index < due.length; index += STAT_BATCH) {
+          const batch = due.slice(index, index + STAT_BATCH)
+          const stats = await Promise.all(
+            batch.map((locator) => stat(locator).catch(() => undefined)),
           )
-        for (const [index, locator] of transcripts.entries()) {
+          batch.forEach((locator, at) => infos.set(locator, stats[at]))
+        }
+        for (const locator of transcripts) {
           present.add(locator)
-          const info = infos[index]
+          const known = cache.get(locator)
+          if (!infos.has(locator) && known) {
+            // Asking for every transcript also tells the server which ones still exist.
+            if (options?.cached?.(locator, known.key) === undefined)
+              options?.remember?.(locator, known.key, known.session ?? null)
+            const session = known.session
+            if (session && session.updatedAt >= (sessions.get(session.id)?.updatedAt ?? 0))
+              sessions.set(session.id, session)
+            continue
+          }
+          const info = infos.get(locator)
           // A transcript removed since the folder was read is simply not listed.
           if (!info) continue
           try {
@@ -961,13 +993,19 @@ export function createClaudeHistorySource(
             const stored = options?.cached?.(locator, key)
             let cached = cache.get(locator)
             if (cached?.key === key) {
+              cached.mtimeMs = info.mtimeMs
               if (stored === undefined) options?.remember?.(locator, key, cached.session ?? null)
             } else if (
               stored === null ||
               (stored?.id === id && stored.locator === locator && stored.revision === revision)
             ) {
               // Listed by an earlier run; a transcript that grows later is read whole once.
-              cached = { key, session: stored ?? undefined, progress: cached?.progress }
+              cached = {
+                key,
+                session: stored ?? undefined,
+                progress: cached?.progress,
+                mtimeMs: info.mtimeMs,
+              }
               cache.set(locator, cached)
             } else {
               const { digest, progress } = await readTranscript(
@@ -979,6 +1017,7 @@ export function createClaudeHistorySource(
                 key,
                 session: metadata(digest, id, locator, revision, info.mtimeMs, index ?? {}),
                 progress,
+                mtimeMs: info.mtimeMs,
               }
               cache.set(locator, cached)
               options?.remember?.(locator, key, cached.session ?? null)

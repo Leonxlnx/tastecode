@@ -140,7 +140,7 @@ describe('ephemeral Side chats', () => {
       expect(reopened.history('side')).toEqual([])
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })
@@ -160,7 +160,7 @@ describe('feedback ledger', () => {
       expect(reopened.feedbackLedger()).toBe('{"sent":[1,2]}')
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })
@@ -179,7 +179,7 @@ describe('model list snapshot', () => {
       expect(reopened.modelListSnapshot()).toBe('{"version":1,"lists":[]}')
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })
@@ -198,7 +198,7 @@ describe('limit snapshot', () => {
       expect(reopened.limitSnapshot()).toBe('{"version":1,"sources":[]}')
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })
@@ -462,7 +462,9 @@ describe('durable queued turns', () => {
     seeded.deleteQueuedTurn('thread-1', 'submission-a')
     seeded.enqueueQueuedTurn(queued('submission-c', 'Third.'))
     expect(seeded.claimQueuedTurn('thread-1', 'submission-b', 'steer')?.intent).toBe('steer')
-    for (let index = 0; index < 1_000; index += 1) {
+    // A transcript beside the queue: replay must not parse it (two parses below, one per row).
+    // Each append commits to the file, which a busy Windows runner made take 20 s for 1,000.
+    for (let index = 0; index < 20; index += 1) {
       seeded.append('thread-1', message(`old transcript delta ${index}`))
     }
     seeded.close()
@@ -482,7 +484,7 @@ describe('durable queued turns', () => {
       expect(restarted.hasQueuedSubmission('thread-1', 'missing')).toBe(false)
     } finally {
       restarted.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -635,7 +637,7 @@ describe('recovering interrupted turns', () => {
       expect(restarted.history('thread-1')).toHaveLength(recoveredLength)
     } finally {
       restarted.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -657,7 +659,7 @@ describe('recovering interrupted turns', () => {
       expect(restarted.recoverInterruptedThreads()).toEqual(['thread-1'])
     } finally {
       restarted.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -746,7 +748,7 @@ describe('recovering interrupted turns', () => {
         expect(restarted.lastSeq('thread-1')).toBe(recoveredSeq)
       } finally {
         restarted.close()
-        rmSync(dir, { recursive: true, force: true })
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
   )
@@ -827,7 +829,7 @@ describe('recovering interrupted turns', () => {
       expect(restarted.thread('thread-1')?.unread).toBe(false)
     } finally {
       restarted.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -904,7 +906,7 @@ describe('a database written by a newer build', () => {
       expect(reopened.lastSeq('mixed')).toBe(4)
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -965,7 +967,7 @@ describe('a database written by a newer build', () => {
       expect(reopened.recoverInterruptedThreads()).toEqual(['one'])
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1000,7 +1002,7 @@ describe('a database written by a newer build', () => {
       expect(reopened.recoverInterruptedThreads()).toEqual([])
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1030,7 +1032,7 @@ describe('a database written by a newer build', () => {
     } finally {
       reopened.close()
       warn.mockRestore()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1124,7 +1126,7 @@ describe('a database written by a newer build', () => {
       expect(reopened.diffDecision('weird', 'hunk:1')).toBeUndefined()
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1164,7 +1166,7 @@ describe('a database written by a newer build', () => {
       expect(reopened.history('first')).toHaveLength(1)
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1241,7 +1243,7 @@ describe('opening a database written by an older build', () => {
       expect(migrated.searchSessions({ query: 'legacy' }).results[0]?.threadId).toBe('t1')
     } finally {
       migrated.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1291,7 +1293,7 @@ describe('opening a database written by an older build', () => {
       expect(migrated.searchSessions({ query: 'migration' }).results).toHaveLength(2)
     } finally {
       migrated.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })
@@ -1558,7 +1560,7 @@ describe('threads', () => {
       expect(reopened.dueSnoozedThreadIds(100)).toEqual(['persisted'])
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1723,7 +1725,7 @@ describe('threads', () => {
       ).toEqual([{ provider: 'codex', accountId: 'side-4d5e6f', settings: { compactAt: 'off' } }])
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1749,7 +1751,7 @@ describe('threads', () => {
       })
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1769,7 +1771,23 @@ describe('threads', () => {
       expect(reopened.updateProviderRuntimeSettings('claude-code', null)).toEqual({})
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  })
+
+  it('persists provider executable paths and removes a reset path', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-executable-'))
+    const file = path.join(dir, 'settings.db')
+    const persistent = new Store(file)
+    persistent.updateProviderExecutablePath('codex', '/chosen path/codex')
+    persistent.close()
+    const reopened = new Store(file)
+    try {
+      expect(reopened.providerExecutablePaths()).toEqual({ codex: '/chosen path/codex' })
+      expect(reopened.updateProviderExecutablePath('codex', '')).toEqual({})
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1792,7 +1810,7 @@ describe('threads', () => {
     } finally {
       reopened.close()
       warn.mockRestore()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })
@@ -1885,7 +1903,7 @@ describe('events', () => {
       expect(reopened.replaySnapshotAt('t1', seq)).toBeUndefined()
       reopened.close()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1914,7 +1932,7 @@ describe('events', () => {
       expect(reopened.replaySnapshotBase('t1')?.seq).toBe(seq)
       reopened.close()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -1947,7 +1965,7 @@ describe('events', () => {
       expect(saved.map(({ thread_id }) => thread_id)).not.toContain('r1')
       expect(saved.map(({ thread_id }) => thread_id)).not.toContain('r65')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -2056,7 +2074,7 @@ describe('events', () => {
       expect(reopened.hasUserSubmission('one', 'submission-1')).toBe(true)
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -2079,7 +2097,7 @@ describe('events', () => {
       expect(reopened.turnDiff('one', 'turn-1')).toBe('persisted patch')
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -2126,7 +2144,7 @@ describe('events', () => {
       expect(reopened.recoverInterruptedThreads()).toEqual(['one'])
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -2236,7 +2254,7 @@ describe('events', () => {
         raw.close()
       }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -2260,7 +2278,7 @@ describe('events', () => {
       expect(reopened.inboxProjections().get('one')?.last).toBe('failed')
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -2412,7 +2430,7 @@ describe('cross-session search', () => {
       expect(after).toBe(before)
     } finally {
       rebuilt.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -2476,7 +2494,7 @@ describe('cross-session search', () => {
       expect(longest.length).toBeLessThan(17 * 1024)
     } finally {
       rebuilt.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -2713,7 +2731,7 @@ describe('cross-session search', () => {
       ).toEqual(['wide row marker 101', 'wide row marker 100'])
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -2831,7 +2849,7 @@ describe('cross-session search', () => {
       expect(reopened.history('t1')).toEqual([])
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -2980,7 +2998,7 @@ describe('usage totals', () => {
       expect(reopened.usageSummary('one', 0).session.totalTokens).toBe(75)
     } finally {
       reopened.close()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 

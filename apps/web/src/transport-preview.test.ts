@@ -9,6 +9,8 @@ vi.mock('./bridge.js', () => ({
   capturePreview: native.capture,
   cancelPreviewCapture: native.cancel,
   reportStartupMilestone() {},
+  // The capabilities sent on connect say whether this window runs agent browser commands.
+  isDesktop: false,
 }))
 class Socket {
   static OPEN = 1

@@ -135,6 +135,10 @@ const INVALID_PARAMS = -32602
 const CONTROL_READ_TIMEOUT_MS = 10_000
 const INITIALIZE_TIMEOUT_MS = 30_000
 const THREAD_START_TIMEOUT_MS = 30_000
+/** Codex 0.164+ answers thread/resume this way when it has no saved rollout for the thread. */
+const MISSING_ROLLOUT = /no rollout found for thread id/i
+/** The error code the server reads on a resume whose saved session the provider cannot find. */
+const PROVIDER_SESSION_MISSING = 'provider_session_missing'
 /**
  * How long a new thread may wait without a single frame from Codex.
  * thread/start answers only after Codex set the session up, which includes
@@ -222,8 +226,19 @@ export function mapCodexError(notification: ErrorNotification): DomainEvent | un
   return {
     type: 'thread.error',
     threadId: notification.threadId,
-    message: notification.error.message,
+    message: requestTooLargeMessage(notification.error.message) ?? notification.error.message,
   }
+}
+
+/**
+ * Codex sends the whole chat, every image included, with each request, and the API refuses a
+ * body over its limit with raw JSON (#2240). The shape is from a user's report, not a capture.
+ */
+function requestTooLargeMessage(message: string): string | undefined {
+  const limit = /Encoded request body exceeds (\d+) bytes/u.exec(message)?.[1]
+  if (!limit) return undefined
+  const megabytes = Math.round(Number(limit) / (1024 * 1024))
+  return `This chat is too large for Codex to send: one request would pass its ${megabytes} MB limit, usually because of the images the chat holds. Continue in a new chat.`
 }
 
 export function mapCodexUsage(
@@ -1417,23 +1432,34 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ...(Object.keys(this.#mcpServers).length ? { mcp_servers: this.#mcpServers } : {}),
       ...this.#mcpShellConfig,
     }
-    const response = await this.#callParsed(
-      'thread/resume',
-      {
-        threadId,
-        cwd: workspacePath,
-        // We replay our own event log; full provider history can exceed the frame limit.
-        excludeTurns: true,
-        ...(options.instructions
-          ? {
-              developerInstructions: options.instructions,
-            }
-          : {}),
-        ...approval,
-        ...(Object.keys(config).length ? { config } : {}),
-      },
-      ThreadResumeResponseSchema,
-    )
+    let response: z.infer<typeof ThreadResumeResponseSchema>
+    try {
+      response = await this.#callParsed(
+        'thread/resume',
+        {
+          threadId,
+          cwd: workspacePath,
+          // We replay our own event log; full provider history can exceed the frame limit.
+          excludeTurns: true,
+          ...(options.instructions
+            ? {
+                developerInstructions: options.instructions,
+              }
+            : {}),
+          ...approval,
+          ...(Object.keys(config).length ? { config } : {}),
+        },
+        ThreadResumeResponseSchema,
+      )
+    } catch (error) {
+      // "no rollout found for thread id …" (#2190): Codex has no saved conversation for this
+      // thread here. It never completed a turn, or it ran under another account's folder, or its
+      // file moved. Only the server knows which, so the error says what happened and it decides.
+      if (!(error instanceof Error) || !MISSING_ROLLOUT.test(error.message)) throw error
+      throw Object.assign(new Error(error.message, { cause: error }), {
+        code: PROVIDER_SESSION_MISSING,
+      })
+    }
     this.#ownThreads.add(response.thread.id)
     this.#threadModels.set(response.thread.id, response.model)
     if (options.approval) this.#threadApprovals.set(response.thread.id, options.approval)
@@ -1628,7 +1654,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   async interrupt(threadId: string): Promise<void> {
     const turnId = this.#activeTurns.get(threadId)
-    if (!turnId) throw new Error('there is no running Codex turn to interrupt')
+    // A Stop pressed as the turn ends finds nothing left to stop; that is not the user's error.
+    if (!turnId) return
     await this.#call('turn/interrupt', { threadId, turnId })
   }
 

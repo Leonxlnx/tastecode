@@ -1,19 +1,22 @@
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CustomHarness } from '@harness/contracts'
 import {
   customHarnessSpawn,
   mergeLaunchEnvironment,
   resolveCustomHarnessLaunch,
+  resolveProviderExecutable,
   runCustomHarness,
 } from './custom-harness-launch.js'
 
 const roots: string[] = []
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  vi.restoreAllMocks()
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 function harness(input: Partial<CustomHarness> = {}): CustomHarness {
@@ -144,5 +147,35 @@ describe('custom harness launch', () => {
 
     expect(merged.Path).toBe('not-a-search-path')
     expect(merged.PATH?.split(':')[0]).toBe('/usr/bin')
+  })
+})
+
+describe('provider executable paths', () => {
+  it('expands the home directory and accepts executable files with spaces', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'provider path '))
+    roots.push(root)
+    const name = process.platform === 'win32' ? 'test cli.cmd' : 'test cli'
+    const file = path.join(root, name)
+    writeFileSync(file, '')
+    chmodSync(file, 0o755)
+    vi.spyOn(os, 'homedir').mockReturnValue(root)
+    expect(resolveProviderExecutable(`~${path.sep}${name}`)).toBe(file)
+  })
+
+  it('rejects relative, missing, and directory paths', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'provider-path-'))
+    roots.push(root)
+    expect(() => resolveProviderExecutable('relative')).toThrow(/absolute/)
+    expect(() => resolveProviderExecutable(path.join(root, 'missing'))).toThrow(/does not exist/)
+    expect(() => resolveProviderExecutable(root)).toThrow(/not a runnable file/)
+  })
+
+  it.skipIf(process.platform === 'win32')('rejects a non-executable file', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'provider-path-'))
+    roots.push(root)
+    const file = path.join(root, 'not-executable')
+    writeFileSync(file, '')
+    chmodSync(file, 0o644)
+    expect(() => resolveProviderExecutable(file)).toThrow(/not a runnable file/)
   })
 })

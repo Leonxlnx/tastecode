@@ -31,6 +31,8 @@ type Bridge = {
   pickFiles: () => Promise<Array<PickedAttachment | string>>
   previewViewedImage?: (reference: string) => Promise<PickedAttachment | undefined>
   revealPath: (path: string) => Promise<void>
+  setAgentBrowserGuest?: (webContentsId: number, driven: boolean) => Promise<void>
+  agentBrowserIsolated?: (webContentsId: number, code: string) => Promise<unknown>
   revealProjectFile?: (path: string, projectPath: string) => Promise<void>
   savePastedFile: (file: {
     name: string
@@ -164,6 +166,7 @@ function rememberAttachmentPreview(reference: string, attachment: PickedAttachme
 
 export const isDesktop = bridge?.isDesktop === true
 export const isStartupBenchmark = bridge?.reportStartupMilestone !== undefined
+export const canSavePastedFiles = bridge?.savePastedFile !== undefined
 export const canCapturePreview = bridge?.capturePreview !== undefined
 export const canRevealProjectFile = bridge?.revealProjectFile !== undefined
 export const canDropProjectFolders = bridge?.droppedFolderPaths !== undefined
@@ -247,6 +250,17 @@ function parsePickedAttachment(value: unknown): PickedAttachment {
     ...(previewUrl === undefined ? {} : { previewUrl }),
     ...(thumbnailUrl === undefined ? {} : { thumbnailUrl }),
   }
+}
+
+/** Marks the in-app browser tab an agent drives, so the desktop app drops its downloads. */
+export function setAgentBrowserGuest(webContentsId: number, driven: boolean): Promise<void> {
+  return bridge?.setAgentBrowserGuest?.(webContentsId, driven) ?? Promise.resolve()
+}
+
+/** Runs a script in the agent's own JavaScript world of a driven tab, out of the page's reach. */
+export function agentBrowserIsolated(webContentsId: number, code: string): Promise<unknown> {
+  const run = bridge?.agentBrowserIsolated
+  return run ? run(webContentsId, code) : Promise.reject(new Error('Needs the desktop app'))
 }
 
 export function revealPath(path: string): Promise<void> {

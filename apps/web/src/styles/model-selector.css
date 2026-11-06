@@ -1,7 +1,7 @@
 /* ---------- model selector ---------- */
 
 .menutrigger--model-selector {
-  max-width: min(270px, 42vw, 100%);
+  max-width: min(290px, 42vw, 100%);
   padding: 5px 9px 5px 8px;
 }
 
@@ -34,6 +34,7 @@
 
 .model-selector__trigger-model,
 .model-selector__trigger-name,
+.model-selector__trigger-short,
 .model-selector__trigger-effort {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -42,15 +43,35 @@
 
 .model-selector__trigger-model {
   display: inline-flex;
+  flex: 0 1 auto;
   align-items: center;
   gap: 6px;
   color: var(--text);
   font-size: var(--t-md);
 }
 
+/* The effort shrinks first, to "M…", then the name (not "G… M…"). */
 .model-selector__trigger-effort {
+  flex: 0 1000 auto;
+  min-width: 3ch;
   color: var(--text-2);
   font-size: var(--t-md);
+}
+
+.model-selector__trigger-short {
+  display: none;
+}
+
+/* Narrow composer: icon and short name; the effort stays in the menu. */
+@container chat-stage (max-width: 620px) {
+  .model-selector__trigger-name,
+  .model-selector__trigger-effort {
+    display: none;
+  }
+
+  .model-selector__trigger-short {
+    display: inline;
+  }
 }
 
 .model-selector__trigger-chevron {
@@ -75,9 +96,7 @@
 
   min-width: 0;
   width: min(300px, calc(100vw - 16px));
-  /* The generic .menu clamp (340px) is shorter than list + effort controls,
-     and with overflow hidden it silently amputated the effort bar. The list
-     scrolls internally, so the panel may size to its content. */
+  /* Not the .menu clamp (340px): it cut off the effort bar. */
   max-height: calc(100vh - 16px);
   padding: 0;
   overflow: clip;

@@ -42,7 +42,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(path.dirname(repo), { recursive: true, force: true })
+  rmSync(path.dirname(repo), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 describe('createWorktree', () => {
@@ -104,7 +104,7 @@ describe('createWorktree', () => {
   it('refuses a folder that is not a repository, in words that say why', async () => {
     const plain = mkdtempSync(path.join(os.tmpdir(), 'harness-plain-'))
     await expect(createWorktree(plain, 'thread-1', root)).rejects.toBeInstanceOf(NotARepository)
-    rmSync(plain, { recursive: true, force: true })
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
 
   it('says git refuses a repository another user owns, not that there is none', async () => {
@@ -133,7 +133,7 @@ describe('createWorktree', () => {
   it('recovers from a worktree that a crash left registered but gone', async () => {
     const worktree = await createWorktree(repo, 'thread-cccccccccccc', root)
     // Simulate the crash: directory deleted, git still believes in it.
-    rmSync(worktree.path, { recursive: true, force: true })
+    rmSync(worktree.path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 
     // Starting a session on that path again must work rather than failing with
     // an error about our own leftovers.
@@ -188,7 +188,12 @@ describe('removeWorktree', () => {
     const worktree = await createWorktree(repo, 'thread-555555555555', root)
     const keepMe = path.join(worktree.path, 'unsaved.txt')
     writeFileSync(keepMe, 'work nobody has seen\n')
-    rmSync(path.join(repo, '.git', 'worktrees'), { recursive: true, force: true })
+    rmSync(path.join(repo, '.git', 'worktrees'), {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    })
 
     await expect(removeWorktree(worktree, true)).rejects.toThrow()
     expect(existsSync(keepMe)).toBe(true)
@@ -196,7 +201,7 @@ describe('removeWorktree', () => {
 
   it('succeeds when the directory is already gone', async () => {
     const worktree = await createWorktree(repo, 'thread-333333333333', root)
-    rmSync(worktree.path, { recursive: true, force: true })
+    rmSync(worktree.path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 
     // The outcome the caller wanted is already true; erroring would be pedantry.
     await expect(removeWorktree(worktree, true)).resolves.toBeUndefined()
@@ -216,7 +221,7 @@ describe('hasUncommittedChanges', () => {
     // Not "unknown, so assume dirty": a directory that does not exist holds
     // no work, and warning about losing it would be a lie.
     const worktree = await createWorktree(repo, 'thread-666666666666', root)
-    rmSync(worktree.path, { recursive: true, force: true })
+    rmSync(worktree.path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     expect(await hasUncommittedChanges(worktree.path)).toBe(false)
   })
 
@@ -227,7 +232,7 @@ describe('hasUncommittedChanges', () => {
     try {
       expect(await hasUncommittedChanges(plain)).toBe(true)
     } finally {
-      rmSync(plain, { recursive: true, force: true })
+      rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })
@@ -318,7 +323,7 @@ describe('carryUncommittedChanges', () => {
     const clean = await createWorktree(repo, 'thread-earlier-0004', root)
     const gone = await createWorktree(repo, 'thread-earlier-0005', root)
     writeFileSync(path.join(gone.path, 'file.txt'), 'lost with its folder\n')
-    rmSync(gone.path, { recursive: true, force: true })
+    rmSync(gone.path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     const next = await createWorktree(repo, 'thread-next-0004', root)
 
     expect(await carryUncommittedChanges(clean.path, next)).toBeUndefined()
@@ -332,6 +337,6 @@ describe('isRepository', () => {
     expect(await isRepository(repo)).toBe(true)
     const plain = mkdtempSync(path.join(os.tmpdir(), 'harness-plain-'))
     expect(await isRepository(plain)).toBe(false)
-    rmSync(plain, { recursive: true, force: true })
+    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
 })

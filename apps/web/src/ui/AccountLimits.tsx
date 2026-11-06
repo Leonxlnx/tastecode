@@ -88,6 +88,10 @@ export function AccountLimits(props: {
   // ticks while it stays open.
   const now = Date.now()
   const busy = visibleStates.some((state) => state.status === 'loading')
+  const groups = groupByProvider(visibleStates)
+  // Once any provider lists its accounts, every provider does, one compact line per account, so a
+  // single Grok account reads like the nine Claude accounts above it.
+  const compact = groups.some((group) => namesAccounts(group.states))
 
   return (
     <section
@@ -98,7 +102,7 @@ export function AccountLimits(props: {
       // A scroll container that keyboard users can reach and scroll.
       tabIndex={0}
     >
-      {groupByProvider(visibleStates).map((group, index) => {
+      {groups.map((group, index) => {
         const name = providerDisplayName(group.provider)
         // The refresh sits at the end of the first heading's line.
         const action =
@@ -117,12 +121,12 @@ export function AccountLimits(props: {
             onConsumeReset={props.onConsumeReset}
           />
         )
-        if (!namesAccounts(group.states)) return source(group.states[0]!)
+        if (!compact) return source(group.states[0]!)
         const label = (state: AccountLimitsState) =>
           props.accountLabel?.(state.provider, state.accountId) ??
           (further(state) ? 'Account' : 'Default')
-        // One account under its provider keeps the full rows; more open one at a time.
-        if (group.states.length === 1) {
+        // Alone in the popup, one further account keeps the full rows; beside others it is a line.
+        if (group.states.length === 1 && groups.length === 1) {
           return (
             <div
               key={group.provider}
@@ -207,7 +211,8 @@ function ProviderAccountLimits(props: {
 }) {
   const name = providerDisplayName(props.provider)
   const pool = props.pool
-  const recommended = pool?.recommended
+  // A recommendation needs a choice: a single account carries no mark.
+  const recommended = props.states.length > 1 ? pool?.recommended : undefined
   const [open, setOpen] = useState<ReadonlySet<AccountId>>(() => new Set())
   const toggle = (account: AccountId) =>
     setOpen((current) => {
@@ -218,7 +223,7 @@ function ProviderAccountLimits(props: {
   return (
     <div className="account-menu__provider" role="group" aria-label={name}>
       <ProviderHeading provider={props.provider} action={props.action} />
-      {pool && pool.windows.length > 0 ? (
+      {pool && pool.windows.length > 0 && props.states.length > 1 ? (
         <AccountPool pool={pool} provider={name} now={props.now} />
       ) : null}
       {props.states.map((state) => (

@@ -121,6 +121,13 @@ export const ProviderNoticeSchema = z.object({
   accountId: z.string().min(1).optional(),
   /** The model chosen for the first turn there, as the provider names it. */
   model: z.string().min(1).optional(),
+  /**
+   * Why the chat changed session without the user moving it. `session_missing`: the provider
+   * could not reopen its saved conversation (another account's folder, a moved or deleted
+   * file), so the chat continues in a new session of the same provider, with the conversation
+   * so far as context.
+   */
+  reason: z.literal('session_missing').optional(),
 })
 export type ProviderNotice = z.infer<typeof ProviderNoticeSchema>
 

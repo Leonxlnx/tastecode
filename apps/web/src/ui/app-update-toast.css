@@ -11,15 +11,6 @@
   /* The question with both choices is wider than the 420px a notice may take,
      which cut "2 chats still running" short. */
   max-width: calc(100vw - 36px);
-  gap: 8px;
-  padding: 5px 7px 5px 12px;
-  background: var(--menu-bg);
-  border-color: var(--menu-line);
-  border-radius: var(--r-popup);
-  color: var(--text);
-  box-shadow: var(--shadow-flyout);
-  font-size: 13px;
-  line-height: 20px;
   /* The notice's own timing, plus the move below. */
   transition-property: opacity, transform, top;
 }
@@ -31,67 +22,9 @@
   top: 100px;
 }
 
-.notice--app-update > svg {
-  flex-shrink: 0;
-}
-
 .notice--app-update .notice__text {
   margin-right: 4px;
   white-space: nowrap;
-}
-
-.app-update-toast__update,
-.app-update-toast__action,
-.app-update-toast__close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  height: 26px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--r-popup-item);
-  font: inherit;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.app-update-toast__update {
-  background: #fff;
-  color: #171717;
-}
-
-.app-update-toast__update:hover {
-  background: #eaeaea;
-}
-
-.app-update-toast__action {
-  background: transparent;
-  color: var(--text);
-}
-
-.app-update-toast__action:hover {
-  background: var(--menu-hover);
-}
-
-.app-update-toast__action--danger {
-  color: var(--error);
-}
-
-.app-update-toast__action--danger:hover {
-  background: color-mix(in oklab, var(--error) 12%, transparent);
-}
-
-.app-update-toast__close {
-  width: 24px;
-  padding: 0;
-  background: transparent;
-  color: var(--text-2);
-}
-
-.app-update-toast__close:hover {
-  background: var(--menu-hover);
-  color: var(--text);
 }
 
 .notice--app-update .spinner {

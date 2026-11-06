@@ -35,7 +35,7 @@ const temporaryDirectories: string[] = []
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true })
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 

@@ -759,7 +759,7 @@ describe('model sources that failed to load', () => {
     id: 'models:cursor:1',
     message: 'Could not load Cursor models. CLI did not respond within the time limit',
   }
-  const noticeText = (notice: HTMLElement) => notice.querySelector('.set-notice__text')?.textContent
+  const noticeText = (notice: HTMLElement) => notice.querySelector('.notice__text')?.textContent
   const sourceList = () => document.querySelector<HTMLElement>('.model-settings__sources')!
   const titles = () =>
     Array.from(sourceList().querySelectorAll('.set-section__title'), (title) => title.textContent)
@@ -1137,9 +1137,11 @@ function renderProviders(
   request: TestRequestResolver,
   account?: Account,
 ) {
-  const transport = new TestTransport((method, params) =>
-    method === 'providers.updates' ? { updates: [] } : request(method, params),
-  )
+  const transport = new TestTransport((method, params) => {
+    if (method === 'providers.updates') return { updates: [] }
+    if (method === 'providers.executablePaths') return {}
+    return request(method, params)
+  })
   render(
     <ProviderSettings
       provider="codex"
@@ -1304,6 +1306,36 @@ describe('provider authentication states', () => {
     emitAuth('login-2', true)
     await waitFor(() => action(row, 'Sign out'))
     expect(statusReads).toBe(3)
+  })
+})
+
+describe('provider executable paths', () => {
+  it('reads once for the page and offers each provider its own field', async () => {
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method === 'providers.executablePaths') return { grok: '/opt/grok' }
+      if (method === 'auth.status') return { signedIn: false }
+      throw new Error(`unexpected ${method}`)
+    })
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        providerStatuses={[
+          installedProvider('codex', 'Codex'),
+          { id: 'grok', displayName: 'Grok', installed: false, auth: 'unknown' },
+        ]}
+        acpAgents={[]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+      />,
+    )
+    expect(await screen.findByText('Executable path · Custom')).toBeTruthy()
+    expect(screen.getAllByText(/^Executable path/)).toHaveLength(2)
+    expect(
+      transport.requests.filter((entry) => entry.method === 'providers.executablePaths'),
+    ).toHaveLength(1)
   })
 })
 
@@ -3238,5 +3270,104 @@ describe('sub-agent provider setting', () => {
       method: 'subagents.updateSettings',
       params: { otherProviders: true },
     })
+  })
+})
+
+describe('settings search', () => {
+  it('finds an unopened tab and jumps to its row with the keyboard', async () => {
+    renderSettings({ initialSection: 'workflows' })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'dark mode' } })
+    expect(screen.getByRole('option', { name: 'Theme' })).toBeTruthy()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Appearance' })).toBeTruthy())
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-settings-id="theme"]')?.hasAttribute('data-settings-found'),
+      ).toBe(true),
+    )
+    expect(document.activeElement?.closest('[data-settings-id="theme"]')).toBeTruthy()
+  })
+  it('moves through results, reports no matches, and clears before closing on Escape', () => {
+    const onClose = vi.fn()
+    renderSettings({ initialSection: 'workflows', onClose })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'shortcut' } })
+    const options = screen.getAllByRole('option')
+    expect(options.length).toBeGreaterThan(1)
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(options[1]?.getAttribute('aria-selected')).toBe('true')
+    fireEvent.change(input, { target: { value: 'zzzzzz' } })
+    expect(screen.getByText('No matching settings')).toBeTruthy()
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(onClose).not.toHaveBeenCalled()
+    expect((input as HTMLInputElement).value).toBe('')
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+  it('finds provider defaults before the Providers tab has opened', async () => {
+    localStorage.removeItem('harness.signedInProviders')
+    localStorage.removeItem('harness.signedOutProviders')
+    const transport = new TestTransport((method) => {
+      if (method === 'auth.status') return { signedIn: true }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({
+      initialSection: 'workflows',
+      transport,
+      overrides: {
+        providerStatuses: [
+          { id: 'codex', displayName: 'Codex', installed: true, auth: 'authenticated' },
+        ],
+        providerRoster: ['codex'],
+        providerDefaults: { pins: {}, onPinChange: vi.fn(), access: {}, onAccessChange: vi.fn() },
+      },
+    })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'codex model' } })
+    const result = screen.getByRole('option', { name: 'Codex Model' })
+    fireEvent.click(result)
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Providers' })).toBeTruthy())
+    await waitFor(() =>
+      expect(
+        document
+          .querySelector('[data-settings-id="provider:codex:Codex:Model"]')
+          ?.hasAttribute('data-settings-found'),
+      ).toBe(true),
+    )
+  })
+  it('opens a category from its name', async () => {
+    renderSettings({ initialSection: 'workflows' })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'privacy' } })
+    fireEvent.click(screen.getByRole('option', { name: 'Data & privacy' }))
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy(),
+    )
+  })
+  it('does not replay a jump when its section is opened again later', async () => {
+    renderSettings({ initialSection: 'workflows' })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'dark mode' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-settings-id="theme"]')?.hasAttribute('data-settings-found'),
+      ).toBe(true),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
+    expect(screen.getByRole('heading', { name: 'Appearance' })).toBeTruthy()
+    expect(
+      document.querySelector('[data-settings-id="theme"]')?.hasAttribute('data-settings-found'),
+    ).toBe(false)
+  })
+  it('does not offer hidden debug and phone controls', () => {
+    renderSettings({ initialSection: 'workflows' })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'onboarding' } })
+    expect(screen.queryByRole('option', { name: 'Force onboarding' })).toBeNull()
+    fireEvent.change(input, { target: { value: 'phone access' } })
+    expect(screen.queryByRole('option', { name: 'Phone access' })).toBeNull()
   })
 })

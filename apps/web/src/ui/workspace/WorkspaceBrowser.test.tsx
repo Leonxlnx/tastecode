@@ -20,6 +20,7 @@ const nativeBrowser = vi.hoisted(() => ({
 
 vi.mock('../../bridge.js', () => ({
   isDesktop: true,
+  canSavePastedFiles: false,
   isMacOS: () => false,
   onBrowserShortcut: (listener: (guestId: number, action: string) => void) => {
     nativeBrowser.shortcutListeners.add(listener)
@@ -318,6 +319,7 @@ describe('WorkspaceBrowser', () => {
       expect(canvas.getAttribute('aria-busy')).toBe('true')
       expect(container.querySelector('.workspace-browser__placeholder')).toBeNull()
       expect(host.contains(view)).toBe(true)
+      expect(host.getAttribute('data-painted')).toBe('false')
 
       act(() => {
         view.isLoading.mockReturnValue(readyEvent === 'dom-ready')
@@ -329,6 +331,7 @@ describe('WorkspaceBrowser', () => {
         view.dispatchEvent(new Event('did-stop-loading'))
       })
       expect(canvas.getAttribute('aria-busy')).toBe('false')
+      expect(host.getAttribute('data-painted')).toBe('true')
 
       fireEvent.change(address, { target: { value: 'example.com/second' } })
       fireEvent.submit(address.closest('form')!)
@@ -684,7 +687,7 @@ function failureView(): { title: string; detail: string } | null {
   if (!view) return null
   return {
     title: view.querySelector('strong')?.textContent ?? '',
-    detail: view.querySelector('.workspace-empty > span')?.textContent ?? '',
+    detail: view.querySelector('.empty-state > span')?.textContent ?? '',
   }
 }
 

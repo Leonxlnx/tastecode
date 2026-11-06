@@ -7,11 +7,14 @@ import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
 import { DESIGN_CONSISTENCY_FINDING_IDS } from './design-consistency.js'
 import { ONE_DESIGN_LANGUAGE } from './design-language.js'
+import { tasteskillWebsiteRules } from './tasteskill-web.js'
 import { designMotionGuidance } from './motion-guidance.js'
+import { websiteMotion } from './website-motion.js'
 import type { PageBlueprint } from './page.js'
 import { type BoundaryRecord, member, record, string, strings } from './parse.js'
 import { referenceDirectionsForPage, type ReferenceDirection } from './reference-directions.js'
 import { assertReviewViewports } from './preview.js'
+import { parsePhaseJson } from './phase-json.js'
 
 const SEVERITIES = ['blocking', 'major', 'minor'] as const
 export type ReviewSeverity = (typeof SEVERITIES)[number]
@@ -170,7 +173,7 @@ For every visible section, compare its screenshot geometry first against referen
 
 ${ONE_DESIGN_LANGUAGE}${dashboard ? '\n\nThis is an operating dashboard: judge it as one working screen rather than a marketing page. Review shell and navigation consistency, data density, table and chart readability, visible selected, sorted and open control states, and keyboard focus instead of Hero criteria.' : ''}
 
-Review each section's recorded motion decision against the rendered result when the evidence makes that possible. Motion must have one clear purpose, preserve spatial continuity, reuse the page's two or three named reveal types instead of a different effect per section or one generic fade-up everywhere, and provide a reduced-motion path. Do not claim that a still screenshot proves timing or interaction behavior; use unknown confidence when the browser evidence cannot show it.
+${dashboard ? websiteMotion('reveals').review : websiteMotion().review}
 
 Apply the following pass blockers to every screenshot:
 - The page breaks its one design language: sections use different font families, heading styles, type scales, button styles, radius families, label systems or card and surface treatments, or a section imports its own reference's styling instead of the brand's.
@@ -193,6 +196,8 @@ Treat these as major findings, or blocking when they prevent reading or operatio
 Do not edit files, redesign from preference, or praise the work. Report only visible, actionable discrepancies and prefer one root-cause repair over repeated local patches. This is a visual review, not a complete release audit: do not infer factual accuracy, working interactions, conversion performance, user comprehension, loading performance, or source provenance from screenshots. Use confidence "unknown" rather than inventing evidence. Use these checks and the actual reference images; do not invoke external design skills.
 
 ${DESIGN_CONTENT_GUIDANCE}
+
+${dashboard ? '' : tasteskillWebsiteRules('review')}
 
 ${designMotionGuidance(brief, page)}
 
@@ -396,6 +401,8 @@ ${scope}
 
 ${DESIGN_CONTENT_GUIDANCE}
 
+${appDirection || (brief && isDashboardBrief(brief)) || isDashboardPageMode(page?.architecture?.mode) ? '' : tasteskillWebsiteRules('build')}
+
 ${designMotionGuidance(brief, page)}
 
 Return JSON only as the final response:
@@ -429,6 +436,5 @@ export function parseRepairPhaseOutput(text: string): RepairPhaseOutput {
 }
 
 function json(text: string): BoundaryRecord {
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  return record(JSON.parse(fenced?.[1] ?? text), 'phase output')
+  return record(parsePhaseJson(text), 'phase output')
 }

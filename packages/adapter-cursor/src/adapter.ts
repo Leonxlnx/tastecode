@@ -21,6 +21,7 @@ import {
   resolveCursorModel,
   type RawCursorModel,
 } from './models.js'
+import { CURSOR_CAPABILITIES } from './capabilities.js'
 
 /**
  * The cursor-agent build line this adapter's frames were captured from. It
@@ -29,16 +30,7 @@ import {
  */
 export const CURSOR_SUPPORTED_VERSION = '2026.07'
 
-export const CURSOR_CAPABILITIES: Capabilities = {
-  steer: false,
-  fork: false,
-  interrupt: true,
-  reasoningItems: false,
-  approvals: false,
-  // Without --force the CLI refuses a folder it does not trust instead of asking.
-  askFirst: false,
-  images: true,
-}
+export { CURSOR_CAPABILITIES } from './capabilities.js'
 
 const IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
 

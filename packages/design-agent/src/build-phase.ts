@@ -11,7 +11,9 @@ import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
 import { ONE_DESIGN_LANGUAGE } from './design-language.js'
 import { designTokenVariables } from './design-tokens.js'
-import { designMotionGuidance, REFERENCE_REVEAL_SOURCE } from './motion-guidance.js'
+import { tasteskillWebsiteRules } from './tasteskill-web.js'
+import { designMotionGuidance } from './motion-guidance.js'
+import { websiteMotion } from './website-motion.js'
 import { gradientSetForBrand } from './gradients.js'
 import type { PageBlueprint } from './page.js'
 import { record, string, strings } from './parse.js'
@@ -21,6 +23,7 @@ export {
   designSourceQualityBaseline,
   validateDesignSourceQuality,
 } from './source-quality.js'
+import { parsePhaseJson } from './phase-json.js'
 
 export type BuildPhaseOutput =
   | { status: 'complete'; summary: string; files: string[]; checks: string[] }
@@ -128,19 +131,19 @@ Do not improvise around an unresolved meaningful visual asset. Build may impleme
 
 Each page section records a referenceDirectionId, layoutFamily, one or more selected layoutCases, and a content-specific layout. The reference is the primary hard composition requirement; layout cases classify and support it. Preserve its recognizable macro geometry, hierarchy, relative proportions, alignment, overlap, density, negative-space rhythm, media count and placement, and movement at expanded size, then follow the recorded medium and compact transformations. Replace the reference's identity, copy, palette, typography, buttons, labels, radii, spacing scale, surfaces, icons and image subjects with the project's one design language. Do not invent a second motif or replace the reference with a generic centered heading, uniform card grid, familiar split Hero, or vertically stacked mobile page unless that is the reference. Do not render IDs as visible copy.
 
-Implement each section's recorded motion decision as deliberately as its layout. Use the project's existing motion dependencies when present, native CSS and IntersectionObserver for simple cases, and GSAP-style timelines only when the recorded scroll, drag, pin, or sequence cannot be expressed cleanly without them. Keep interface feedback under 300ms unless the artifact gives a justified exception, animate transform and opacity instead of layout properties, never use transition: all, and never enter from scale(0). Gate hover motion behind hover-capable fine pointers and implement the recorded prefers-reduced-motion behavior. Implement the page's motion vocabulary once, as two or three named reveal types with shared timing, and reuse it; do not apply the same fade-up to every section, invent a new effect for each section, or animate decorative elements without a purpose.
+${dashboard ? websiteMotion('reveals').build : websiteMotion().build}
 
 ${ONE_DESIGN_LANGUAGE}
 
 DESIGN TOKENS — one tokens block for the whole page:
 - Declare one block of CSS custom properties before any section styles, in the project's global stylesheet or its existing theme file. It contains every variable in <design-token-variables> with its value: the brand palette, the approved font families${tokenScales.declared}. Put root on :root; put dark, when present, on the dark theme selector the page uses. ${tokenScales.derive}When the project uses Tailwind or another theme config, map that config to these variables instead of duplicating values.
 - Every section reads colors, font families, font sizes, radii and section spacing only through these variables. No section declares its own font family, off-scale font size, radius, spacing step or palette color literal, even when its reference used one.
-- The only permitted font families are ${quotedList(brand.typefaces.map(({ family }) => family))}. Do not add any other font-family, @font-face, Google Fonts or Fontsource import, or framework font loader family. The only exceptions are generic fallbacks (system-ui, sans-serif, serif, monospace) and an icon font required by the project's icon set.
+- The only permitted font families are ${quotedList(brand.typefaces.map(({ family }) => family))}. Load them only from their font files in the project: link the stylesheet the asset manifest records for them, or write @font-face rules pointing at those files. Do not add a font-family or @font-face for any other family, a Google Fonts or Fontsource import, or a framework font loader family. The only exceptions are generic fallbacks (system-ui, sans-serif, serif, monospace) and an icon font required by the project's icon set.
 - Implement exactly one primary and one secondary button style${brand.designTokens?.buttons ? ' from designTokens.buttons' : ''} and one label style, and reuse them in every section. Cards share one padding, radius, border and surface treatment; vary their size and composition, never their styling.
 
 Enforce this visual quality floor:
 - Derive heading placement, line count and text block width from the selected reference at each viewport, and set its size with the brand type-scale step that matches its relative prominence (display for a monumental headline). Do not flatten an intentionally large or multi-line reference headline into generic small type, and do not add an off-scale size for one section.
-- Render labels, eyebrows and type contrast in the brand's one label style with the approved typefaces; do not copy a section reference's label font, case or tracking when it differs from the anchor. Load real font assets at supported weights and verify document.fonts.ready, a matching FontFace with status loaded, and document.fonts.check; a declared family falling back to Arial is a failed typography check.
+- Render labels, eyebrows and type contrast in the brand's one label style with the approved typefaces; do not copy a section reference's label font, case or tracking when it differs from the anchor. Load real font assets at supported weights and verify document.fonts.ready, a matching FontFace with status loaded, and document.fonts.check; a declared family falling back to Arial is a failed typography check. Where no browser can launch, check instead that every approved family's font files exist in the project and that the stylesheet declaring them is loaded, record the browser font check as not run, and continue: TasteCode's Preview loads the page in its own browser after Build.
 ${dashboard ? '- Keep the dashboard shell and operational content from its references. Render charts, tables, forms and navigation as working components with consistent sample data when no backend is supplied; never flatten the dashboard into a screenshot or add a marketing Hero.' : '- Keep the Hero to one headline, at most one concise supporting block, and its actions. Do not add a second description, implementation note, prototype disclaimer, or status message.'}
 - Do not show unfinished authoring placeholders such as lorem ipsum, TODO, or your text here. Preserve legitimate product states and controls such as Not connected, Test data, Local preview, or Awaiting approval when they describe the interface rather than missing implementation. Representative interface records, weather, dates, inventory, and operational values may be created for a finished one-shot experience. Preserve the visible identification required by the content-scope rules for concept work and illustrative catalogs. Record every invented value in a Build summary beginning "Verify before publishing:" so TasteCode can show it after Preview.
 - Keep each reference's macro geometry: grid, columns, media boxes, alignment, overlap and section proportions. Take spacing, radii, borders, rules and surfaces from the design tokens and the brand's surface policy, identical in every section. Do not add decorative card-edge rails, grids or square panels absent from the reference, and do not remove ones visibly present.
@@ -162,16 +165,11 @@ ${exactFiles ? `\nThe brief's deliverable boundary is exactly ${list(exactFiles)
 
 ${DESIGN_CONTENT_GUIDANCE}
 
+${dashboard ? '' : tasteskillWebsiteRules('build')}
+
 ${designMotionGuidance(brief, page)}
 
-${
-  dashboard
-    ? ''
-    : `Use this tested native reveal implementation for simple scroll entrances; copy or inline it in the existing script and call installReferenceReveals after mounting. Mark selected leaf groups data-reveal="rise|slide|media". Keep CSS visible by default. In React return its cleanup from the effect. An existing motion library may implement the same lifecycle guarantees. The hero is separate: use a transform-only entrance if it has already painted; never hide it late while waiting for fonts or assets.
-<reference-reveal-source>
-${REFERENCE_REVEAL_SOURCE}
-</reference-reveal-source>`
-}
+${dashboard ? '' : websiteMotion().buildSource}
 
 ${BUILD_PROTOCOL}
 
@@ -282,8 +280,7 @@ export function validateExactBuildFiles(
 }
 
 export function parseBuildPhaseOutput(text: string): BuildPhaseOutput {
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const value = record(JSON.parse(fenced?.[1] ?? text), 'build output')
+  const value = record(parsePhaseJson(text), 'build output')
   // A report may name a generated folder such as "dist/". The workspace scan is
   // the authority on its contents, so a trailing separator must not fail an
   // otherwise finished Build; the path rules still apply to the folder itself.
@@ -297,7 +294,11 @@ export function parseBuildPhaseOutput(text: string): BuildPhaseOutput {
     return { status: 'complete', summary: string(value.summary, 'build summary'), files, checks }
   }
   if (value.status === 'failed') {
-    return { status: 'failed', error: string(value.error, 'build error'), files, checks }
+    // Repair reports a failure as summary; a Build that answers in that shape still names its
+    // blocker, which is what the user needs to see.
+    const error =
+      typeof value.error === 'string' && value.error.trim() ? value.error : value.summary
+    return { status: 'failed', error: string(error, 'build error'), files, checks }
   }
   throw new Error('build status must be complete or failed')
 }

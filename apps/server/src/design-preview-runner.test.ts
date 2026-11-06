@@ -456,6 +456,46 @@ createServer((_request, response) => response.end('expected preview')).listen(Nu
     )
   })
 
+  // #2195: the user's own `next dev` was already running, so Next.js 16 exited the preview's.
+  it("uses the project's next dev server that is already running, and leaves it running", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-next-'))
+    workspaces.push(workspace)
+    const running = createServer((_request, response) => response.end('employee profiles'))
+    await listen(running)
+    const runningPort = serverPort(running)
+    try {
+      const message = [
+        '▲ Next.js 16.2.6 (Turbopack)',
+        '✓ Ready in 1281ms',
+        '⨯ Another next dev server is already running.',
+        '',
+        `- Local:        http://localhost:${runningPort}`,
+        '- PID:          26504',
+        '- Log:          .next\\\\dev\\\\logs\\\\next-development.log',
+        '',
+        'Run taskkill /PID 26504 /F to stop it.',
+      ].join('\\n')
+      writeFileSync(
+        path.join(workspace, 'preview.mjs'),
+        `process.stdout.write('${message}\\n')\nprocess.exit(1)\n`,
+      )
+      const preview = await startDesignPreview(workspace, plan(await freePort()), 5_000)
+      previews.push(preview)
+      expect(preview.url).toBe(`http://127.0.0.1:${runningPort}/`)
+      expect(preview.output()).toContain('TasteCode did not start it and leaves it running')
+      await preview.stop()
+      expect(await (await fetch(preview.url)).text()).toBe('employee profiles')
+
+      // A server that does not answer is no preview: the original failure stands.
+      await close(running)
+      await expect(startDesignPreview(workspace, plan(await freePort()), 5_000)).rejects.toThrow(
+        /preview exited before it was ready[\s\S]*Another next dev server/,
+      )
+    } finally {
+      if (running.listening) await close(running)
+    }
+  })
+
   it('releases the child and port when readiness times out', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)

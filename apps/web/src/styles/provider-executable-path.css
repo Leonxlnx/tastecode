@@ -1,0 +1,34 @@
+.provider-executable {
+  /* Lines up with the names of the settings rows above it. */
+  margin: 0 0 12px 34px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.provider-executable summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.provider-executable p {
+  margin: 8px 0;
+}
+
+.provider-executable__form {
+  display: flex;
+  gap: 8px;
+}
+
+.provider-executable__form > .set-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.provider-executable summary:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.provider-executable .provider-executable__error {
+  color: var(--error);
+}

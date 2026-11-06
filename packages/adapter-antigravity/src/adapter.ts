@@ -26,6 +26,7 @@ import {
   resolveAntigravityModel,
   type AntigravityListedModel,
 } from './models.js'
+import { ANTIGRAVITY_CAPABILITIES } from './capabilities.js'
 
 /**
  * Tier 3 adapter: drives Google's Antigravity CLI (`agy`) in headless
@@ -50,19 +51,7 @@ import {
 
 const SUPPORTED = '1.1'
 
-export const ANTIGRAVITY_CAPABILITIES: Capabilities = {
-  // Print mode is one-shot: no steer, no fork, and permission prompts cannot
-  // be answered mid-turn — the launch mode decides them instead.
-  steer: false,
-  fork: false,
-  interrupt: true,
-  reasoningItems: false,
-  approvals: false,
-  images: false,
-  // agy's print mode takes text only, but its own file viewer opens images and
-  // shows them to the model, so an attached image goes in as a path to open.
-  imageFiles: true,
-}
+export { ANTIGRAVITY_CAPABILITIES } from './capabilities.js'
 
 export type AntigravityStartOptions = {
   instructions?: string | undefined

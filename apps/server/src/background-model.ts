@@ -12,6 +12,7 @@ import type {
 } from '@harness/contracts'
 import type { ProviderRuntime, TurnOptions } from './adapters.js'
 import { StartupCleanupError } from './provider-session.js'
+import { reasoningEffortRank } from './reasoning-effort.js'
 import { sliceCodeUnits } from './slice-code-units.js'
 
 const BACKGROUND_TIMEOUT_MS = 45_000
@@ -37,25 +38,10 @@ export type BackgroundModelSourceLoader = Pick<
   load: () => Promise<AvailableBackgroundModelSource | undefined>
 }
 
-const EFFORT_RANKS = new Map([
-  ['none', 0],
-  ['minimal', 1],
-  ['xlow', 2],
-  ['extralow', 2],
-  ['low', 3],
-  ['medium', 4],
-  ['high', 5],
-  ['xhigh', 6],
-  ['extrahigh', 6],
-  ['max', 7],
-  ['maximum', 7],
-  ['ultra', 8],
-])
-
 function lowestReasoningEffort(model: Model): string | undefined {
   let lowest: { effort: string; rank: number; index: number } | undefined
   for (const [index, effort] of model.reasoningEfforts.entries()) {
-    const rank = EFFORT_RANKS.get(normalize(effort)) ?? 100 + index
+    const rank = reasoningEffortRank(effort) ?? 100 + index
     if (!lowest || rank < lowest.rank) lowest = { effort, rank, index }
   }
   return lowest?.effort

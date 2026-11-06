@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-11-04 dev 7b38f04b · includes main db5fba4d</span>
+        <span class="meta">2026-11-06 dev ece034cc · includes main dd8f4264</span>
       </div>
     </div>
 
@@ -990,6 +990,24 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Executable path for each added CLI provider and ACP agent
+                <span class="d"
+                  >Under the provider's settings, Executable path takes an absolute path to the CLI,
+                  for one installed somewhere automatic discovery cannot see or a build other than
+                  the one on PATH; the path is checked before saving, a bad one is explained under
+                  the field and changes nothing, and quotes or spaces pasted around it are dropped;
+                  detection, version checks, new processes, and sign-in and update terminals all use
+                  it, while running processes keep theirs; it survives a restart, empty returns to
+                  automatic discovery, an updater that does not start with the CLI itself asks the
+                  user to update the custom executable on their own, and phone links can neither
+                  read nor change it</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Auto-detect installed CLIs with version check and mismatch warning
                 <span class="d"
                   >Windows discovery, provider launch and terminal environments preserve mixed-case
@@ -1350,7 +1368,9 @@
                   out turns Send off again; an Enter pressed while Send is still loading is sent
                   once Send is ready, unless the words or the chat changed meanwhile; on nightly a
                   shelf that holds only notes, such as where a chat continues, is drawn neutral with
-                  an info icon instead of red</span
+                  an info icon instead of red, and each row keeps its own tone; the rows use the one
+                  notice look (tone icon, text in normal ink, actions, Report and a close
+                  button)</span
                 ></span
               ></label
             >
@@ -1641,6 +1661,34 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Design runs at the effort chosen in the composer
+                <span class="d"
+                  >every phase, the briefing included, uses the composer's effort; an effort the
+                  chat's model does not list becomes the nearest one it does, the higher one on a
+                  tie; no provider names are checked</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Design sends each image to the provider once
+                <span class="d"
+                  >a provider keeps every image of a chat and sends them all with each request, so a
+                  reference or screenshot the provider session already holds is named by its path
+                  instead of attached again (relative inside the project, absolute outside), with a
+                  line telling the agent to open it again after a context compaction; a new provider
+                  session gets every image once; review screenshots are captured as JPEG; Codex
+                  refusing a request over its 64 MB limit shows a plain sentence instead of the raw
+                  JSON</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Design mode entry point in the prompt bar; unrelated requests show a muted grey
                 note and continue in the same session with their attachments and model settings
                 <span class="d"
@@ -1709,41 +1757,46 @@
                   scale, buttons, radii or surfaces; a deterministic font and radius audit against
                   the brand, which reads named Tailwind radii through the workspace's own theme,
                   adds bounded Review findings; every section records purposeful motion plus its
-                  reduced-motion equivalent; visible hero entrances and distinct scroll reveals are
-                  required unless explicitly disabled; Build receives a tested one-time reveal
-                  implementation that keeps painted content visible and restores visibility on
-                  cleanup/reduced motion; Build must exercise triggers, while still captures alone
-                  cannot prove animation; ordinary follow-ups after Design clear its phase-only JSON
-                  instructions; Page, Build, and Review require coherent card systems and meaningful
-                  brand-accent use; Asset actively reuses, generates, or searches for real imagery
-                  through available provider tools, preferring generation for missing original
-                  visuals with licensed search as fallback, and records external reuse terms; the
-                  same phases reject ornamental SVG filler, divider-grid templates and card rails
-                  absent from the reference, unstyled controls, overflow, and heading geometry that
-                  loses the reference; internal status notes stay out of page copy while
-                  concept-work identification remains visible; representative content reaches the
-                  final response as a publishing verification note; command and TasteCode-owned
-                  static previews select an available port on collision and reject missing local
-                  markup resources, including srcset candidates, and clean up child trees; rendered
-                  Chromium audits require exactly one h1 and at least 44 by 44 CSS-pixel interaction
-                  targets across the whole document, and model review cannot erase those findings;
-                  capture opens or reuses one dedicated Browser tab and same-URL repair passes
-                  reload it after the Electron guest is ready; serialized hidden capture remains the
-                  evidence authority, scrolls through lazy content, and waits within fixed deadlines
-                  for animation frames, animations, fonts, and images before bounded whole-page
-                  desktop and mobile PNGs, then clears shared browser storage and cache before the
-                  next capture; a page that scrolls inside a full-screen element reports what that
-                  element hides, so review covers the captured part only, and its controls are
-                  audited like the document's; a successful preview remains reachable until thread
-                  close or a replacement Design run, with process and port release awaited before
-                  cleanup and a static preview's open media responses ended when it stops; exhausted
-                  validation corrections finish their turn and activity as failed; completed queued
-                  phases remain idle when their provider promise settles late; source checks accept
-                  HTML with embedded images above 2 MB while retaining a 32 MB total scan limit, and
-                  the scan skips package-manager caches (.bun-cache, .npm, .yarn, .pnpm-cache and
-                  others) like node_modules; since 0.1.1, history replies and live pushes have
-                  separate bounded output budgets, and failed repair validation retains its
-                  correction guard to prevent unlimited retries</span
+                  reduced-motion equivalent; websites follow tasteskill v2.5's house rules, plain
+                  copy, contacts, one section per screen, equal edges and checklist, quoted from
+                  pinned copies with TasteCode's adaptations (no kit, the reference deck for
+                  composition, no picture library); website motion is one switch
+                  (WEBSITE_MOTION_MODE, hybrid: tasteskill's hover layer and tech budget, one load
+                  motion in the hero and one creative moment in its own section on every page, no
+                  scroll reveals, WebGL only on tech pages; the earlier reveals mode and tasteskill
+                  as written stay selectable); Build must exercise triggers, while still captures
+                  alone cannot prove animation; ordinary follow-ups after Design clear its
+                  phase-only JSON instructions; Page, Build, and Review require coherent card
+                  systems and meaningful brand-accent use; Asset actively reuses, generates, or
+                  searches for real imagery through available provider tools, preferring generation
+                  for missing original visuals with licensed search as fallback, and records
+                  external reuse terms; the same phases reject ornamental SVG filler, divider-grid
+                  templates and card rails absent from the reference, unstyled controls, overflow,
+                  and heading geometry that loses the reference; internal status notes stay out of
+                  page copy while concept-work identification remains visible; representative
+                  content reaches the final response as a publishing verification note; command and
+                  TasteCode-owned static previews select an available port on collision and reject
+                  missing local markup resources, including srcset candidates, and clean up child
+                  trees; rendered Chromium audits require exactly one h1 and at least 44 by 44
+                  CSS-pixel interaction targets across the whole document, and model review cannot
+                  erase those findings; capture opens or reuses one dedicated Browser tab and
+                  same-URL repair passes reload it after the Electron guest is ready; serialized
+                  hidden capture remains the evidence authority, scrolls through lazy content, and
+                  waits within fixed deadlines for animation frames, animations, fonts, and images
+                  before bounded whole-page desktop and mobile PNGs, then clears shared browser
+                  storage and cache before the next capture; a page that scrolls inside a
+                  full-screen element reports what that element hides, so review covers the captured
+                  part only, and its controls are audited like the document's; a successful preview
+                  remains reachable until thread close or a replacement Design run, with process and
+                  port release awaited before cleanup and a static preview's open media responses
+                  ended when it stops; exhausted validation corrections finish their turn and
+                  activity as failed; completed queued phases remain idle when their provider
+                  promise settles late; source checks accept HTML with embedded images above 2 MB
+                  while retaining a 32 MB total scan limit, and the scan skips package-manager
+                  caches (.bun-cache, .npm, .yarn, .pnpm-cache and others) like node_modules; since
+                  0.1.1, history replies and live pushes have separate bounded output budgets, and
+                  failed repair validation retains its correction guard to prevent unlimited
+                  retries</span
                 ></span
               ></label
             >
@@ -2195,6 +2248,21 @@
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Project and Files tab paths open their folder
+                <span class="d"
+                  >in the desktop app the project name and the open file's path in the Files tab
+                  toolbar are buttons that show them in Explorer or Finder, a right-click or the
+                  context-menu key on a Files tree row shows that file or folder, protected entries
+                  are not offered, an isolated chat shows its own checkout's copy, a path that
+                  cannot be shown says so above the tree, and a new chat's header menu also offers
+                  Open in Explorer</span
+                ></span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span
@@ -3094,7 +3162,10 @@
                 <span class="d"
                   >pinned to exact upstream commits in packages/default-skills/skills.json, fetched
                   and hash-checked by its sync script (the files are not in git) and packaged as
-                  real files in resources/default-skills; the Skills page lists them read-only under
+                  real files in resources/default-skills; taste-skill (v2.5.0) ships without any
+                  picture of its own (no photo library, no sample photographs, posters or product
+                  specs), with a local patch that points it at the user's own pictures
+                  (packages/default-skills/patches); the Skills page lists them read-only under
                   Included with TasteCode, and $ offers them in the composer (where the provider
                   loads them as a plugin, every command list carries the bare SKILL.md name with
                   tastecode:&lt;folder&gt; as an alias, so / shows and inserts /&lt;name&gt; even
@@ -3135,6 +3206,35 @@
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Empty states share one quiet look
+                <span class="d"
+                  >the workspace tools, Settings lists, the pull request list, detail and error
+                  states, and Review when the changes cannot be read (such as a folder without git,
+                  titled Changes could not be read with the reason under it) use one empty state: an
+                  icon, a one-line title, a short detail and an optional action; no results in
+                  search and the command palette read in the same muted detail text; the new-chat
+                  heading is unchanged</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Notices share one look in three tones
+                <span class="d"
+                  >the corner notices (reconnecting, action errors, confirmations), the deleted-chat
+                  and update toasts, Settings page notices and the composer shelf rows use one
+                  notice body: an icon coloured by its tone (info, success, error, or a spinner for
+                  progress), the message in normal ink, its actions and a close button named
+                  Dismiss; each notice keeps its place</span
+                ></span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span
@@ -3304,6 +3404,21 @@
                   the app's endless loops (a working chat's spinner, the live activity row) pause
                   until it closes, also when it returns after a sign-in, while one-shot animations
                   behind it still finish</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Search across every category
+                <span class="d"
+                  >The field above the categories finds a category by name and individual controls
+                  by label, description or related word, including keyboard shortcuts and provider
+                  defaults on tabs not opened yet; controls hidden on this device or in this state
+                  are not offered; arrows move through the results and Enter opens the page and
+                  scrolls to the matching row, which is focused and briefly highlighted; Escape
+                  clears the search first and only then closes Settings</span
                 ></span
               ></label
             >
@@ -3898,6 +4013,49 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Browser element annotations
+                <span class="d"
+                  >Desktop-only toolbar mode highlights elements and saves up to 20 numbered
+                  comments per round. Pins follow scrolling and resizing; comments can be edited or
+                  removed. Going to another page discards the round, while a reload of the same page
+                  keeps it. Add to chat puts each comment in the composer as a compact chip, also
+                  shown in the sent message, and hovering a chip shows the captured element, page
+                  title, comment and element count. The agent receives quoted, bounded page context
+                  and the crop through the normal send, queue and Steer flow, with honest text-only
+                  fallback for models without images, and removing a chip removes its screenshot.
+                  Chips survive a provider or project change, come back with their screenshots from
+                  Edit as new prompt, Arrow Up and an edited queued prompt, and copy as the
+                  comment's words. A comment keeps its line breaks and joined characters, and one of
+                  only invisible characters cannot be saved. A hung page or a selector it cannot
+                  read does not stall the mode. Frames and closed shadow roots target their host;
+                  open shadow roots include their path. The hover card stays inside the window and
+                  shows at most eight lines of the comment; switching models at a usage limit brings
+                  the request back with its screenshot; a hung page holds one page read instead of
+                  starting another every few seconds. Rectangle selection is not included.</span
+                >
+              </span></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >The agent's browser
+                <span class="d"
+                  >a chat with TasteCode's agent tools gets browser tools (open, navigate,
+                  screenshot, click, type, scroll, read text, console) that run in the chat's own
+                  Browser tab in the window that shows the chat, one command at a time, 30 s each;
+                  http and https only, local dev servers included; never typing into password,
+                  sign-in code or payment fields; no downloads or permission prompts; page text and
+                  console come back quoted as data, not instructions, and bounded; a bar says the
+                  agent is using the browser, with Stop, which refuses every further command until
+                  the turn ends; with no window showing the chat a call fails at once</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Sandboxed in-app browser previews through Electron &lt;webview&gt; guests
                 <span class="d"
                   >dedicated persistent site session, top-level HTTPS and loopback HTTP navigation,
@@ -3911,10 +4069,11 @@
                   stays in a separate hidden Electron window; the DOM-owned host follows workspace
                   layout, with 1280 × 800, 768 × 1024 and 390 × 844 presets scaled to fit without
                   stretching, plus an explicit system-browser handoff; the canvas takes the theme
-                  background; a failed load shows a calm view in the canvas with the host, one plain
-                  sentence, Retry and Edit address, reported once and not at all after Stop, while a
-                  refused address says why; loads after the first page keep it visible under a thin
-                  progress line</span
+                  background until a page paints, then a browser's white, and page captures for
+                  comments and the agent are put on white too; a failed load shows a calm view in
+                  the canvas with the host, one plain sentence, Retry and Edit address, reported
+                  once and not at all after Stop, while a refused address says why; loads after the
+                  first page keep it visible under a thin progress line</span
                 ></span
               ></label
             >

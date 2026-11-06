@@ -231,6 +231,90 @@ export const PreviewCaptureResultSchema = z.discriminatedUnion('status', [
 ])
 export type PreviewCaptureResult = z.infer<typeof PreviewCaptureResultSchema>
 
+/** A page the agent may load: http or https only (loopback dev servers included). */
+const BrowserUrlSchema = HttpUrlSchema.max(2_048)
+
+/** Caps that keep one command's answer to a size an agent can read and a frame can carry. */
+export const BROWSER_TEXT_MAX = 100_000
+/** A PNG of at most 1600 px width, as base64. */
+export const BROWSER_PNG_MAX = 4_000_000
+export const BROWSER_CONSOLE_MAX = 200
+
+/**
+ * What an agent asks the chat's own in-app browser tab to do, through TasteCode's agent tools.
+ * The client that shows the chat runs it and answers with `browser.result`.
+ */
+const BrowserCommandBaseSchema = z.object({
+  threadId: z.string().min(1),
+  commandId: z.string().uuid(),
+})
+export const BrowserCommandSchema = z.discriminatedUnion('action', [
+  BrowserCommandBaseSchema.extend({ action: z.literal('open'), url: BrowserUrlSchema }),
+  BrowserCommandBaseSchema.extend({ action: z.literal('navigate'), url: BrowserUrlSchema }),
+  BrowserCommandBaseSchema.extend({ action: z.literal('screenshot') }),
+  BrowserCommandBaseSchema.extend({
+    action: z.literal('click'),
+    /** A CSS selector, or a point in CSS pixels of the visible page. */
+    selector: z.string().min(1).max(512).optional(),
+    x: z.number().int().min(0).max(10_000).optional(),
+    y: z.number().int().min(0).max(10_000).optional(),
+  }).refine(
+    (command) =>
+      command.selector !== undefined
+        ? command.x === undefined && command.y === undefined
+        : command.x !== undefined && command.y !== undefined,
+    'click needs a selector or both x and y',
+  ),
+  BrowserCommandBaseSchema.extend({
+    action: z.literal('type'),
+    selector: z.string().min(1).max(512),
+    text: z.string().max(10_000),
+  }),
+  BrowserCommandBaseSchema.extend({
+    action: z.literal('scroll'),
+    dx: z.number().int().min(-20_000).max(20_000),
+    dy: z.number().int().min(-20_000).max(20_000),
+  }),
+  BrowserCommandBaseSchema.extend({
+    action: z.literal('read_text'),
+    selector: z.string().min(1).max(512).optional(),
+  }),
+  BrowserCommandBaseSchema.extend({
+    action: z.literal('console'),
+    /** Only messages at or after this time (ms since the epoch). */
+    since: z.number().nonnegative().optional(),
+  }),
+])
+export type BrowserCommand = z.infer<typeof BrowserCommandSchema>
+export type BrowserCommandAction = BrowserCommand['action']
+
+export const BrowserConsoleEntrySchema = z.object({
+  level: z.enum(['log', 'info', 'warn', 'error', 'debug']),
+  text: z.string().max(2_000),
+  at: z.number().nonnegative(),
+})
+export type BrowserConsoleEntry = z.infer<typeof BrowserConsoleEntrySchema>
+
+/** The client's answer to one `browser.command`. A refusal or failure is `ok: false`. */
+export const BrowserResultSchema = z.discriminatedUnion('ok', [
+  z.object({
+    commandId: z.string().uuid(),
+    ok: z.literal(true),
+    /** The page the tab shows afterwards. */
+    url: z.string().max(2_048).optional(),
+    title: z.string().max(512).optional(),
+    text: z.string().max(BROWSER_TEXT_MAX).optional(),
+    png: z.string().max(BROWSER_PNG_MAX).optional(),
+    console: z.array(BrowserConsoleEntrySchema).max(BROWSER_CONSOLE_MAX).optional(),
+  }),
+  z.object({
+    commandId: z.string().uuid(),
+    ok: z.literal(false),
+    error: z.string().min(1).max(2_000),
+  }),
+])
+export type BrowserResult = z.infer<typeof BrowserResultSchema>
+
 export const McpConfigValueSchema = z.discriminatedUnion('source', [
   /** Non-secret config only. Credentials must use the reference shape below. */
   z.object({ source: z.literal('literal'), value: z.string() }),
@@ -966,11 +1050,24 @@ export type ThreadSubagent = z.infer<typeof ThreadSubagentSchema>
 
 export const methods = {
   'client.capabilities': {
-    params: z.object({ previewCapture: z.boolean() }),
+    params: z.object({
+      previewCapture: z.boolean(),
+      /** The client runs `browser.command` on a chat's own in-app browser tab. */
+      browserTools: z.boolean().optional(),
+      /**
+       * The chats whose own browser tab this client can drive now: the ones it shows. Sent
+       * again whenever that changes, so a command for a chat no window shows fails at once.
+       */
+      browserThreads: z.array(z.string().min(1)).max(16).optional(),
+    }),
     result: z.object({}),
   },
   'preview.captureResult': {
     params: PreviewCaptureResultSchema,
+    result: z.object({}),
+  },
+  'browser.result': {
+    params: BrowserResultSchema,
     result: z.object({}),
   },
   'system.info': {
@@ -1059,6 +1156,16 @@ export const methods = {
   'providers.updateRuntimeSettings': {
     params: z.object({ provider: ProviderIdSchema, runtime: z.string().min(1).nullable() }),
     result: ProviderRuntimeSettingsSchema,
+  },
+  /** Custom executables for built-in CLI providers, keyed by roster entry. */
+  'providers.executablePaths': {
+    params: z.object({}),
+    result: z.record(z.string(), z.string()),
+  },
+  /** An empty path restores automatic discovery. Existing processes keep running. */
+  'providers.updateExecutablePath': {
+    params: z.object({ source: z.string().min(1).max(200), path: z.string().max(4096) }),
+    result: z.record(z.string(), z.string()),
   },
   /** Every further account that has context settings of its own. */
   'providers.accountContextSettings': {
@@ -1566,6 +1673,12 @@ export const methods = {
     }),
     result: z.object({
       path: z.string(),
+      /**
+       * The absolute folder every path here is relative to: the project, or the session's
+       * isolated checkout, so a client can show a file where it really is. Absent from servers
+       * that predate it.
+       */
+      root: z.string().min(1).optional(),
       entries: z.array(
         z.object({
           name: z.string().min(1),
@@ -2399,6 +2512,9 @@ export type Push = z.infer<typeof PushSchema>
 export const channels = {
   'preview.captureRequested': PreviewCaptureRequestSchema,
   'preview.captureCancelled': z.object({ requestId: z.string().uuid() }),
+  'browser.command': BrowserCommandSchema,
+  /** The agent's call ended (its time ran out, or its turn stopped) before an answer came. */
+  'browser.commandCancelled': z.object({ commandId: z.string().uuid() }),
   'server.welcome': z.object({
     serverVersion: z.string(),
     protocolVersion: z.number(),
