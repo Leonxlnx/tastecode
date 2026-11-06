@@ -12394,9 +12394,9 @@ describe('inbox lifecycle', () => {
     ]
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('combobox', { name: 'Sidebar project filter' }))
-    fireEvent.click(screen.getByRole('option', { name: 'Beta' }))
-    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Filter by project' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Beta' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New thread' }))
 
     const picker = await screen.findByRole('dialog', {
       name: 'Choose a project for the new thread',
@@ -12432,9 +12432,17 @@ describe('inbox lifecycle', () => {
     ]
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Ready chat, project, Codex, Done' }))
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Ready chat, project, Codex, Default checkout, Done',
+      }),
+    )
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: 'Ready chat, project, Codex, Done' })).toBeNull()
+      expect(
+        screen.queryByRole('button', {
+          name: 'Ready chat, project, Codex, Default checkout, Done',
+        }),
+      ).toBeNull()
       expect(screen.getByRole('button', { name: /^Ready chat, project,/ })).toBeTruthy()
       expect(screen.queryByText('Woke')).toBeNull()
     })

@@ -749,6 +749,7 @@ function SidebarComponent(props: {
       <nav
         ref={railRef}
         className={`rail${folderDropActive ? ' is-folder-drop-target' : ''}`}
+        data-sidebar-mode={inbox ? 'inbox' : 'classic'}
         inert={props.collapsed ? true : undefined}
         onDragEnter={showFolderDropTarget}
         onDragOver={(event) => {

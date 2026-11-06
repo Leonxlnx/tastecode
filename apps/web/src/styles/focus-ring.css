@@ -16,14 +16,15 @@
     .proj__toggle,
     .proj__sessions-toggle,
     .rail__foot .menutrigger,
-    .inbox-card__main
+    .inbox-card__main,
+    .inbox-shelf__main
   ):focus-visible {
     outline-offset: var(--focus-ring-inset);
   }
 
   /* An inbox card's button fills the rounded card, so its ring follows the
      card's corners instead of drawing a square inside them. */
-  .inbox-card__main:focus-visible {
+  :is(.inbox-card__main, .inbox-shelf__main):focus-visible {
     border-radius: inherit;
   }
 }
