@@ -64,7 +64,10 @@ export function ComposerErrors({
       aria-label="Errors"
     >
       {visibleErrors.map((error) => (
-        <div className="composer__error-row" key={error.id}>
+        <div
+          className={`composer__error-row${error.tone === 'info' ? ' composer__error-row--info' : ''}`}
+          key={error.id}
+        >
           {error.tone === 'info' ? (
             <IconInfoCircle size={15} strokeWidth={1.8} aria-hidden />
           ) : (

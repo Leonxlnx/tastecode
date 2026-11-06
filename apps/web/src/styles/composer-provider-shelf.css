@@ -17,6 +17,12 @@
   --provider-shelf-bg: var(--bg-shelf);
 }
 
+/* A note beside an error keeps its own neutral text, icon and buttons on the shared ground. */
+.composer__error-row--info {
+  --provider-shelf-tint: var(--text-2);
+  color: var(--provider-shelf-tint);
+}
+
 .composer__shelf.composer__provider-shelf::after {
   background: var(--provider-shelf-bg);
 }
