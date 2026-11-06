@@ -197,4 +197,12 @@ describe('a Codex turn that ends while its work still runs', () => {
 
     expect(lifecycle(events)).toEqual(['exec-server started', 'turn interrupted'])
   })
+
+  it('takes a Stop that arrives after the turn ended as nothing to do', async () => {
+    const { rpc, endTurn } = await runningTurn()
+    endTurn('completed')
+
+    await expect(adapters[0]!.interrupt(THREAD)).resolves.toBeUndefined()
+    expect(rpc.calls.map((call) => call.method)).not.toContain('turn/interrupt')
+  })
 })
