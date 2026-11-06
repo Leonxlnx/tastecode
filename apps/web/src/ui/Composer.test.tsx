@@ -6,7 +6,19 @@ import { emptyThread, reduce } from '../thread-store.js'
 import type { Transport } from '../transport.js'
 import { TestTransport } from '../test-transport.js'
 import { Composer, composerResourceTriggerAt } from './Composer.js'
-import { composerChipText, composerWireText, hasComposerChips } from './composer-chips.js'
+import {
+  browserCommentChipText,
+  composerChips,
+  composerChipText,
+  composerWireText,
+  hasComposerChips,
+} from './composer-chips.js'
+import {
+  browserCommentBlock,
+  newBrowserCommentId,
+  rememberBrowserComment,
+  resetBrowserComments,
+} from './browser-comments.js'
 
 const bridge = vi.hoisted(() => ({
   isMacOS: vi.fn(() => false),
@@ -43,6 +55,7 @@ function legacyComposerResourceTriggerAt(text: string, cursor: number) {
 beforeEach(() => {
   localStorage.clear()
   resetRememberedChipTokens()
+  resetBrowserComments()
   bridge.isMacOS.mockReturnValue(false)
   bridge.pickFiles.mockResolvedValue([])
   bridge.previewViewedImage.mockResolvedValue(undefined)
@@ -3284,6 +3297,138 @@ function renderComposer(
     },
   })
 }
+
+describe('browser annotation drafts', () => {
+  const comment = () => ({
+    id: newBrowserCommentId(),
+    comment: 'Make this smaller',
+    title: 'Coffee shop',
+    url: 'http://127.0.0.1:6445/',
+    selector: 'h1',
+    text: 'Coffee',
+    image: '/images/123-pasted-image.png',
+  })
+
+  it('sends the screenshot only while its chip remains in the draft', () => {
+    const onSend = vi.fn()
+    const kept = comment()
+    const removed = { ...comment(), image: '/images/removed.png' }
+    rememberBrowserComment(kept)
+    rememberBrowserComment(removed)
+    const view = renderComposer(onSend, {
+      draftRequest: { text: browserCommentChipText(kept), attachments: [], request: 1 },
+    })
+    expect(view.container.querySelector('.composer__attachments')).toBeNull()
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Message' }), { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith(browserCommentBlock(kept), [kept.image])
+  })
+
+  it('keeps comment chips when the provider or project changes', () => {
+    const onSend = vi.fn()
+    const first = comment()
+    const second = { ...comment(), image: '/images/456-pasted-image.png' }
+    rememberBrowserComment(first)
+    rememberBrowserComment(second)
+    const view = renderComposer(onSend, {
+      provider: 'codex',
+      projectPath: '/one',
+      draftRequest: {
+        text: `${browserCommentChipText(first)}\n${browserCommentChipText(second)}`,
+        attachments: [],
+        request: 1,
+      },
+    })
+    view.rerenderComposer({ provider: 'claude-code' })
+    view.rerenderComposer({ projectPath: '/two' })
+    const area = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
+    expect(composerChips(area.value)).toHaveLength(2)
+    fireEvent.keyDown(area, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith(
+      `${browserCommentBlock(first)}\n\n${browserCommentBlock(second)}`,
+      [first.image, second.image],
+    )
+  })
+
+  it('copies and cuts a comment as its words, not its page details', () => {
+    const saved = { ...comment(), comment: 'Make this smaller\nand tighter' }
+    rememberBrowserComment(saved)
+    renderComposer(vi.fn(), {
+      draftRequest: { text: `Note ${browserCommentChipText(saved)}`, attachments: [], request: 1 },
+    })
+    const area = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
+    area.setSelectionRange(0, area.value.length)
+    const setData = vi.fn()
+    fireEvent.copy(area, { clipboardData: { setData } })
+    expect(setData).toHaveBeenLastCalledWith('text/plain', 'Note Make this smaller\nand tighter')
+    fireEvent.cut(area, { clipboardData: { setData } })
+    expect(setData).toHaveBeenLastCalledWith('text/plain', 'Note Make this smaller\nand tighter')
+    expect(area.value).toBe('')
+  })
+
+  it('brings a sent comment back with its screenshot, leaving other attachments alone', () => {
+    const onSend = vi.fn()
+    const sent = comment()
+    const block = browserCommentBlock(sent)
+    const view = renderComposer(onSend, {
+      draftRequest: { text: block, undoable: true, commentImages: [sent.image], request: 1 },
+    })
+    expect(view.container.querySelector('.composer__attachments')).toBeNull()
+    const area = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
+    expect(composerChips(area.value)).toHaveLength(1)
+    fireEvent.keyDown(area, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith(block, [sent.image])
+  })
+
+  it('leaves typed tokens alone when editing a queued prompt', async () => {
+    renderComposer(vi.fn(), {
+      queuedTurns: [{ id: 'q1', text: '$cook this', attachments: [], createdAt: 1 }],
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit $cook this' }))
+    const area = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
+    await waitFor(() => expect(area.value).toBe('$cook this'))
+  })
+
+  it('brings a queued comment back as a chip with its screenshot', async () => {
+    const onSend = vi.fn()
+    const saved = comment()
+    renderComposer(onSend, {
+      queuedTurns: [
+        { id: 'q1', text: browserCommentBlock(saved), attachments: [saved.image], createdAt: 1 },
+      ],
+    })
+    fireEvent.click(screen.getByRole('button', { name: `Edit ${saved.comment}` }))
+    const area = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
+    await waitFor(() => expect(composerChips(area.value)).toHaveLength(1))
+    expect(area.value).not.toContain('[Browser comment]')
+    fireEvent.keyDown(area, { key: 'Enter' })
+    expect(onSend.mock.calls[0]?.[1]).toEqual([saved.image])
+  })
+
+  it('keeps the comment sendable when switching to a provider without images', () => {
+    const onSend = vi.fn()
+    const saved = comment()
+    rememberBrowserComment(saved)
+    renderComposer(onSend, {
+      attachmentsSupported: false,
+      draftRequest: { text: browserCommentChipText(saved), attachments: [], request: 1 },
+    })
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Message' }), { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith(browserCommentBlock(saved, false), [])
+  })
+
+  it('restores rejected annotations as chips without separate image thumbnails', () => {
+    const onSend = vi.fn()
+    const saved = comment()
+    const view = renderComposer(onSend, {
+      draftRequest: { text: browserCommentBlock(saved), attachments: [saved.image], request: 1 },
+    })
+    const area = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement
+    expect(area.value).not.toContain('[Browser comment]')
+    expect(view.container.querySelector('.composer__attachments')).toBeNull()
+    fireEvent.keyDown(area, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith(browserCommentBlock(saved), [saved.image])
+  })
+})
 
 const setNativeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
 

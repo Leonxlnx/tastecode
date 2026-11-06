@@ -592,7 +592,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         ) : null}
 
         <div className="workspace-review__status" aria-live="polite">
-          {error ? (
+          {error && diff ? (
             <div className="workspace-review__message" role="alert">
               {error}
             </div>
@@ -615,6 +615,15 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         <SkeletonStatus label="Loading diff…" className="workspace-review__skeleton">
           <SkeletonCode lines={22} gutter />
         </SkeletonStatus>
+      ) : null}
+
+      {error && !diff && !loading ? (
+        <WorkspaceEmptyState
+          kind="review"
+          title="Changes could not be read"
+          detail={error}
+          role="alert"
+        />
       ) : null}
 
       {diff && diff.files.length === 0 ? (

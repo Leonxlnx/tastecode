@@ -21,6 +21,7 @@ const nativeBrowser = vi.hoisted(() => ({
 
 vi.mock('../../bridge.js', () => ({
   isDesktop: true,
+  canSavePastedFiles: false,
   isMacOS: () => false,
   onBrowserShortcut: (listener: (guestId: number, action: string) => void) => {
     nativeBrowser.shortcutListeners.add(listener)
@@ -858,7 +859,7 @@ function failureView(): { title: string; detail: string } | null {
   if (!view) return null
   return {
     title: view.querySelector('strong')?.textContent ?? '',
-    detail: view.querySelector('.workspace-empty > span')?.textContent ?? '',
+    detail: view.querySelector('.empty-state > span')?.textContent ?? '',
   }
 }
 

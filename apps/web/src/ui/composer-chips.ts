@@ -1,3 +1,10 @@
+import {
+  browserChipLabel,
+  browserComment,
+  browserCommentBlock,
+  type BrowserComment,
+} from './browser-comments.js'
+
 /**
  * Picked skills, MCP servers and commands sit inline in the composer as chips.
  *
@@ -13,8 +20,8 @@
  * back into the `$skill`, `@server` or `/command` token it stands for.
  */
 
-export type ComposerChipKind = 'skill' | 'mcp' | 'command'
-export type ComposerChipMarker = '$' | '@' | '/'
+export type ComposerChipKind = 'skill' | 'mcp' | 'command' | 'browser'
+export type ComposerChipMarker = '$' | '@' | '/' | ''
 
 export type ComposerChip = {
   kind: ComposerChipKind
@@ -26,6 +33,8 @@ export type ComposerChip = {
   /** Where the chip's characters start and end in the draft. */
   start: number
   end: number
+  /** A browser comment: its id, kept as invisible marks after the chip's own mark. */
+  commentId?: string
 }
 
 export type ComposerChipSegment =
@@ -42,9 +51,11 @@ const MARKS = {
 } as const satisfies Record<string, { marker: ComposerChipMarker; kind: ComposerChipKind }>
 type Mark = keyof typeof MARKS
 
-const CHIP = / ⁠([⁡-⁤])([^\s⁠-⁤]+)⁠/g
+// A browser comment's name is the user's words, so unlike a resource it may hold spaces.
+const BROWSER_MARK = '⁥'
+const CHIP = / ⁠(?:([⁡-⁤])([^\s⁠-⁥]+)|⁥([⁡-⁤]{64})([^\n⁠-⁥]+))⁠/g
 // A chip's leftovers after an edit cut through it: an opener or a lone mark.
-const FRAGMENT = / ⁠|[⁠-⁤]/g
+const FRAGMENT = / ⁠|[⁠-⁥]/g
 
 /** The characters the draft holds for a picked resource. */
 export function composerChipText(token: string, kind: ComposerChipKind): string {
@@ -58,6 +69,11 @@ export function composerChipText(token: string, kind: ComposerChipKind): string 
   return `${ICON_ROOM}${GLUE}${mark}${name}${GLUE}`
 }
 
+/** The characters the draft holds for a comment pinned in the browser. */
+export function browserCommentChipText(comment: Pick<BrowserComment, 'id' | 'comment'>): string {
+  return `${ICON_ROOM}${GLUE}${BROWSER_MARK}${comment.id}${browserChipLabel(comment.comment)}${GLUE}`
+}
+
 /** Cheap enough for every keystroke: a draft without a word joiner has no chips. */
 export function hasComposerChips(text: string): boolean {
   return text.includes(GLUE)
@@ -67,16 +83,20 @@ export function composerChips(text: string): ComposerChip[] {
   if (!hasComposerChips(text)) return []
   const chips: ComposerChip[] = []
   for (const match of text.matchAll(CHIP)) {
+    const start = match.index
+    const end = start + match[0].length
+    const commentId = match[3]
+    if (commentId) {
+      const name = match[4]!
+      const comment = browserComment(commentId)
+      // Details lost with the browser's storage: the user's words still go out.
+      const token = comment ? browserCommentBlock(comment) : name
+      chips.push({ kind: 'browser', marker: '', name, token, start, end, commentId })
+      continue
+    }
     const { marker, kind } = MARKS[match[1] as Mark]
     const name = match[2]!
-    chips.push({
-      kind,
-      marker,
-      name,
-      token: `${marker}${name}`,
-      start: match.index,
-      end: match.index + match[0].length,
-    })
+    chips.push({ kind, marker, name, token: `${marker}${name}`, start, end })
   }
   return chips
 }
@@ -87,7 +107,9 @@ export function composerChipSegments(text: string): ComposerChipSegment[] {
   for (const chip of composerChips(text)) {
     if (chip.start > position)
       segments.push({ type: 'text', text: text.slice(position, chip.start) })
-    segments.push({ type: 'chip', mark: text[chip.start + 2]!, ...chip })
+    // Everything between the opener and the name, which for a comment includes its id.
+    const mark = text.slice(chip.start + 2, chip.end - 1 - chip.name.length)
+    segments.push({ type: 'chip', mark, ...chip })
     position = chip.end
   }
   if (position < text.length) segments.push({ type: 'text', text: text.slice(position) })
@@ -100,24 +122,62 @@ export function composerChipSegments(text: string): ComposerChipSegment[] {
  * space keeps the two apart where they would otherwise run together
  * (`$cookx`, `use$cook`, `$cook$docs` name no skill).
  */
-export function composerWireText(text: string): string {
+export function composerWireText(text: string, options: { images?: boolean } = {}): string {
+  return composerChipsAsText(text, options, false)
+}
+
+/**
+ * What a copy of the draft carries: the tokens of its picks, and of a comment only
+ * the user's words. The page details and screenshot mean nothing without the chip.
+ */
+export function composerCopyText(text: string): string {
+  return composerChipsAsText(text, {}, true)
+}
+
+function composerChipsAsText(
+  text: string,
+  options: { images?: boolean },
+  commentWords: boolean,
+): string {
   if (!hasComposerChips(text)) return text
   let wire = ''
   let afterToken = false
+  let afterBlock = false
   for (const segment of composerChipSegments(text)) {
+    if (segment.type === 'chip' && segment.kind === 'browser' && !commentWords) {
+      const comment = browserComment(segment.commentId!)
+      const block = comment ? browserCommentBlock(comment, options.images !== false) : segment.name
+      wire = `${wire.trimEnd()}${wire.trim() ? '\n\n' : ''}${block}\n\n`
+      afterToken = false
+      afterBlock = true
+      continue
+    }
     if (segment.type === 'chip') {
       if (wire !== '' && !opensToken(wire.at(-1)!)) wire += ' '
-      wire += segment.token
+      wire +=
+        segment.kind === 'browser'
+          ? (browserComment(segment.commentId!)?.comment ?? segment.name)
+          : segment.token
       afterToken = true
+      afterBlock = false
       continue
     }
     const plain = segment.text.replace(FRAGMENT, '')
     if (plain === '') continue
     if (afterToken && !closesToken(plain)) wire += ' '
-    wire += plain
+    wire += afterBlock ? plain.trimStart() : plain
     afterToken = false
+    afterBlock = false
   }
-  return wire
+  return afterBlock ? wire.trimEnd() : wire
+}
+
+/** Screenshots of the comments this draft still holds: a deleted chip takes its image along. */
+export function composerBrowserImages(text: string): string[] {
+  return composerChips(text).flatMap((chip) => {
+    const image = chip.commentId ? browserComment(chip.commentId)?.image : undefined
+    return image ? [image] : []
+  })
 }
 
 /** Whitespace, or an opening bracket or quote, may sit right before a token. */
@@ -273,13 +333,14 @@ export function composerChipTokens(text: string): ReadonlySet<string> {
 /**
  * The draft without its skill and MCP server chips, each with the space typed
  * after it. Skills and servers belong to the provider and project they were
- * picked for; command chips stay, as typed commands always did.
+ * picked for; command chips stay, as typed commands always did, and a browser
+ * comment stays because it belongs to a page, and any provider can act on it.
  */
 export function composerTextWithoutPicks(text: string): string {
   let kept = ''
   let position = 0
   for (const chip of composerChips(text)) {
-    if (chip.kind === 'command') continue
+    if (chip.kind === 'command' || chip.kind === 'browser') continue
     kept += text.slice(position, chip.start)
     position = text[chip.end] === ' ' ? chip.end + 1 : chip.end
   }

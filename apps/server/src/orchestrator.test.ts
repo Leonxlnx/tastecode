@@ -11,6 +11,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
@@ -431,12 +432,17 @@ const quietServices = {
 
 /** Codex's control process would start the installed CLI; this one has nothing to report. */
 class QuietCodexControl extends EventEmitter implements CodexControlAdapter {
+  readonly #models: readonly Model[]
+  constructor(models: readonly Model[] = []) {
+    super()
+    this.#models = models
+  }
   async start(): Promise<void> {}
   async dispose(): Promise<void> {}
   onUsageChanged(): void {}
   account = signedOut
   async listModels(): Promise<Model[]> {
-    return []
+    return [...this.#models]
   }
   async listMcpServers(): Promise<McpServer[]> {
     return []
@@ -529,6 +535,8 @@ function harness(
       })),
   )
 
+  /** What every provider's model list reports. */
+  const models: Model[] = []
   const runtimeFor = (provider: ProviderId): ProviderRuntime => ({
     async start(workspacePath, options) {
       startedIn.push(workspacePath)
@@ -551,7 +559,7 @@ function harness(
       }
     },
     async listModels() {
-      return []
+      return models
     },
     ...(provider === 'codex' || provider === 'grok'
       ? {
@@ -620,13 +628,14 @@ function harness(
         return [provider, { ...quiet, ...providerServices?.[provider] }]
       }),
     ),
-    createCodex: () => new QuietCodexControl(),
+    createCodex: () => new QuietCodexControl(models),
     ...(worktreeRoot ? { worktreeRoot } : {}),
     ...(defaultSkillsRoot ? { defaultSkillsRoot } : {}),
   })
 
   return {
     store,
+    models,
     sessions,
     received,
     sideReceived,
@@ -3788,7 +3797,11 @@ describe('provider-neutral design briefing', () => {
         expect(session.sent[1]).toContain('restrictions have ended')
         expect(session.sent[1]).not.toContain('must contain only the phase result')
         expect(session.sent[1]).not.toContain('<selected-reference-workflow')
-        expect(session.sentAttachments[1]).toEqual([reference])
+        // The briefing turn already gave the provider the reference; it is named, not sent again.
+        expect(session.sentAttachments[1]).toEqual([])
+        expect(session.sent[1]).toContain(
+          `attached earlier in this chat and still apply unchanged; they are not attached again: ${path.basename(reference)}.`,
+        )
         expect(session.sentOptions[1]).toEqual(options)
         session.emit(turnStarted(thread.id, 'answer'))
         session.emit(userMessage('internal-prompt', session.sent[1]!, 'answer', 'started'))
@@ -5427,7 +5440,12 @@ describe('provider-neutral design briefing', () => {
       const appScreen = dashboard && APP_SCREENS_ENABLED && !DASHBOARD_REFERENCES_ENABLED
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
       const referencePath = path.join(workspace, 'reference-home.png')
-      writeFileSync(referencePath, 'reference image bytes')
+      // One run carries a phone-sized reference, the size that overflowed Codex's request (#2240).
+      const largeReference = provider === 'codex' && !dashboard
+      writeFileSync(
+        referencePath,
+        largeReference ? Buffer.alloc(10 * 1024 * 1024) : 'reference image bytes',
+      )
       const { orchestrator, sessions, received, store, capturePreview } = harness()
       const stopCount = previewStops.count
       try {
@@ -5579,7 +5597,7 @@ describe('provider-neutral design briefing', () => {
         expect(brief.explicitAnswers).toEqual([])
         expect(sessions[0]?.userInputs).toHaveLength(1)
         expect(sessions[0]?.sent[1]).toContain('Brand phase')
-        expect(sessions[0]?.sentAttachments[1]).toEqual([referencePath])
+        expect(sessions[0]?.sentAttachments[1]).toEqual([])
 
         expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false)
         expect(
@@ -5637,8 +5655,7 @@ describe('provider-neutral design briefing', () => {
           expect(sessions[0]?.sent[2]).not.toContain('normally plan at least eight')
         }
         expect(sessions[0]?.sent[2]).toContain('user-reference-1')
-        expect(sessions[0]?.sentAttachments[2]?.[0]).toBe(referencePath)
-        expect(sessions[0]?.sentAttachments[2]).toEqual([referencePath])
+        expect(sessions[0]?.sentAttachments[2]).toEqual([])
 
         sessions[0]?.emit(
           message(
@@ -5693,7 +5710,7 @@ describe('provider-neutral design briefing', () => {
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(4))
         expect(sessions[0]?.sent[3]).toContain('Asset phase')
-        expect(sessions[0]?.sentAttachments[3]).toEqual([referencePath])
+        expect(sessions[0]?.sentAttachments[3]).toEqual([])
 
         sessions[0]?.emit(message(JSON.stringify({ version: 1, assets: [] }), 's1-turn'))
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
@@ -5706,7 +5723,7 @@ describe('provider-neutral design briefing', () => {
           expect(sessions[0]?.sent[4]).toContain('DASHBOARD INTERACTION AND MOTION')
           expect(sessions[0]?.sent[4]).not.toContain('<reference-reveal-source>')
         }
-        expect(sessions[0]?.sentAttachments[4]).toEqual([referencePath])
+        expect(sessions[0]?.sentAttachments[4]).toEqual([])
         mkdirSync(path.join(workspace, 'src'))
         writeFileSync(
           path.join(workspace, 'src', 'page.tsx'),
@@ -5749,8 +5766,11 @@ describe('provider-neutral design briefing', () => {
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(7))
         expect(sessions[0]?.sent[6]).toContain('visual Review phase')
         if (appScreen) expect(sessions[0]?.sent[6]).toContain('DASHBOARD INTERACTION AND MOTION')
-        expect(sessions[0]?.sentAttachments[6]).toHaveLength(3)
-        expect(sessions[0]?.sentAttachments[6]).toContain(referencePath)
+        // Only the new screenshots go out; the provider already holds the reference.
+        expect(sessions[0]?.sentAttachments[6]).toEqual([
+          path.join(os.tmpdir(), '1440x1000.png'),
+          path.join(os.tmpdir(), '390x844.png'),
+        ])
         sessions[0]?.emit(
           message(
             JSON.stringify({
@@ -5775,13 +5795,10 @@ describe('provider-neutral design briefing', () => {
         expect(sessions[0]?.sent[7]).toContain('repair attempt 1 of 2')
         if (appScreen) expect(sessions[0]?.sent[7]).toContain('DASHBOARD INTERACTION AND MOTION')
         expect(sessions[0]?.sent[7]).toContain('<screenshots>')
-        expect(sessions[0]?.sentAttachments[7]).toHaveLength(3)
-        expect(sessions[0]?.sentAttachments[7]).toContain(referencePath)
-        expect(sessions[0]?.sentAttachments[7]).toEqual(
-          expect.arrayContaining([
-            path.join(os.tmpdir(), '1440x1000.png'),
-            path.join(os.tmpdir(), '390x844.png'),
-          ]),
+        // Repair works from the screenshots Review already sent.
+        expect(sessions[0]?.sentAttachments[7]).toEqual([])
+        expect(sessions[0]?.sent[7]).toContain(
+          `not attached again: ${path.join(os.tmpdir(), '1440x1000.png')}, ${path.join(os.tmpdir(), '390x844.png')}, reference-home.png. If you no longer have them after a context compaction, open them from these paths.`,
         )
         sessions[0]?.emit(
           message(
@@ -5818,12 +5835,10 @@ describe('provider-neutral design briefing', () => {
             ),
           ).toBe(true),
         )
-        // Qualification and briefing run fast; every phase after the
-        // validated brief keeps the user's requested effort.
-        expect(sessions[0]?.sentOptions).toEqual([
-          ...Array.from({ length: 1 }, () => ({ model, effort: 'low' })),
-          ...Array.from({ length: 8 }, () => ({ model, effort: 'xhigh' })),
-        ])
+        // Every phase, the briefing included, keeps the user's requested effort (#2242).
+        expect(sessions[0]?.sentOptions).toEqual(
+          Array.from({ length: 9 }, () => ({ model, effort: 'xhigh' })),
+        )
         expect(readdirSync(path.join(workspace, '.taste')).sort()).toEqual([
           ...(appScreen ? ['app-kit'] : []),
           'assets.json',
@@ -5835,6 +5850,15 @@ describe('provider-neutral design briefing', () => {
         expect(store.designRun(thread.id)).toBeUndefined()
         expect(previewStops.count).toBe(stopCount)
         expect(capturePreview).toHaveBeenCalledTimes(2)
+        // The provider sends every image of the chat with each request, so each image goes out once.
+        const attached = sessions[0]!.sentAttachments.flat()
+        expect(attached.filter((file) => file === referencePath)).toHaveLength(1)
+        if (largeReference) {
+          const encoded = attached
+            .filter((file) => existsSync(file))
+            .reduce((total, file) => total + Math.ceil(statSync(file).size / 3) * 4, 0)
+          expect(encoded).toBeLessThan(64 * 1024 * 1024)
+        }
         expect(
           JSON.parse(readFileSync(path.join(workspace, '.taste', 'review.json'), 'utf8')),
         ).toMatchObject({ verdict: 'pass', findings: [] })
@@ -6141,7 +6165,14 @@ describe('provider-neutral design briefing', () => {
       session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
       await vi.waitFor(() => expect(session.sent).toHaveLength(3))
       expect(session.sent[2]).toContain('Page Blueprint phase')
-      expect(session.sentAttachments[2]).toEqual(Object.values(images))
+      // Page adds only the deck images Brand did not show; Brand's are named instead.
+      const brandImages = [images.hero, images.heroMobile, images.about, images.social]
+      expect(session.sentAttachments[2]).toEqual(
+        Object.values(images).filter((image) => !brandImages.includes(image)),
+      )
+      expect(session.sent[2]).toContain(
+        `not attached again: ${brandImages.map((image) => path.basename(image)).join(', ')}.`,
+      )
       for (const id of ['b-faq', 'a-footer']) expect(session.sent[2]).toContain(`"id": "${id}"`)
       expect(session.sent[2]).toContain(anchorLanguage)
     } finally {
@@ -7206,6 +7237,63 @@ describe('persisted threads', () => {
               (event.type === 'item.delta' && event.itemId === 'internal-brand-prompt'),
           ),
       ).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('runs a Design phase at the nearest effort the model lists', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-effort-'))
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'design-effort',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Design effort',
+    })
+    writeDesignBrief(workspace, {
+      originalRequest: 'Build a studio site.',
+      subject: 'Studio',
+      pageType: 'Marketing site',
+      scope: 'Single page',
+      primaryGoal: 'Generate enquiries',
+      audience: 'Prospective clients',
+      offer: 'Design services',
+      primaryAction: 'Start a project',
+      requiredContent: [],
+      constraints: [],
+      brandInputs: [],
+      creativeControl: 'Agent-led',
+      explicitAnswers: [],
+      assumptions: [],
+      unresolved: [],
+    })
+    store.setDesignRun('design-effort', {
+      approvedBrief: readDesignBrief(workspace),
+      workspacePath: workspace,
+      originalRequest: 'Build a studio site.',
+      // Saved while another model was chosen; this one offers no "xhigh".
+      options: { model: 'web-model', effort: 'xhigh' },
+      phase: 'brand',
+      askedQuestions: false,
+      finalAsked: false,
+      explicitAnswers: [],
+    })
+    const { orchestrator, sessions, models } = harness(undefined, store)
+    models.push({
+      id: 'web-model',
+      displayName: 'Web model',
+      isDefault: true,
+      reasoningEfforts: ['medium', 'high'],
+    } as Model)
+    try {
+      await orchestrator.listModels('codex')
+      await orchestrator.submitTurn('design-effort', 'Next.')
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+      expect(sessions[0]?.sentOptions[0]).toEqual({ model: 'web-model', effort: 'high' })
     } finally {
       await orchestrator.disposeAll()
       store.close()
