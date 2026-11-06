@@ -9000,6 +9000,19 @@ describe('sidebar inbox lifecycle', () => {
     await orchestrator.disposeAll()
   })
 
+  it('archives a chat the server already settled for inactivity', async () => {
+    const { orchestrator, store } = harness()
+    store.addProject('/repo')
+    store.addThread({ id: 'old', provider: 'codex', projectPath: '/repo', title: 'Old' })
+    store.settleThread('old', 'inactivity', 5)
+
+    expect(orchestrator.settleThread('old')).toMatchObject({ state: 'settled', reason: 'manual' })
+    expect(store.thread('old')?.lifecycle).toMatchObject({ state: 'settled', reason: 'manual' })
+    // Archiving it again is nothing to do, not an error.
+    expect(orchestrator.settleThread('old')).toMatchObject({ state: 'settled', reason: 'manual' })
+    await orchestrator.disposeAll()
+  })
+
   it('supports every manual transition and rejects hidden active work', async () => {
     const { orchestrator, sessions, store } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
