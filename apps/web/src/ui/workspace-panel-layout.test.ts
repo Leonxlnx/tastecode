@@ -209,7 +209,8 @@ describe('workspace panel layout', () => {
     )
     expect(css).toMatch(/@keyframes workspace-tabs-fade \{\s*to \{\s*--workspace-tabs-fade: 32px;/)
     expect(fade).toMatch(
-      /\.workspace-tabs \{[^}]*mask-image: linear-gradient\(to right, transparent, #000 var\(--workspace-tabs-fade\)\);/,
+      // Clear for the first quarter, so a tab cut at the edge is hidden, then in over a tab's width.
+      /\.workspace-tabs \{[^}]*mask-image: linear-gradient\(\s*to right,\s*transparent calc\(var\(--workspace-tabs-fade\) \/ 4\),\s*#000 calc\(var\(--workspace-tabs-fade\) \* 1\.25\)\s*\);/,
     )
     // The shorthand resets the timeline, so the timeline has to follow it.
     expect(fade).toMatch(
