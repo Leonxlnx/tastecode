@@ -72,7 +72,9 @@ describe('radius system', () => {
     expect(sessionSearchCss).toMatch(
       /\.session-search__panel \{[^}]*width: min\(520px, 100%\);[^}]*border-radius: var\(--r-panel\)/s,
     )
-    expect(inboxCss).toMatch(/\.inbox-card \{[^}]*border-radius: var\(--r-lg\)/s)
+    expect(inboxCss).toMatch(
+      /\.inbox-card,\s*\.inbox-shelf__row \{[^}]*border-radius: var\(--r-md\)/s,
+    )
     expect(commandPaletteCss).toMatch(
       /\.command-palette__panel \{[^}]*--r-popup-item: var\(--r-lg\);[^}]*border-radius: var\(--r-panel\)/s,
     )

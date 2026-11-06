@@ -477,6 +477,7 @@ function reconcileServerSession(
   const pinned = snapshot.pinned ?? false
   const unread = snapshot.unread ?? false
   const worktreeBranch = snapshot.worktreeBranch || undefined
+  const image = snapshot.image || undefined
   if (
     current?.title === snapshot.title &&
     current.provider === snapshot.provider &&
@@ -490,7 +491,8 @@ function reconcileServerSession(
     sameLifecycle &&
     current.unread === unread &&
     current.pinned === pinned &&
-    current.worktreeBranch === worktreeBranch
+    current.worktreeBranch === worktreeBranch &&
+    current.image === image
   ) {
     return current
   }
@@ -509,6 +511,7 @@ function reconcileServerSession(
     unread,
     pinned,
     ...(worktreeBranch ? { worktreeBranch } : {}),
+    ...(image ? { image } : {}),
   }
 }
 

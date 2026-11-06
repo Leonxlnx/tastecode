@@ -244,12 +244,18 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(/\.sess__status-dot\.is-success \{[^}]*background: var\(--success\);/s)
     expect(appCss).toMatch(/\.sess__status-dot\.is-failed \{[^}]*background: var\(--error\);/s)
     expect(appCss).toMatch(/\.sess__status-dot\.is-attention \{[^}]*background: var\(--warning\);/s)
-    expect(inboxCss).toMatch(/\.inbox-status\.is-done \{[^}]*color: var\(--success\);/s)
-    expect(inboxCss).toMatch(/\.inbox-status\.is-failed \{[^}]*color: var\(--error\);/s)
+    // Done has no ring, so its word carries the green; failed and waiting
+    // threads carry their hue once, on the ring, with the word in ink.
+    expect(inboxCss).toMatch(/\.inbox-state\.is-done \{[^}]*color: var\(--success\);/s)
     expect(inboxCss).toMatch(
-      /\.inbox-status\.is-attention,\s*\.inbox-status\.is-woke \{[^}]*color: var\(--warning\);[^}]*background: color-mix\(in oklab, var\(--warning\) 10%, transparent\);/s,
+      /\.inbox-state\.is-attention,\s*\.inbox-state\.is-failed \{[^}]*color: var\(--text\);/s,
     )
-    expect(inboxCss).toMatch(/\.inbox-card__woke \{[^}]*color: var\(--warning\);/s)
+    expect(inboxCss).toMatch(
+      /\.thread-tile\.is-failed \.thread-tile__ring \{[^}]*color: var\(--error\);/s,
+    )
+    expect(inboxCss).toMatch(
+      /\.thread-tile\.is-attention \.thread-tile__ring \{[^}]*color: var\(--warning\);/s,
+    )
   })
 
   it('keeps status colors independent of accent presets and custom accents', () => {

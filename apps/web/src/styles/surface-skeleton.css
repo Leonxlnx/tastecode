@@ -24,77 +24,95 @@
 
 .inbox-skeleton-toolbar {
   display: grid;
-  gap: 5px;
-  padding: 10px 10px 9px;
+  gap: 2px;
+  padding: 10px 4px 8px 10px;
   border-bottom: 1px solid var(--line);
 }
 
-.inbox-skeleton-toolbar > .skeleton,
-.inbox-skeleton-toolbar__projects > .skeleton {
+.inbox-skeleton-toolbar__primary {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+}
+
+.inbox-skeleton-toolbar__primary > .skeleton,
+.inbox-skeleton-toolbar > .skeleton {
   border-radius: var(--r-md);
 }
 
 .inbox-skeleton-toolbar__search {
-  height: 32px;
+  flex: 1;
+  height: 28px;
+  margin-right: 6px;
 }
 
-.inbox-skeleton-toolbar__new {
-  height: 34px;
-  margin-top: -2px;
-}
-
-.inbox-skeleton-toolbar__projects {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 96px;
-  gap: 5px;
-  margin-top: 1px;
-}
-
-.inbox-skeleton-toolbar__scope,
-.inbox-skeleton-toolbar__add {
-  height: 29px;
+.inbox-skeleton-toolbar__icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0 6px;
 }
 
 .inbox-skeleton-toolbar__pulls {
-  height: 30px;
+  height: 34px;
 }
 
 .inbox-skeleton-body {
-  padding-top: 8px;
+  padding-top: 4px;
 }
 
 .inbox-skeleton {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .inbox-skeleton__heading {
   height: 7px;
-  margin: 6px 8px 7px;
+  margin: 18px 12px 10px;
 }
 
+/* The final row's pitch: 10px padding, a 20px title line, 2px, an 18px
+   second line, 10px padding; the tile spans both lines. */
 .inbox-skeleton__card {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 9px;
-  min-height: 76px;
-  padding: 8px 10px 9px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 2px;
+  align-items: center;
+  min-height: 60px;
+  padding: 10px 10px 10px 12px;
 }
 
-.inbox-skeleton__topline {
+.inbox-skeleton__card > .inbox-skeleton__tile {
+  grid-row: 1 / span 2;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-md);
+}
+
+.inbox-skeleton__line {
+  grid-column: 2;
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   gap: 8px;
+  min-width: 0;
+  height: 20px;
 }
 
-.inbox-skeleton__topline > .skeleton {
-  height: 7px;
+.inbox-skeleton__line + .inbox-skeleton__line {
+  height: 18px;
 }
 
 .inbox-skeleton__title {
   height: 9px;
+}
+
+.inbox-skeleton__time {
+  flex: none;
+  height: 7px;
+  margin-left: auto;
 }
 
 .inbox-skeleton__meta {
@@ -631,6 +649,7 @@
    animation that can render inside .shell__body is listed here;
    covered-shell.test.ts fails on one that is not. */
 .shell__body[data-covered] .sess__spinner,
+.shell__body[data-covered] .thread-tile.is-working .thread-tile__ring,
 .shell__body[data-covered] .spinner,
 .shell__body[data-covered] .is-spinning,
 .shell__body[data-covered] .skeleton::after,

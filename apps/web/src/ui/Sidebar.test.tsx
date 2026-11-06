@@ -240,7 +240,10 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByText('Loading threads…')).toBeTruthy()
     expect(document.querySelector('.inbox-skeleton-toolbar')).not.toBeNull()
 
-    expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
+    // Cold transforms of the lazy module can outlast Testing Library's default second.
+    expect(
+      await screen.findByRole('textbox', { name: 'Search threads' }, { timeout: 5_000 }),
+    ).toBeTruthy()
     expect(document.querySelector('.inbox-skeleton-toolbar')).toBeNull()
     expect(screen.getByText('Loading threads…')).toBeTruthy()
   })
@@ -733,8 +736,8 @@ describe('Sidebar chat actions', () => {
 
     expect(screen.queryByRole('button', { name: /Switch to V[12]/ })).toBeNull()
     expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'New chat' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'New thread' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Add project' })).toBeTruthy()
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
     const accountTrigger = screen.getByRole('button', { name: 'Account' })
     expect(accountTrigger.querySelector('.account__usage-value')?.textContent).toBe('15% left')
@@ -751,7 +754,7 @@ describe('Sidebar chat actions', () => {
     expect(onOpenSettings).toHaveBeenLastCalledWith()
     expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
     onOpenSettings.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New thread' }))
     expect(onAddProject).toHaveBeenCalledOnce()
     fireEvent.click(accountTrigger)
     expect(accountTrigger.getAttribute('aria-expanded')).toBe('true')

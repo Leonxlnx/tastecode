@@ -263,6 +263,7 @@ import { useWindowChrome } from './window-chrome.js'
 import { AppBackground } from './ui/AppBackground.js'
 import { backdropColorScheme } from './theme-colors.js'
 import { adoptedSelection, shareSavedSetups, sharedSetup } from './thread-settings.js'
+import { readThreadImage } from './thread-image.js'
 import {
   readProfileIdentityPreferences,
   writeProfileIdentityPreferences,
@@ -6438,6 +6439,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     [beginSession],
   )
   const [sidebarMutations] = useState(() => new OptimisticMutations(reportError))
+  const sidebarImageReads = useRef(new Map<string, object>())
   useEffect(
     () =>
       transport.onState((state) => {
@@ -6463,7 +6465,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     [transport],
   )
   const recoverSidebarSession = useCallback(
-    async (id: string, field: 'title' | 'pinned') => {
+    async (id: string, field: 'title' | 'pinned' | 'image') => {
       const { projects: list } = await transport.request('projects.list', {})
       const saved = list.flatMap((project) => project.sessions).find((session) => session.id === id)
       return () =>
@@ -6572,6 +6574,47 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       )
     },
     [recoverSidebarSession, sidebarMutations, transport],
+  )
+  /**
+   * Gives a chat a picture or, with no file, takes it away. The file is read
+   * and re-encoded here, so only a small PNG reaches the server.
+   */
+  const setSidebarSessionImage = useCallback(
+    async (id: string, file: File | undefined) => {
+      const read = {}
+      sidebarImageReads.current.set(id, read)
+      let image: string | undefined
+      if (file) {
+        try {
+          image = await readThreadImage(file)
+        } catch (error) {
+          if (sidebarImageReads.current.get(id) === read) {
+            sidebarImageReads.current.delete(id)
+            reportError(error instanceof Error ? error.message : String(error))
+          }
+          return
+        }
+      }
+      // Decoding can finish out of order; the user's latest choice wins.
+      if (sidebarImageReads.current.get(id) !== read) return
+      sidebarImageReads.current.delete(id)
+      const pending = pendingSession.current
+      const threadId = pending?.id === id ? pending.threadId : id
+      // A chat still starting has no thread to keep the picture on yet.
+      if (!threadId || threadId.startsWith('pending:')) return
+      setProjects((current) =>
+        updateSession(current, id, (session) => {
+          const { image: _previous, ...rest } = session
+          return image ? { ...rest, image } : rest
+        }),
+      )
+      void sidebarMutations.run(
+        `thread:${threadId}:image`,
+        () => transport.request('thread.setImage', { threadId, image: image ?? null }),
+        () => recoverSidebarSession(threadId, 'image'),
+      )
+    },
+    [recoverSidebarSession, reportError, sidebarMutations, transport],
   )
   const deleteSidebarSession = useCallback(
     (id: string) => void archiveSession(id),
@@ -7771,6 +7814,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           onTogglePin={toggleSidebarProjectPin}
           onRenameSession={renameSidebarSession}
           onToggleSessionPin={toggleSidebarSessionPin}
+          onSetSessionImage={setSidebarSessionImage}
           onDeleteSession={deleteSidebarSession}
           onMarkSessionRead={markSidebarSessionRead}
           onArchiveSession={archiveSidebarChat}

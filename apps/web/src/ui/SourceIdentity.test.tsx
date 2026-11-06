@@ -29,4 +29,18 @@ describe('SourceIdentity', () => {
     expect(identity?.classList.contains('source-identity--compact')).toBe(true)
     expect(identity?.querySelector('svg')?.getAttribute('width')).toBe('11')
   })
+
+  it('can show the mark alone while the label stays for assistive tech and the tooltip', () => {
+    render(
+      <SourceIdentity
+        presentation={{ label: 'Claude Code', mark: 'anthropic' }}
+        density="compact"
+        label="hidden"
+      />,
+    )
+
+    const label = screen.getByText('Claude Code')
+    expect(label.classList.contains('visually-hidden')).toBe(true)
+    expect(label.closest('.source-identity')?.getAttribute('title')).toBe('Claude Code')
+  })
 })
