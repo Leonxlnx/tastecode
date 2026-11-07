@@ -62,6 +62,7 @@ import {
   IconBlocks as Blocks,
   IconBug as Bug,
   IconDatabase as Database,
+  IconFileImport as FileImport,
   IconDeviceMobile as Smartphone,
   IconInfoCircle as Info,
   IconPackages as Boxes,
@@ -203,6 +204,7 @@ import { sameAccount } from '../usage-summary-state.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './model-selector-utils.js'
+import { ImportSettings } from './ImportSettings.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderRow, ProviderRowSkeleton, type ProviderAction } from './ProviderRow.js'
 import { ProviderExecutablePath, useProviderExecutablePaths } from './ProviderExecutablePath.js'
@@ -261,6 +263,7 @@ export type SettingsSection =
   | 'phone'
   | 'appearance'
   | 'keybinds'
+  | 'import'
   | 'data'
   | 'debug'
   | 'about'
@@ -683,6 +686,12 @@ function SettingsComponent(props: {
               />
             ) : null}
             <SettingsNavItem
+              active={section === 'import'}
+              icon={<FileImport size={15} aria-hidden />}
+              label="Import chats"
+              onClick={() => setSection('import')}
+            />
+            <SettingsNavItem
               active={section === 'data'}
               icon={<Database size={15} aria-hidden />}
               label="Data & privacy"
@@ -765,6 +774,9 @@ function SettingsComponent(props: {
                 onChange={props.onKeybindingChange ?? noopKeybindingChange}
                 onReset={props.onKeybindingsReset ?? noop}
               />
+            ) : null}
+            {section === 'import' ? (
+              <ImportSettings transport={props.transport} onViewChats={props.onClose} />
             ) : null}
             {section === 'data' ? <DataSettings {...props} /> : null}
             {section === 'debug' ? (
