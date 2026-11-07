@@ -51,6 +51,8 @@ export type ChatImportChat = z.infer<typeof ChatImportChatSchema>
 export const ChatImportFolderSchema = z.object({
   path: z.string(),
   name: z.string(),
+  /** `path` as a person reads it, with `~` for the home folder. */
+  label: z.string(),
   /** Already a project, so importing adds no new one. */
   isProject: z.boolean(),
   /** Gone from this computer. Its chats can be read but not continued in place. */

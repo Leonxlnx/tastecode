@@ -20,7 +20,9 @@ describe('chat import contracts', () => {
           imported: false,
         },
       ],
-      folders: [{ path: '/work/site', name: 'site', isProject: false, missing: false }],
+      folders: [
+        { path: '/work/site', name: 'site', label: '/work/site', isProject: false, missing: false },
+      ],
     })
     expect(scan.chats[0]?.alsoIn).toEqual(['codex'])
     expect(scan.job).toBeUndefined()
