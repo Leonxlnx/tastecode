@@ -807,6 +807,23 @@ describe('Sidebar chat actions', () => {
     )
     expect(onOpenSettings).toHaveBeenCalledTimes(2)
     expect(onOpenSettings).toHaveBeenLastCalledWith()
+
+    // The usage button beside the gear opens the plan limits as large bars,
+    // and its foot goes on to the full history in Settings.
+    onOpenSettings.mockClear()
+    const usageTrigger = screen.getByRole('button', { name: 'Usage' })
+    expect(usageTrigger.querySelector('svg')).not.toBeNull()
+    fireEvent.click(usageTrigger)
+    const usageDialog = screen.getByRole('dialog', { name: 'Usage' })
+    expect(usageDialog.classList.contains('menu--usage')).toBe(true)
+    const usageBar = await within(usageDialog).findByRole('progressbar', {
+      name: 'Codex 7 days left',
+    })
+    expect(usageBar.getAttribute('aria-valuenow')).toBe('15')
+    expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(within(usageDialog).getByRole('button', { name: 'Usage history' }))
+    expect(onOpenSettings).toHaveBeenLastCalledWith('usage')
+    expect(usageTrigger.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('offers Archive on hover and keeps rename and delete in the row menu', () => {

@@ -92,6 +92,7 @@ import { USAGE_LOW_PERCENT } from '../usage-limits-state.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
+import { MaterialIcon } from './MaterialIcon.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import type { InboxActions } from './InboxSidebar.js'
 import { ProviderIcon } from './ProviderIcon.js'
@@ -114,6 +115,17 @@ const loadAccountLimits = (): Promise<LazyAccountLimitsModule> =>
     return { default: module.AccountLimits }
   }))
 const AccountLimits = lazy(loadAccountLimits)
+
+type UsagePopoverComponent = (typeof import('./UsagePopover.js'))['UsagePopover']
+let usagePopoverPromise: Promise<{ default: UsagePopoverComponent }> | undefined
+let resolvedUsagePopover: UsagePopoverComponent | undefined
+const loadUsagePopover = (): Promise<{ default: UsagePopoverComponent }> =>
+  (usagePopoverPromise ??= import('./UsagePopover.js').then((module) => {
+    resolvedUsagePopover = module.UsagePopover
+    return { default: module.UsagePopover }
+  }))
+const UsagePopover = lazy(loadUsagePopover)
+const NO_USAGE_STATES: AccountLimitsState[] = []
 
 function AccountLimitsLoading(props: { states: AccountLimitsState[] }) {
   const panel = useRef<HTMLElement>(null)
@@ -301,7 +313,7 @@ function SidebarComponent(props: {
   onOpenSearch: (projectPath?: string) => void
   pullRequestsActive?: boolean | undefined
   onOpenPullRequests?: (() => void) | undefined
-  onOpenSettings: (section?: 'profile') => void
+  onOpenSettings: (section?: 'profile' | 'usage') => void
   /** Present only when this build can send feedback. */
   onSendFeedback?: (() => void) | undefined
 }) {
@@ -1058,9 +1070,46 @@ function SidebarComponent(props: {
                 )
               }}
             </Menu>
+            {/* Usage sits beside the gear as its twin: one press opens the plan
+                limits as large bars, without going through the account popup. */}
+            <div className="account-card__usage">
+              <Menu
+                drop="up"
+                gap={8}
+                align="right"
+                label="Usage"
+                triggerTitle="Usage"
+                triggerClassName="account-card__icon"
+                panelClassName="menu--usage"
+                panelRole="dialog"
+                panelLabel="Usage"
+                onTriggerIntent={() => void loadUsagePopover()}
+                trigger={() => <MaterialIcon name="data_usage" size={18} />}
+              >
+                {(close) => {
+                  const RenderedUsagePopover = resolvedUsagePopover ?? UsagePopover
+                  return (
+                    <Suspense fallback={null}>
+                      <RenderedUsagePopover
+                        states={props.usageStates ?? NO_USAGE_STATES}
+                        accountLabel={props.accountLabel}
+                        onShow={props.onShowUsage}
+                        onRetry={props.onRetryUsage ?? noop}
+                        onRefresh={props.onRefreshUsage}
+                        onOpenHistory={() => {
+                          props.onOpenSettings('usage')
+                          closeOnNarrowViewport()
+                          close()
+                        }}
+                      />
+                    </Suspense>
+                  )
+                }}
+              </Menu>
+            </div>
             <button
               type="button"
-              className="account-card__settings"
+              className="account-card__settings account-card__icon"
               aria-label="Settings"
               title="Settings"
               aria-keyshortcuts={shortcutAria(keybindings.settings)}
@@ -1069,7 +1118,7 @@ function SidebarComponent(props: {
                 closeOnNarrowViewport()
               }}
             >
-              <Settings size={16} aria-hidden />
+              <MaterialIcon name="settings" size={18} />
             </button>
           </div>
           {isDesktop ? <AppUpdateNotice /> : null}
