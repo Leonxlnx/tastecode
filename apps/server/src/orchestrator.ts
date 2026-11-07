@@ -805,6 +805,8 @@ export class Orchestrator {
   /** Prompts on their way to each thread that have not started or queued yet. */
   #incomingSubmissions = new Map<string, Set<Promise<unknown>>>()
   #startingTurns = new Set<string>()
+  /** Each chat's last turn the user stopped, until its next turn starts. */
+  #userStoppedTurns = new Map<string, string>()
   /** The checkpoint each chat's latest turn started from, for agents that report no turn diff. */
   #turnStartSnapshots = new Map<string, { repoPath: string; commit: string }>()
   /** The files each chat's running turn reported changing, as the agent named them. */
@@ -3720,6 +3722,16 @@ export class Orchestrator {
     ) {
       return
     }
+    if (event.type === 'turn.started') this.#userStoppedTurns.delete(threadId)
+    // An agent reports the work the user stopped as failed once it has killed
+    // it, often after the turn ended ("runner pipe closed"). It was stopped.
+    if (
+      event.type === 'item.completed' &&
+      event.item.status === 'failed' &&
+      event.item.turnId === this.#userStoppedTurns.get(threadId)
+    ) {
+      event = { ...event, item: { ...event.item, status: 'started' } }
+    }
     let matchedStart: PendingTurnStart | undefined
     if (event.type === 'turn.started') {
       const acceptedStarts = this.#acceptedTurnStarts.get(threadId)
@@ -5127,6 +5139,7 @@ export class Orchestrator {
   #settleStoppedTurn(threadId: string, entry: AttachedThreadRuntime): SettlingStop | undefined {
     const turnId = this.#activeTurnIds.get(threadId)
     if (!turnId || this.#settlingStops.has(threadId)) return undefined
+    this.#userStoppedTurns.set(threadId, turnId)
     const stop: SettlingStop = {
       turnId,
       entry,
@@ -5147,7 +5160,10 @@ export class Orchestrator {
     try {
       // Stop ends the running turn only. A background sub-agent whose launching call already
       // completed keeps running in the live session, which reports how it ends.
-      open = this.#store.interruptedLifecycleEvents(threadId, { launchedSubagents: false })
+      open = this.#store.interruptedLifecycleEvents(threadId, {
+        launchedSubagents: false,
+        stoppedByUser: true,
+      })
     } catch (error) {
       this.#onLog(`Could not settle the stopped turn's open work: ${errorMessage(error)}`)
     }
