@@ -13347,6 +13347,88 @@ describe('live sessions', () => {
     expect(screen.queryByRole('button', { name: 'Remove reference.png' })).toBeNull()
   })
 
+  it('shows a chat starting in the sidebar from the send until Stop', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let rejectSend: ((reason: Error) => void) | undefined
+    // A chat that resumes first sends no event until its turn starts.
+    const pendingSend = new Promise((_, reject) => {
+      rejectSend = reject
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' ? pendingSend : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
+    await waitForInitialWorkspace()
+    expect(treeChatRow('Old chat').querySelector('.sess__spinner')).toBeNull()
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Write the README' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() =>
+      expect(treeChatRow('Old chat').querySelector('.sess__spinner')).not.toBeNull(),
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+    // The server answers the Stop at once and cancels the prompt seconds later.
+    await waitFor(() => expect(rpcCount('thread.interrupt')).toBe(1))
+    await act(async () => undefined)
+    expect(treeChatRow('Old chat').querySelector('.sess__spinner')).toBeNull()
+
+    await act(async () => {
+      rejectSend?.(new Error('turn cancelled while resuming'))
+    })
+    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe('Write the README'))
+    expect(treeChatRow('Old chat').querySelector('.sess__spinner')).toBeNull()
+  })
+
+  it('sets a chat row back when the server rejects its prompt', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let rejectSend: ((reason: Error) => void) | undefined
+    const pendingSend = new Promise((_, reject) => {
+      rejectSend = reject
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' ? pendingSend : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
+    await waitForInitialWorkspace()
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Not now' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() =>
+      expect(treeChatRow('Old chat').querySelector('.sess__spinner')).not.toBeNull(),
+    )
+
+    await act(async () => {
+      rejectSend?.(new Error('cannot start a turn while restoring a checkpoint'))
+    })
+    await waitFor(() => expect(treeChatRow('Old chat').querySelector('.sess__spinner')).toBeNull())
+  })
+
   it('puts a prompt stopped before its turn started back without an error', async () => {
     serverProjects = [
       {
