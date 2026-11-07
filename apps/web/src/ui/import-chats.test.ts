@@ -41,7 +41,7 @@ const scan = (chats: ChatImportChat[]): ChatImportScan => ({
 const view = (overrides = {}) => ({ source: ALL_SOURCES, query: '', archived: false, ...overrides })
 
 describe('import counts', () => {
-  it('counts what is left, once overall and for every source that saved it', () => {
+  it('counts what is left once each, so the figures add up to the total', () => {
     const counts = sourceCounts(
       scan([
         chat('one'),
@@ -51,7 +51,7 @@ describe('import counts', () => {
       ]),
       false,
     )
-    expect(Object.fromEntries(counts)).toEqual({ all: 2, codex: 2, 't3-code': 1 })
+    expect(Object.fromEntries(counts)).toEqual({ all: 2, codex: 1, 't3-code': 1 })
   })
 
   it('prints a zero for a source with nothing left instead of dropping it', () => {
@@ -88,9 +88,9 @@ describe('import folders', () => {
     expect(folderGroups(list, view({ query: 'nothing' }))).toEqual([])
   })
 
-  it('lists a chat under every source that saved it', () => {
+  it('lists a chat two apps saved under the app that names it', () => {
     const list = scan([chat('shared', { source: 't3-code', alsoIn: ['codex'] })])
-    expect(folderGroups(list, view({ source: 'codex' }))).toHaveLength(1)
+    expect(folderGroups(list, view({ source: 'codex' }))).toEqual([])
     expect(folderGroups(list, view({ source: 't3-code' }))).toHaveLength(1)
   })
 })

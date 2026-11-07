@@ -6769,6 +6769,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     },
   )
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  const openChatFromSettings = useCallback(
+    (threadId: string) => {
+      setSettingsOpen(false)
+      void selectSession(threadId)
+    },
+    [selectSession],
+  )
   // Settings covers the window with an opaque page. Once its fade-in has
   // finished, the app behind it cannot be seen, so the app's endless loops (a
   // working chat's spinner, the live activity row) pause until it closes
@@ -8229,6 +8236,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
               onReset={resetSettings}
               onForceOnboarding={forceOnboarding}
               onClose={closeSettings}
+              onOpenChat={openChatFromSettings}
             />
           </SurfaceErrorBoundary>
         </div>

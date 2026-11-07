@@ -16,24 +16,21 @@ export type ImportFolderGroup = {
   updatedAt: number
 }
 
-function inSource(chat: ChatImportChat, source: string): boolean {
-  return source === ALL_SOURCES || chat.source === source || !!chat.alsoIn?.includes(source)
-}
-
 function waiting(chat: ChatImportChat, archived: boolean): boolean {
   return !chat.imported && (archived || !chat.archived)
 }
 
-/** What is left to import per source, and over all of them. */
+/**
+ * What is left to import per source, and over all of them. A chat two apps saved
+ * counts once, under the app it is listed for, so the figures add up to the total.
+ */
 export function sourceCounts(scan: ChatImportScan, archived: boolean): Map<string, number> {
   const counts = new Map<string, number>([[ALL_SOURCES, 0]])
   for (const source of scan.sources) counts.set(source.id, 0)
   for (const chat of scan.chats) {
     if (!waiting(chat, archived)) continue
     counts.set(ALL_SOURCES, (counts.get(ALL_SOURCES) ?? 0) + 1)
-    for (const id of [chat.source, ...(chat.alsoIn ?? [])]) {
-      counts.set(id, (counts.get(id) ?? 0) + 1)
-    }
+    counts.set(chat.source, (counts.get(chat.source) ?? 0) + 1)
   }
   return counts
 }
@@ -48,7 +45,8 @@ export function folderGroups(scan: ChatImportScan, view: ImportView): ImportFold
   const folders = new Map(scan.folders.map((folder) => [folder.path, folder]))
   const groups = new Map<string, ImportFolderGroup>()
   for (const chat of scan.chats) {
-    if (!waiting(chat, view.archived) || !inSource(chat, view.source)) continue
+    if (!waiting(chat, view.archived)) continue
+    if (view.source !== ALL_SOURCES && chat.source !== view.source) continue
     const folder = folders.get(chat.folder)
     if (!folder) continue
     if (

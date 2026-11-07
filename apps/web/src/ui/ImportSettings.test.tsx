@@ -74,8 +74,8 @@ function client(scans: ChatImportScan[] | (() => ChatImportScan)) {
   }
 }
 
-function page(transport: Transport, onViewChats = () => {}) {
-  render(<ImportSettings transport={transport} onViewChats={onViewChats} />)
+function page(transport: Transport, onOpenChat: (threadId: string) => void = () => {}) {
+  render(<ImportSettings transport={transport} onOpenChat={onOpenChat} />)
 }
 
 const filter = async () => within(await screen.findByRole('radiogroup', { name: 'Filter by app' }))
@@ -175,7 +175,7 @@ describe('Import chats settings', () => {
     expect(screen.getByText(/A chat marked Copy/)).toBeTruthy()
   })
 
-  it('shows progress at its true ratio, then what happened and the way to the chats', async () => {
+  it('shows progress at its true ratio, then what happened and the way to a chat', async () => {
     const finished: ChatImportScan = {
       sources: [codex],
       chats: [chat('one', { imported: true }), chat('two', { imported: true })],
@@ -185,8 +185,8 @@ describe('Import chats settings', () => {
       { sources: [codex], chats: [chat('one'), chat('two')], folders },
       finished,
     ])
-    const onViewChats = vi.fn()
-    page(transport, onViewChats)
+    const onOpenChat = vi.fn()
+    page(transport, onOpenChat)
     await filter()
     fireEvent.click(screen.getByRole('checkbox', { name: /Select all 2 chats/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Import 2 chats' }))
@@ -212,12 +212,13 @@ describe('Import chats settings', () => {
         imported: 2,
         failed: 0,
         projects: ['/work/site'],
+        thread: 'external:codex:two',
       }),
     )
     await screen.findByText('Imported 2 chats, adding 1 project.')
     await screen.findByText('Every chat here is already in TasteCode.')
-    fireEvent.click(screen.getByRole('button', { name: 'View chats' }))
-    expect(onViewChats).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Open newest chat' }))
+    expect(onOpenChat).toHaveBeenCalledWith('external:codex:two')
   })
 
   it('says how many chats it could not read', async () => {
@@ -226,6 +227,24 @@ describe('Import chats settings', () => {
     await filter()
     act(() => push({ state: 'finished', done: 3, total: 3, imported: 2, failed: 1, projects: [] }))
     await screen.findByText(/Imported 2 chats\. 1 chat could not be read/)
+  })
+
+  it('says so when nothing at all could be read, with no chat to open', async () => {
+    const { transport, push } = client([{ sources: [codex], chats: [chat('one')], folders }])
+    page(transport)
+    await filter()
+    act(() => push({ state: 'finished', done: 2, total: 2, imported: 0, failed: 2, projects: [] }))
+    await screen.findByText('2 chats could not be read.')
+    expect(screen.queryByRole('button', { name: 'Open newest chat' })).toBeNull()
+  })
+
+  it('offers no Import when nothing is left to bring in', async () => {
+    const { transport } = client([
+      { sources: [codex], chats: [chat('one', { imported: true })], folders },
+    ])
+    page(transport)
+    await screen.findByText('Every chat here is already in TasteCode.')
+    expect(screen.queryByRole('button', { name: 'Import' })).toBeNull()
   })
 
   it('stops further choices while an import runs, also when it was started elsewhere', async () => {

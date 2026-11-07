@@ -47,7 +47,10 @@ function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }
 
-export function ImportSettings(props: { transport: Transport; onViewChats: () => void }) {
+export function ImportSettings(props: {
+  transport: Transport
+  onOpenChat: (threadId: string) => void
+}) {
   const { transport } = props
   const [scan, setScan] = useState<ChatImportScan>()
   const [failure, setFailure] = useState<string>()
@@ -167,7 +170,7 @@ export function ImportSettings(props: { transport: Transport; onViewChats: () =>
           onSelected={setSelected}
           onOpen={setOpen}
           onStart={(ids) => void start(ids)}
-          onViewChats={props.onViewChats}
+          onOpenChat={props.onOpenChat}
         />
       ) : null}
     </SettingsPage>
@@ -191,7 +194,7 @@ function ImportList(props: {
   onSelected: (selected: ReadonlySet<string>) => void
   onOpen: (open: ReadonlySet<string>) => void
   onStart: (ids: string[]) => void
-  onViewChats: () => void
+  onOpenChat: (threadId: string) => void
 }) {
   const { scan, selected, open, job } = props
   const searchId = useId()
@@ -210,6 +213,7 @@ function ImportList(props: {
   const running = job?.state === 'running'
   const failed = scan.sources.filter(({ state }) => state === 'failed')
   const copies = shown.some(({ continuation }) => continuation === 'copy')
+  const nothingLeft = !counts.get(ALL_SOURCES) && !job && !summary.chats
 
   if (!scan.sources.length) {
     return (
@@ -229,20 +233,6 @@ function ImportList(props: {
 
   return (
     <div className="import-list">
-      {job?.state === 'finished' ? (
-        <SettingsNotice
-          tone={job.failed ? 'error' : 'info'}
-          action={
-            job.imported ? (
-              <button className="set-button" type="button" onClick={props.onViewChats}>
-                View chats
-              </button>
-            ) : undefined
-          }
-        >
-          {finishedLine(job)}
-        </SettingsNotice>
-      ) : null}
       {props.startFailure ? (
         <SettingsNotice tone="error">{props.startFailure}</SettingsNotice>
       ) : null}
@@ -328,24 +318,26 @@ function ImportList(props: {
         </p>
       ) : null}
 
-      <ImportBar
-        job={job}
-        chats={summary.chats}
-        folders={summary.folders}
-        newProjects={summary.newProjects}
-        onStart={() => props.onStart(summary.ids)}
-      />
+      {nothingLeft ? null : (
+        <ImportBar
+          job={job}
+          chats={summary.chats}
+          folders={summary.folders}
+          newProjects={summary.newProjects}
+          onStart={() => props.onStart(summary.ids)}
+          onOpenChat={props.onOpenChat}
+        />
+      )}
     </div>
   )
 }
 
 function finishedLine(job: ChatImportJob): string {
+  const unread = job.failed ? `${plural(job.failed, 'chat')} could not be read.` : ''
+  if (!job.imported) return unread
   const projects = job.projects.length
-  const imported = `Imported ${plural(job.imported, 'chat')}`
   const added = projects ? `, adding ${plural(projects, 'project')}` : ''
-  return job.failed
-    ? `${imported}${added}. ${plural(job.failed, 'chat')} could not be read and stayed where they were.`
-    : `${imported}${added}.`
+  return `Imported ${plural(job.imported, 'chat')}${added}.${unread ? ` ${unread}` : ''}`
 }
 
 /** What is on this computer, and the list's filter: one figure per app. */
@@ -530,6 +522,7 @@ function FolderRow(props: {
               chat={chat}
               checked={selected.has(chat.id)}
               source={props.sources.get(chat.source)}
+              alsoIn={chat.alsoIn?.map((id) => props.sources.get(id)?.name ?? id)}
               now={props.now}
               disabled={props.disabled}
               onChange={() => props.onChange(toggled(selected, [chat]))}
@@ -545,6 +538,7 @@ function ChatRow(props: {
   chat: ChatImportChat
   checked: boolean
   source: ChatImportSource | undefined
+  alsoIn: string[] | undefined
   now: number
   disabled: boolean
   onChange: () => void
@@ -552,6 +546,7 @@ function ChatRow(props: {
   const { chat } = props
   const mark = sourceMark(props.source)
   const title = chat.title || 'Untitled chat'
+  const savedBy = [props.source?.name, ...(props.alsoIn ?? [])].filter(Boolean).join(' and ')
   const meta = [
     ...(chat.archived ? ['Archived'] : []),
     ...(chat.continuation === 'copy' ? ['Copy'] : []),
@@ -568,7 +563,7 @@ function ChatRow(props: {
           disabled={props.disabled}
           onChange={props.onChange}
         />
-        <span className="import-chat__mark" title={props.source?.name}>
+        <span className="import-chat__mark" title={savedBy}>
           {mark ? <ProviderIcon mark={mark} size={13} /> : null}
         </span>
         <span className="import-chat__title">{title}</span>
@@ -585,6 +580,7 @@ function ImportBar(props: {
   folders: number
   newProjects: number
   onStart: () => void
+  onOpenChat: (threadId: string) => void
 }) {
   const { job } = props
   if (job?.state === 'running') {
@@ -606,6 +602,23 @@ function ImportBar(props: {
             style={{ transform: `scaleX(${job.total ? job.done / job.total : 0})` }}
           />
         </span>
+      </div>
+    )
+  }
+  if (job?.state === 'finished' && !props.chats) {
+    const thread = job.thread
+    return (
+      <div className="import-bar" role="status">
+        <span className="import-bar__summary">{finishedLine(job)}</span>
+        {thread ? (
+          <button
+            className="set-button set-button--primary"
+            type="button"
+            onClick={() => props.onOpenChat(thread)}
+          >
+            Open newest chat
+          </button>
+        ) : null}
       </div>
     )
   }

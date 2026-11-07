@@ -438,6 +438,8 @@ function SettingsComponent(props: {
   onReset: () => void
   onForceOnboarding?: (() => void) | undefined
   onClose: () => void
+  /** Leaves Settings for a chat. */
+  onOpenChat: (threadId: string) => void
   onProviderLoginTerminalOpen?: ((target: ProviderLoginTerminalTarget) => void) | undefined
 }) {
   const [selectedSection, setSection] = useState<SettingsSection>(
@@ -776,7 +778,7 @@ function SettingsComponent(props: {
               />
             ) : null}
             {section === 'import' ? (
-              <ImportSettings transport={props.transport} onViewChats={props.onClose} />
+              <ImportSettings transport={props.transport} onOpenChat={props.onOpenChat} />
             ) : null}
             {section === 'data' ? <DataSettings {...props} /> : null}
             {section === 'debug' ? (
