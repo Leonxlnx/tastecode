@@ -925,6 +925,31 @@ describe('failed provider starts', () => {
     }
   })
 
+  it('starts a Side chat for a resting main chat without resuming the main chat', async () => {
+    const { orchestrator, sessions, store } = harness()
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    store.append('persisted-thread', userMessage('u1', 'Main question', 't1'))
+    try {
+      const side = await orchestrator.startSideThread('persisted-thread')
+      // One agent process: the Side chat's own. It reads the main chat's saved history.
+      expect(sessions).toHaveLength(1)
+      expect(store.thread(side.id)).toMatchObject({
+        ephemeral: true,
+        parentThreadId: 'persisted-thread',
+        provider: 'codex',
+      })
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
   it('keeps a Side chat session whose cleanup failed until a later stop confirms it', async () => {
     const { orchestrator, sessions, startBarriers } = harness()
     const parent = await orchestrator.startThread('codex', process.cwd())
