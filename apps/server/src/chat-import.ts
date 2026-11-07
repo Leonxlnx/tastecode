@@ -201,11 +201,16 @@ export class ChatImportService {
       await Promise.all(history.providers().map((provider) => history.scanned(provider)))
       this.#adoptFolders(chosen, job, history)
       let reported = Date.now()
+      let newest = -Infinity
       for (const listed of chosen) {
         if (this.#closed) break
         try {
-          await this.#importChat(listed, history)
+          const thread = await this.#importChat(listed, history)
           job.imported += 1
+          if (listed.chat.updatedAt > newest) {
+            newest = listed.chat.updatedAt
+            job.thread = thread
+          }
         } catch (error) {
           job.failed += 1
           this.deps.log(`a ${listed.chat.source} chat could not be imported: ${describe(error)}`)
@@ -251,7 +256,10 @@ export class ChatImportService {
     }
   }
 
-  async #importChat({ chat, session, saved, reader }: Listed, history: ProviderHistory) {
+  async #importChat(
+    { chat, session, saved, reader }: Listed,
+    history: ProviderHistory,
+  ): Promise<string> {
     const { store } = this.deps
     const projectPath = new ProjectFolders(store).project(chat.folder) ?? chat.folder
     if (session) {
@@ -269,11 +277,11 @@ export class ChatImportService {
         throw error
       }
       this.deps.changed([threadId])
-      return
+      return threadId
     }
     if (!saved || !reader) throw new Error('This chat has no readable source.')
     const threadId = importedThreadId(reader.id, saved.id)
-    if (store.thread(threadId)) return
+    if (store.thread(threadId)) return threadId
     const events = await reader.read(saved)
     if (!events.length) throw new Error('This chat has nothing to import.')
     store.addImportedThread(threadId, saved.provider, {
@@ -287,6 +295,7 @@ export class ChatImportService {
     store.mergeProviderHistory(threadId, saved.revision, importedEvents(events, threadId, []))
     if (!saved.resumes) store.rearmThreadHandover(threadId)
     this.deps.changed([threadId])
+    return threadId
   }
 }
 

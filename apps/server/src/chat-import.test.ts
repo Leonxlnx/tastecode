@@ -530,6 +530,21 @@ describe('importing chosen chats', () => {
     expect(store.thread('external:codex:left-out')).toBeDefined()
   })
 
+  it('names the most recently used chat it imported, for the way there', async () => {
+    const site = folder('site')
+    const { service: scanner, run } = await service({
+      sessions: [
+        { ...session('older', site), updatedAt: 2000 },
+        { ...session('newest', site), updatedAt: 9000 },
+        { ...session('middle', site), updatedAt: 5000 },
+      ],
+    })
+    await scanner.scan()
+    await expect(run(['codex:older', 'codex:newest', 'codex:middle'])).resolves.toMatchObject({
+      thread: 'external:codex:newest',
+    })
+  })
+
   it('reads a transcript while importing, so a chat opens without its source', async () => {
     const site = folder('site')
     const { service: scanner, run } = await service({ sessions: [session('one', site)] })
