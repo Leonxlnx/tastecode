@@ -21,14 +21,26 @@ export function canonicalCheckoutRoot(directory: string): string {
 export class CheckoutAccess {
   #writers = new Map<string, Set<string>>()
   #exclusive = new Set<string>()
+  /** Owners whose current turn has shared its checkout with another writer. */
+  #shared = new Set<string>()
 
   beginTurn(directory: string, owner: string): void {
     const root = canonicalCheckoutRoot(directory)
     if (this.#exclusive.has(root))
       throw new Error('cannot start a turn while this checkout is being restored or switched')
     const owners = this.#writers.get(root) ?? new Set<string>()
+    this.#shared.delete(owner)
     owners.add(owner)
+    if (owners.size > 1) for (const writer of owners) this.#shared.add(writer)
     this.#writers.set(root, owners)
+  }
+
+  /**
+   * Whether another writer worked in this owner's checkout at any point since
+   * its turn began. Its files then hold that writer's changes too.
+   */
+  sharedSinceBegin(owner: string): boolean {
+    return this.#shared.has(owner)
   }
 
   /** Transfer an in-flight start's guard to the process that still must stop. */
@@ -36,6 +48,7 @@ export class CheckoutAccess {
     const root = canonicalCheckoutRoot(directory)
     const owners = this.#writers.get(root) ?? new Set<string>()
     owners.add(owner)
+    if (owners.size > 1) for (const writer of owners) this.#shared.add(writer)
     this.#writers.set(root, owners)
   }
 

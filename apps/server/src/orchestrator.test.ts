@@ -1708,6 +1708,18 @@ const message = (text: string, turnId = 't1'): DomainEvent => ({
   },
 })
 
+const fileEdit = (path: string, turnId: string): DomainEvent => ({
+  type: 'item.completed',
+  item: {
+    id: `edit-${path}`,
+    turnId,
+    type: 'file_change',
+    status: 'completed',
+    path,
+    createdAt: 0,
+  },
+})
+
 const userMessage = (
   id: string,
   text: string,
@@ -11064,6 +11076,101 @@ describe('rolling a session back', () => {
     } finally {
       await orchestrator.disposeAll()
     }
+  })
+
+  it('builds the turn diff from its checkpoint when the agent reports none, and undoes it', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('claude-code', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    await orchestrator.sendTurn(thread.id, 'change the file and add one')
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+    writeFileSync(path.join(repo, 'file.txt'), 'agent change\n')
+    writeFileSync(path.join(repo, 'added.txt'), 'new file\n')
+    sessions[0]!.emit(fileEdit('file.txt', 'turn-1'))
+    sessions[0]!.emit(message('Done.', 'turn-1'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    await vi.waitFor(() => expect(store.turnDiff(thread.id, 'turn-1')).toBeTruthy(), {
+      timeout: 15_000,
+    })
+    const diff = store.turnDiff(thread.id, 'turn-1')!
+    expect(diff).toContain('diff --git a/file.txt b/file.txt')
+    expect(diff).toContain('+agent change')
+    expect(diff).toContain('diff --git a/added.txt b/added.txt')
+
+    await orchestrator.undoTurnChanges(thread.id, 'turn-1', diff)
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
+    expect(existsSync(path.join(repo, 'added.txt'))).toBe(false)
+    await orchestrator.disposeAll()
+  })
+
+  it("keeps an agent's own turn diff", async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('claude-code', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    await orchestrator.sendTurn(thread.id, 'change the file')
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+    writeFileSync(path.join(repo, 'file.txt'), 'agent change\n')
+    sessions[0]!.emit(fileEdit('file.txt', 'turn-1'))
+    sessions[0]!.emit({ type: 'diff.updated', turnId: 'turn-1', diff: 'agent patch' })
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(store.turnDiff(thread.id, 'turn-1')).toBe('agent patch')
+    await orchestrator.disposeAll()
+  })
+
+  it('takes no second snapshot after a turn that ran no command and changed no file', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('claude-code', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    await orchestrator.sendTurn(thread.id, 'only answer')
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+    writeFileSync(path.join(repo, 'unrelated.txt'), 'user work\n')
+    sessions[0]!.emit(message('An answer.', 'turn-1'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(store.turnDiff(thread.id, 'turn-1')).toBeUndefined()
+    await orchestrator.disposeAll()
+  })
+
+  it('takes no second snapshot for an agent that reports its turn diffs itself', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    await orchestrator.sendTurn(thread.id, 'only answer')
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+    writeFileSync(path.join(repo, 'unrelated.txt'), 'user work\n')
+    sessions[0]!.emit(fileEdit('unrelated.txt', 'turn-1'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(store.turnDiff(thread.id, 'turn-1')).toBeUndefined()
+    await orchestrator.disposeAll()
+  })
+
+  it('builds no turn diff when another chat worked in the same checkout', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const first = await orchestrator.startThread('claude-code', repo)
+    const second = await orchestrator.startThread('claude-code', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    sessions[1]!.turnIds.push('turn-2')
+    await orchestrator.sendTurn(first.id, 'change the file')
+    sessions[0]!.emit(turnStarted(first.id, 'turn-1'))
+    await orchestrator.sendTurn(second.id, 'add a file')
+    sessions[1]!.emit(turnStarted(second.id, 'turn-2'))
+    writeFileSync(path.join(repo, 'file.txt'), 'first chat\n')
+    writeFileSync(path.join(repo, 'added.txt'), 'second chat\n')
+    sessions[0]!.emit(fileEdit('file.txt', 'turn-1'))
+    sessions[1]!.emit(fileEdit('added.txt', 'turn-2'))
+    sessions[1]!.emit({ type: 'turn.completed', turnId: 'turn-2', status: 'completed' })
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(store.turnDiff(first.id, 'turn-1')).toBeUndefined()
+    expect(store.turnDiff(second.id, 'turn-2')).toBeUndefined()
+    await orchestrator.disposeAll()
   })
 
   it('undoes only the patch from an edit block and keeps the conversation', async () => {
