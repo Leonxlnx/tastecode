@@ -242,14 +242,13 @@ function ImportList(props: {
         </SettingsNotice>
       ) : null}
 
-      <SourceStrip
-        sources={scan.sources}
-        value={source}
-        counts={counts}
-        onChange={props.onSource}
-      />
-
       <div className="import-tools">
+        <SourceStrip
+          sources={scan.sources}
+          value={source}
+          counts={counts}
+          onChange={props.onSource}
+        />
         <div className="import-search">
           <Search size={14} aria-hidden />
           <input
@@ -288,7 +287,7 @@ function ImportList(props: {
       </div>
 
       {groups.length ? (
-        <>
+        <div className="import-table">
           <SelectAll
             chats={shown}
             selected={selected}
@@ -311,7 +310,7 @@ function ImportList(props: {
               />
             ))}
           </ul>
-        </>
+        </div>
       ) : (
         <p className="import-none" role="status">
           {searching
@@ -322,19 +321,17 @@ function ImportList(props: {
         </p>
       )}
 
-      {copies ? (
-        <p className="import-note">
-          A chat marked Copy starts a new session that gets its transcript with your next message.
-          The others pick up their own saved session.
-        </p>
-      ) : null}
-
       {nothingLeft ? null : (
         <ImportBar
           job={job}
           chats={summary.chats}
           folders={summary.folders}
           newProjects={summary.newProjects}
+          note={
+            copies
+              ? 'A chat marked Copy starts a new session that gets its transcript with your next message. The others pick up their own saved session.'
+              : undefined
+          }
           onStart={() => props.onStart(summary.ids)}
           onOpenChat={props.onOpenChat}
         />
@@ -377,7 +374,7 @@ function SourceStrip(props: {
     props.onChange(options[next]!.id)
   }
   return (
-    <div className="import-sources" role="radiogroup" aria-label="Filter by app">
+    <div className="set-segmented import-sources" role="radiogroup" aria-label="Filter by app">
       {options.map((option, index) => {
         const state = 'state' in option ? option.state : 'ready'
         const mark = 'state' in option ? sourceMark(option) : undefined
@@ -387,7 +384,7 @@ function SourceStrip(props: {
             ref={(element) => {
               buttons.current[index] = element
             }}
-            className="import-source"
+            className="set-segmented__option import-source"
             type="button"
             role="radio"
             aria-checked={index === chosen}
@@ -400,7 +397,7 @@ function SourceStrip(props: {
               {option.name}
             </span>
             {state === 'scanning' ? (
-              <Skeleton className="import-source__pending" width={28} height={20} />
+              <Skeleton className="import-source__pending" width={20} height={9} />
             ) : (
               <span className="import-source__count" data-failed={state === 'failed' || undefined}>
                 {state === 'failed' ? '–' : (props.counts.get(option.id) ?? 0).toLocaleString()}
@@ -444,22 +441,20 @@ function SelectAll(props: {
 }) {
   const { state, chosen } = checkState(props.chats, props.selected)
   return (
-    <div className="import-all">
-      <label className="import-all__label">
-        <TriCheck
-          label={`Select all ${plural(props.chats.length, 'chat')}`}
-          state={state}
-          disabled={props.disabled}
-          onChange={() => props.onChange(toggled(props.selected, props.chats))}
-        />
-        Select all
-      </label>
-      <span className="import-all__count">
+    <label className="import-row import-all">
+      <TriCheck
+        label={`Select all ${plural(props.chats.length, 'chat')}`}
+        state={state}
+        disabled={props.disabled}
+        onChange={() => props.onChange(toggled(props.selected, props.chats))}
+      />
+      <span className="import-all__label">Select all</span>
+      <span className="import-row__count import-all__count">
         {chosen
           ? `${chosen.toLocaleString()} of ${plural(props.chats.length, 'chat')}`
           : plural(props.chats.length, 'chat')}
       </span>
-    </div>
+    </label>
   )
 }
 
@@ -482,9 +477,19 @@ function FolderRow(props: {
   const { group, open, selected } = props
   const { state, chosen } = checkState(group.chats, selected)
   const panel = useId()
+  // Said once on the folder rather than on every chat, unless its chats differ.
+  const kinds = new Set(group.chats.map(({ source }) => source))
+  const mixed = kinds.size > 1
+  const marks = [...kinds].flatMap((id) => {
+    const source = props.sources.get(id)
+    const mark = sourceMark(source)
+    return mark ? [{ id, mark, name: source?.name ?? id }] : []
+  })
+  const allCopies = group.chats.every(({ continuation }) => continuation === 'copy')
   return (
     <li className="import-folder" data-open={open || undefined}>
-      <div className="import-folder__row">
+      <div className="import-row import-folder__row">
+        <ChevronRight className="import-folder__chevron" size={14} aria-hidden />
         <TriCheck
           label={`Select all chats in ${group.folder.name}`}
           state={state}
@@ -499,31 +504,36 @@ function FolderRow(props: {
           disabled={props.searching}
           onClick={props.onToggleOpen}
         >
-          <ChevronRight className="import-folder__chevron" size={14} aria-hidden />
-          <span className="import-folder__text">
-            <span className="import-folder__head">
-              <span className="import-folder__name">{group.folder.name}</span>
-              <span className="set-leader" aria-hidden />
-              <span className="import-folder__count">
-                {chosen
-                  ? `${chosen.toLocaleString()} of ${plural(group.chats.length, 'chat')}`
-                  : plural(group.chats.length, 'chat')}
-              </span>
-              <span className="import-folder__when">{lastUsed(group.updatedAt, props.now)}</span>
+          <span className="import-folder__name">{group.folder.name}</span>
+          <span className="import-folder__meta">
+            <span className="import-folder__path" title={group.folder.path}>
+              {group.folder.label}
             </span>
-            <span className="import-folder__meta">
-              <span className="import-folder__path" title={group.folder.path}>
-                {group.folder.label}
-              </span>
+            <span
+              className="import-folder__state"
+              data-state={group.folder.missing ? 'missing' : undefined}
+            >
+              {folderState(group)}
+            </span>
+            {allCopies ? <span className="import-folder__state">Copy</span> : null}
+            {marks.length ? (
               <span
-                className="import-folder__state"
-                data-state={group.folder.missing ? 'missing' : undefined}
+                className="import-folder__marks"
+                title={marks.map(({ name }) => name).join(', ')}
               >
-                {folderState(group)}
+                {marks.map(({ id, mark }) => (
+                  <ProviderIcon key={id} mark={mark} size={12} />
+                ))}
               </span>
-            </span>
+            ) : null}
           </span>
         </button>
+        <span className="import-row__count import-folder__count">
+          {chosen
+            ? `${chosen.toLocaleString()} of ${plural(group.chats.length, 'chat')}`
+            : plural(group.chats.length, 'chat')}
+        </span>
+        <span className="import-row__when">{lastUsed(group.updatedAt, props.now)}</span>
       </div>
       {open ? (
         <ul className="import-chats" id={panel}>
@@ -534,6 +544,8 @@ function FolderRow(props: {
               checked={selected.has(chat.id)}
               source={props.sources.get(chat.source)}
               alsoIn={chat.alsoIn?.map((id) => props.sources.get(id)?.name ?? id)}
+              showSource={mixed}
+              showCopy={!allCopies}
               now={props.now}
               disabled={props.disabled}
               onChange={() => props.onChange(toggled(selected, [chat]))}
@@ -550,22 +562,25 @@ function ChatRow(props: {
   checked: boolean
   source: ChatImportSource | undefined
   alsoIn: string[] | undefined
+  showSource: boolean
+  showCopy: boolean
   now: number
   disabled: boolean
   onChange: () => void
 }) {
   const { chat } = props
-  const mark = sourceMark(props.source)
+  // The folder names its app once; a chat says so itself when its folder mixes
+  // apps or another app saved it too.
+  const mark = props.showSource || chat.alsoIn?.length ? sourceMark(props.source) : undefined
   const title = chat.title || 'Untitled chat'
   const savedBy = [props.source?.name, ...(props.alsoIn ?? [])].filter(Boolean).join(' and ')
-  const meta = [
+  const tags = [
     ...(chat.archived ? ['Archived'] : []),
-    ...(chat.continuation === 'copy' ? ['Copy'] : []),
-    lastUsed(chat.updatedAt, props.now),
+    ...(props.showCopy && chat.continuation === 'copy' ? ['Copy'] : []),
   ]
   return (
-    <li className="import-chat">
-      <label className="import-chat__label">
+    <li>
+      <label className="import-row import-chat">
         <input
           className="import-check"
           type="checkbox"
@@ -574,12 +589,18 @@ function ChatRow(props: {
           disabled={props.disabled}
           onChange={props.onChange}
         />
-        <span className="import-chat__mark" title={savedBy}>
+        <span className="import-chat__text">
+          <span className="import-chat__title">{title}</span>
+          {tags.map((tag) => (
+            <span className="import-chat__tag" key={tag}>
+              {tag}
+            </span>
+          ))}
+        </span>
+        <span className="import-row__count" title={savedBy || undefined}>
           {mark ? <ProviderIcon mark={mark} size={13} /> : null}
         </span>
-        <span className="import-chat__title">{title}</span>
-        <span className="set-leader" aria-hidden />
-        <span className="import-chat__meta">{meta.join(' · ')}</span>
+        <span className="import-row__when">{lastUsed(chat.updatedAt, props.now)}</span>
       </label>
     </li>
   )
@@ -590,6 +611,7 @@ function ImportBar(props: {
   chats: number
   folders: number
   newProjects: number
+  note: string | undefined
   onStart: () => void
   onOpenChat: (threadId: string) => void
 }) {
@@ -641,9 +663,12 @@ function ImportBar(props: {
     : ['Choose the chats to bring in']
   return (
     <div className="import-bar">
-      <span className="import-bar__summary" data-empty={!props.chats || undefined}>
-        {parts.join(' · ')}
-      </span>
+      <div className="import-bar__text">
+        <span className="import-bar__summary" data-empty={!props.chats || undefined}>
+          {parts.join(' · ')}
+        </span>
+        {props.note ? <p className="import-bar__note">{props.note}</p> : null}
+      </div>
       <button
         className="set-button set-button--primary"
         type="button"

@@ -1,103 +1,63 @@
-/* Import chats: the Settings v1 system with no cards. What was found leads, as
-   a strip of figures that is also the list's filter; the list keeps the leader
-   rows of every other tab; the bar at the foot says what Import will do. Spacing
-   stays on the system's steps of 4, 8, 12, 16 and 24. */
+/* Import chats: the page header and tools of every Settings tab, then one framed
+   list, the way a picker of many things reads. Every row of the list shares one
+   grid, so the boxes, names, counts and dates each keep their own column; the
+   bar under the list stays at the foot of the pane while the list scrolls.
+   Spacing stays on the system's steps of 4, 8, 12, 16 and 24. */
 
 .settings .import-list {
+  --import-columns: 14px 15px minmax(0, 1fr) 140px 88px;
+
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-/* The strip: figures read first, so they carry the page's largest number.
-   Colour stays neutral; only the chosen cell's rule marks the filter. */
+/* Tools: the app filter, the search and the archived switch on one line. */
 
-.settings .import-sources {
+.settings .import-tools {
   display: flex;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--chrome-border);
-  scrollbar-width: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Every app stays in reach: a pane too narrow for one line takes a second. */
+.settings .import-sources {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 28px;
+  max-width: 100%;
 }
 
 .settings .import-source {
-  position: relative;
-  display: flex;
-  flex: 1 0 auto;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 88px;
-  padding: 0 16px 12px 0;
-  background: none;
-  border: 0;
-  color: var(--text-3);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.settings .import-source:hover,
-.settings .import-source[aria-checked='true'] {
-  color: var(--text);
-}
-
-.settings .import-source[aria-checked='true']::after {
-  position: absolute;
-  right: 16px;
-  bottom: -1px;
-  left: 0;
-  height: 2px;
-  background: var(--text);
-  content: '';
-}
-
-.settings .import-source:last-child[aria-checked='true']::after {
-  right: 0;
-}
-
-.settings .import-source:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
-  border-radius: var(--r-sm);
+  gap: 6px;
+  min-height: 22px;
 }
 
 .settings .import-source__name {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--t-xs);
-  line-height: 1.4;
-  white-space: nowrap;
 }
 
 .settings .import-source__count {
-  color: var(--text);
-  font-size: var(--t-xl);
+  color: var(--text-3);
   font-variant-numeric: tabular-nums;
-  font-weight: 500;
-  line-height: 1.3;
+}
+
+.settings .import-source[aria-checked='true'] .import-source__count {
+  color: var(--text-2);
 }
 
 .settings .import-source__count[data-failed] {
   color: var(--text-3);
 }
 
-.settings .import-source__pending {
-  margin-top: 3px;
-}
-
-/* Tools */
-
-.settings .import-tools {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
 .settings .import-search {
   position: relative;
   display: flex;
-  flex: 1;
+  flex: 1 1 200px;
   align-items: center;
   min-width: 0;
   color: var(--text-3);
@@ -146,7 +106,7 @@
   height: 15px;
   margin: 0;
   appearance: none;
-  background: transparent;
+  background: var(--bg);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   cursor: pointer;
@@ -197,31 +157,14 @@
   opacity: 0.5;
 }
 
-/* Select all shares the rows' left edge and right edge. */
+/* The list: one frame, a header row on the rail tint, folders split by a line. */
 
-.settings .import-all {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 28px;
-  font-size: var(--t-sm);
+.settings .import-table {
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
 }
-
-.settings .import-all__label {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  color: var(--text-2);
-  cursor: pointer;
-}
-
-.settings .import-all__count {
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Folders: the two-line sibling of a leader row. */
 
 .settings .import-folders,
 .settings .import-chats {
@@ -230,52 +173,80 @@
   list-style: none;
 }
 
-.settings .import-folders {
-  margin-top: -8px;
+.settings .import-row {
+  display: grid;
+  grid-template-columns: var(--import-columns);
+  align-items: center;
+  column-gap: 12px;
+  padding-inline: 12px 16px;
 }
 
-.settings .import-folder {
-  --set-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
+.settings .import-row > .import-check {
+  grid-column: 2;
 }
+
+.settings .import-row__count {
+  display: flex;
+  grid-column: 4;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-3);
+}
+
+.settings .import-row__when {
+  grid-column: 5;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.settings .import-all {
+  min-height: 40px;
+  background: var(--bg-rail);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: var(--t-sm);
+}
+
+.settings .import-all__label {
+  grid-column: 3;
+  font-weight: 500;
+}
+
+.settings .import-all__count {
+  grid-column: 4 / span 2;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings .import-folder + .import-folder {
+  border-top: 1px solid var(--line);
+}
+
+/* The folder's name is one button over the whole row; the box sits above it. */
 
 .settings .import-folder__row {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  position: relative;
+  min-height: 56px;
+  padding-block: 8px;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.settings .import-folder__row:hover,
+.settings .import-chat:hover {
+  background: color-mix(in srgb, var(--text) 3.5%, transparent);
 }
 
 .settings .import-folder__row > .import-check {
-  margin-top: 13px;
-}
-
-.settings .import-folder__toggle {
-  display: flex;
-  flex: 1;
-  align-items: flex-start;
-  gap: 4px;
-  min-width: 0;
-  padding: 10px 0;
-  background: none;
-  border: 0;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.settings .import-folder__toggle:disabled {
-  cursor: default;
-}
-
-.settings .import-folder__toggle:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
-  border-radius: var(--r-sm);
+  z-index: 1;
 }
 
 .settings .import-folder__chevron {
-  flex: none;
-  margin-top: 3px;
+  grid-column: 1;
   color: var(--text-3);
   transition: transform var(--dur-fast) var(--ease-out);
 }
@@ -284,73 +255,64 @@
   transform: rotate(90deg);
 }
 
-.settings .import-folder__text {
+.settings .import-folder__toggle {
   display: flex;
-  flex: 1;
+  grid-column: 3;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
 }
 
-.settings .import-folder__head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: var(--t-md);
-  line-height: 1.35;
+.settings .import-folder__toggle::after {
+  position: absolute;
+  inset: 0;
+  content: '';
 }
 
-.settings .import-folder__head > .set-leader {
-  flex: 1;
-  min-width: 16px;
+.settings .import-folder__toggle:disabled {
+  cursor: default;
+}
+
+.settings .import-folder__toggle:focus-visible {
+  outline: none;
+}
+
+.settings .import-folder__toggle:focus-visible::after {
+  outline: var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-offset) - 2px);
 }
 
 .settings .import-folder__name {
   overflow: hidden;
-  color: var(--text-2);
+  color: var(--text);
+  font-size: var(--t-md);
   font-weight: 500;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.settings .import-folder__row:is(:hover, :focus-within) .import-folder__name {
-  color: var(--text);
-}
-
-.settings .import-folder__count {
-  flex: none;
-  color: var(--text);
-  font-size: var(--t-sm);
-  font-variant-numeric: tabular-nums;
-}
-
-/* One width down the list, so every count ends on the same line. */
-.settings .import-folder__when {
-  flex: none;
-  width: 96px;
-  text-align: right;
-}
-
-.settings .import-folder__when,
-.settings .import-chat__meta {
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.settings .import-chat__meta {
-  flex: none;
 }
 
 .settings .import-folder__meta {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   color: var(--text-3);
   font-size: var(--t-xs);
   line-height: 1.4;
+}
+
+/* Above the row's button overlay, so their full text shows on hover. */
+.settings .import-folder__path,
+.settings .import-folder__marks {
+  position: relative;
+  z-index: 1;
 }
 
 .settings .import-folder__path {
@@ -364,7 +326,7 @@
 }
 
 .settings .import-folder__state::before {
-  margin-right: 8px;
+  margin-right: 6px;
   content: '·';
 }
 
@@ -372,42 +334,49 @@
   color: var(--text-2);
 }
 
-/* Chats sit under the folder's name: the box and 12px, then the chevron and 4px. */
+.settings .import-folder__marks {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.settings .import-row > .import-folder__count {
+  display: block;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Chats: the box under the folder's box, the title under the folder's name. */
 
 .settings .import-chats {
-  padding: 0 0 12px 45px;
+  padding-bottom: 6px;
 }
 
 .settings .import-chat {
-  --set-leader: transparent;
-
-  transition: --set-leader var(--dur-fast) var(--ease-out);
-}
-
-.settings .import-chat:is(:hover, :focus-within) {
-  --set-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
-}
-
-.settings .import-chat__label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   min-height: 32px;
   color: var(--text-2);
   cursor: pointer;
   font-size: var(--t-sm);
+  transition: background var(--dur-fast) var(--ease-out);
 }
 
-.settings .import-chat:is(:hover, :focus-within) .import-chat__label {
+.settings .import-chat:hover,
+.settings .import-chat:focus-within {
   color: var(--text);
 }
 
-.settings .import-chat__mark {
-  display: inline-flex;
-  flex: none;
-  justify-content: center;
-  width: 16px;
-  color: var(--text-3);
+.settings .import-chat__text {
+  display: flex;
+  grid-column: 3;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .settings .import-chat__title {
@@ -417,42 +386,47 @@
   white-space: nowrap;
 }
 
-.settings .import-chat__label > .set-leader {
-  flex: 1;
-  min-width: 16px;
+.settings .import-chat__tag {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 18px;
 }
 
-.settings .import-none,
-.settings .import-note {
+.settings .import-none {
   margin: 0;
+  padding-block: 24px;
   color: var(--text-3);
   font-size: var(--t-sm);
   line-height: 1.45;
 }
 
-.settings .import-none {
-  padding-block: 24px;
-}
-
-.settings .import-note {
-  max-width: 64ch;
-}
-
-/* The bar stays in reach down a long list. It sits on the page's own ground
-   with a line above it: this is a form's foot, not something floating. */
+/* The bar stays at the foot of the pane down a long list: the page's own
+   ground with a line above it, the form's foot rather than something floating. */
 
 .settings .import-bar {
   position: sticky;
-  z-index: 1;
+  z-index: 2;
   bottom: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 52px;
-  margin-top: 8px;
+  min-height: 60px;
+  margin-top: -4px;
+  padding-block: 12px;
   background: var(--bg);
-  border-top: 1px solid var(--chrome-border);
+  border-top: 1px solid var(--line);
+}
+
+.settings .import-bar__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .settings .import-bar__summary {
@@ -463,6 +437,14 @@
 
 .settings .import-bar__summary[data-empty] {
   color: var(--text-3);
+}
+
+.settings .import-bar__note {
+  max-width: 64ch;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 1.45;
 }
 
 .settings .import-bar__track {
@@ -483,52 +465,35 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings .import-source,
   .settings .import-check,
+  .settings .import-folder__row,
   .settings .import-folder__chevron,
-  .settings .import-folder__name,
   .settings .import-chat,
   .settings .import-bar__fill {
     transition: none;
   }
 }
 
-/* A narrow pane: rows drop their leaders as every v1 row does, and the date
-   moves off the crowded line. */
+/* A narrow pane: the dates leave the list, the counts keep their column. */
 
 @container settings-content (max-width: 560px) {
-  .settings .import-tools {
-    flex-wrap: wrap;
+  .settings .import-list {
+    --import-columns: 14px 15px minmax(0, 1fr) max-content;
   }
 
-  /* Six cells fit a 500px pane once the names stand alone. */
-  .settings .import-source {
-    min-width: 0;
-    padding-right: 8px;
+  .settings .import-row__when {
+    display: none;
+  }
+
+  .settings .import-all__count {
+    grid-column: 4;
   }
 
   .settings .import-source__name > svg {
     display: none;
   }
 
-  .settings .import-folder__head > .set-leader,
-  .settings .import-chat__label > .set-leader {
-    display: none;
-  }
-
-  .settings .import-folder__head {
-    justify-content: space-between;
-  }
-
-  .settings .import-folder__when {
-    display: none;
-  }
-
-  .settings .import-chat__title {
-    flex: 1;
-  }
-
-  .settings .import-chats {
-    padding-left: 27px;
+  .settings .import-bar {
+    align-items: flex-end;
   }
 }
