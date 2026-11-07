@@ -112,6 +112,11 @@ describe('Import chats settings', () => {
     const strip = await filter()
     fireEvent.keyDown(strip.getByRole('radio', { name: /All apps/ }), { key: 'ArrowRight' })
     expect(strip.getByRole('radio', { name: /Codex/ }).getAttribute('aria-checked')).toBe('true')
+    // A filter that wraps onto a second line moves with Up and Down too.
+    fireEvent.keyDown(strip.getByRole('radio', { name: /Codex/ }), { key: 'ArrowDown' })
+    expect(strip.getByRole('radio', { name: /T3 Code/ }).getAttribute('aria-checked')).toBe('true')
+    fireEvent.keyDown(strip.getByRole('radio', { name: /T3 Code/ }), { key: 'ArrowUp' })
+    expect(strip.getByRole('radio', { name: /Codex/ }).getAttribute('aria-checked')).toBe('true')
   })
 
   it('says what Import will do before it does it, then imports exactly that', async () => {
