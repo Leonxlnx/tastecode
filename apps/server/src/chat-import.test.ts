@@ -671,4 +671,43 @@ describe('OpenCode chats', () => {
     expect(store.thread(id)).toMatchObject({ provider: 'opencode', providerSessionId: 'ses_one' })
     expect(store.threadNeedsHandover(id)).toBe(false)
   })
+
+  it('files a folder saved with forward slashes under the spelling the other apps use', async () => {
+    const site = folder('site')
+    const opencode = folder('opencode')
+    const db = new DatabaseSync(path.join(opencode, 'opencode.db'))
+    db.exec(`
+      CREATE TABLE session_v2 (
+        id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT NOT NULL, title TEXT,
+        time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, time_archived INTEGER);
+      CREATE TABLE session_message (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL,
+        time_created INTEGER NOT NULL, data TEXT NOT NULL);
+    `)
+    // What OpenCode writes on Windows; elsewhere this is the folder unchanged.
+    db.prepare('INSERT INTO session_v2 VALUES (?, NULL, ?, ?, 1000, 2000, NULL)').run(
+      'ses_one',
+      site.replaceAll('\\', '/'),
+      'Fix the footer',
+    )
+    db.prepare('INSERT INTO session_message VALUES (?, ?, ?, ?, 1000, ?)').run(
+      'm1',
+      'ses_one',
+      'user',
+      1,
+      JSON.stringify({ text: 'Fix the footer' }),
+    )
+    db.close()
+
+    const { service: scanner, run } = await service({
+      opencode,
+      sessions: [session('one', site, 'Hero spacing')],
+    })
+    const scan = await scanner.scan()
+    expect(scan.chats.map(({ folder: saved }) => saved)).toEqual([site, site])
+    expect(scan.folders.map(({ path: saved }) => saved)).toEqual([site])
+    const job = await run(['opencode:ses_one', 'codex:one'])
+    expect(job.projects).toEqual([site])
+    expect(store.projects().map(({ path: saved }) => saved)).toEqual([site])
+  })
 })

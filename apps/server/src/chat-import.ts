@@ -126,7 +126,9 @@ export class ChatImportService {
         continue
       }
       if (chats.length) sources.push({ ...named, state: 'ready' })
-      for (const saved_ of chats) {
+      for (const found of chats) {
+        // OpenCode on Windows saves `E:/work/site`; every other app here says `E:\work\site`.
+        const saved_ = { ...found, workspacePath: path.normalize(found.workspacePath) }
         const id = `${reader.id}:${saved_.id}`
         const mirrored = saved_.nativeSession
           ? `${saved_.provider}:${saved_.nativeSession}`
