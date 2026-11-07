@@ -9,6 +9,7 @@ import type { AgentSession, ProviderRuntime, SavedSession, StartOptions } from '
 import { compactHistoryReplay } from './history-replay.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
+import { importedEvents } from './provider-history.js'
 import { CONTINUE_CONTEXT_NOTICE, HANDOVER_CONTEXT_NOTICE } from './provider-session.js'
 import { withoutContinuationContext } from './side-chat.js'
 import { Store } from './store.js'
@@ -402,6 +403,68 @@ describe('moving a chat to another provider', () => {
       { kind: 'resume', provider: 'grok', options: { providerSessionId: 'grok-native-1' } },
     ])
     await third.orchestrator.disposeAll()
+  })
+
+  it('hands a chat copied from another app to the first session it starts', async () => {
+    const repo = repository()
+    const { store, orchestrator, sessions, launches } = setup()
+    store.addProject(repo)
+    store.addImportedThread('imported:t3-code:one', 'codex', {
+      title: 'Copied from another app',
+      projectPath: repo,
+      createdAt: 1000,
+      updatedAt: 2000,
+    })
+    store.mergeProviderHistory(
+      'imported:t3-code:one',
+      '1',
+      importedEvents(
+        [
+          {
+            type: 'turn.started',
+            turn: { id: 'turn', threadId: 'one', status: 'running', createdAt: 1000 },
+          },
+          {
+            type: 'item.completed',
+            item: {
+              id: 'prompt',
+              turnId: 'turn',
+              type: 'message',
+              role: 'user',
+              status: 'completed',
+              text: 'Rename the config loader',
+              createdAt: 1000,
+            },
+          },
+          {
+            type: 'item.completed',
+            item: {
+              id: 'reply',
+              turnId: 'turn',
+              type: 'message',
+              role: 'assistant',
+              status: 'completed',
+              text: 'Renamed it in loader.ts.',
+              createdAt: 1001,
+            },
+          },
+          { type: 'turn.completed', turnId: 'turn', status: 'completed' },
+        ],
+        'imported:t3-code:one',
+        [],
+      ),
+    )
+    store.rearmThreadHandover('imported:t3-code:one')
+
+    await send(orchestrator, 'imported:t3-code:one', 'Now update the tests')
+
+    expect(launches.at(-1)).toMatchObject({ kind: 'start', provider: 'codex', workspacePath: repo })
+    const prompt = sessions.at(-1)!.sent[0]!
+    expect(prompt.startsWith(HANDOVER_CONTEXT_NOTICE)).toBe(true)
+    expect(prompt).toContain('Rename the config loader')
+    expect(prompt).toContain('Renamed it in loader.ts.')
+    expect(prompt.endsWith('User request:\nNow update the tests')).toBe(true)
+    expect(store.threadNeedsHandover('imported:t3-code:one')).toBe(false)
   })
 
   it('carries the handover again when the first turn there ends before any answer', async () => {
