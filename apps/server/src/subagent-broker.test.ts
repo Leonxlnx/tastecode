@@ -541,6 +541,37 @@ describe('a sub-agent the user prompts from its own chat', () => {
     expect(f.broker.unreadResults('parent')).toBeUndefined()
   })
 
+  it('counts the time it worked, not the wait for the user’s follow-up, also after a restart', async () => {
+    const f = fixture()
+    await start(f.broker)
+    await settle()
+    f.tick(4_000)
+    completeChild(f)
+    expect(f.lastRow().subagent.durationMs).toBe(4_000)
+
+    // The user follows up a minute later; that turn works for three seconds.
+    f.tick(60_000)
+    f.broker.userPrompted('child-1')
+    startChildTurn(f)
+    f.tick(3_000)
+    completeChild(f, 'child-turn-2')
+    expect(f.lastRow().subagent.durationMs).toBe(7_000)
+    await expect(waitOnce(f)).resolves.toMatchObject({ agents: [{ duration_seconds: 7 }] })
+
+    // A follow-up after a restart starts from the time the row kept.
+    let clock = 200_000
+    const restarted = new SubagentBroker(f.store.subagents, f.host, { now: () => clock })
+    restarted.userPrompted('child-1')
+    startChildTurn({ ...f, broker: restarted })
+    clock += 2_000
+    restarted.childEvent('child-1', {
+      type: 'turn.completed',
+      turnId: 'child-turn-3',
+      status: 'completed',
+    })
+    expect(f.lastRow().subagent.durationMs).toBe(9_000)
+  })
+
   it('does not reopen for a turn the user did not send, such as one that starts late after a Stop', async () => {
     const f = fixture()
     await start(f.broker)

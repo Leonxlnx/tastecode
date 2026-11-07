@@ -154,6 +154,10 @@ type LiveRun = {
   inputs: Set<string>
   /** The parent's turn ended while it ran. */
   background: boolean
+  /** Time it worked before the user reopened it; the wait between turns is not work. */
+  priorMs: number
+  /** When its current stretch of work began: its start, or the turn that reopened it. */
+  spanStart: number
   sentAt: number
   timer?: ReturnType<typeof setTimeout> | undefined
   /** Stop was asked before the child chat existed. */
@@ -607,9 +611,14 @@ export class SubagentBroker implements AgentToolsBroker {
       live = this.#track(stored)
       live.tools = stored.snapshot.toolUses ?? 0
       live.tokens = stored.snapshot.tokens ?? 0
+      // Its row kept the time it worked; the whole of it ended when it finished.
+      live.priorMs = stored.snapshot.durationMs ?? 0
+      live.spanStart = stored.finishedAt ?? stored.createdAt
     }
     const { run } = live
     if (!FINISHED_SUBAGENT_STATES.has(run.state)) return live
+    live.priorMs = this.#workedMs(run) ?? live.priorMs
+    live.spanStart = this.#now()
     run.state = 'running'
     delete run.finishedAt
     delete run.deliveredAt
@@ -634,6 +643,8 @@ export class SubagentBroker implements AgentToolsBroker {
       approvals: new Set(),
       inputs: new Set(),
       background: false,
+      priorMs: 0,
+      spanStart: run.createdAt,
       sentAt: 0,
       stopRequested: false,
     }
@@ -790,9 +801,7 @@ export class SubagentBroker implements AgentToolsBroker {
       ...(live.background ? { background: true } : {}),
       ...(live.tools > 0 ? { toolUses: live.tools } : {}),
       ...(live.tokens > 0 ? { tokens: live.tokens } : {}),
-      ...(finished && run.finishedAt !== undefined
-        ? { durationMs: Math.max(0, run.finishedAt - run.createdAt) }
-        : {}),
+      ...(finished && run.finishedAt !== undefined ? { durationMs: this.#workedMs(run) } : {}),
       ...(!finished && live.lastTool ? { lastTool: live.lastTool } : {}),
       ...(finished && summary ? { summary: shorten(summary, SUMMARY_CHARACTERS) } : {}),
       ...(run.threadId ? { threadId: run.threadId } : {}),
@@ -819,6 +828,17 @@ export class SubagentBroker implements AgentToolsBroker {
       throw new AgentToolError(`Unknown agent_id: ${unknown.join(', ')}.`)
     }
     return agentIds.map((id) => byId.get(id)!)
+  }
+
+  /**
+   * How long a finished run worked: its stretches of work, without the time it
+   * waited between them for the user's follow-up.
+   */
+  #workedMs(run: StoredSubagentRun): number | undefined {
+    if (run.finishedAt === undefined) return undefined
+    const live = this.#live.get(run.itemId)
+    if (live) return live.priorMs + Math.max(0, run.finishedAt - live.spanStart)
+    return run.snapshot.durationMs ?? Math.max(0, run.finishedAt - run.createdAt)
   }
 
   #needsUser(run: StoredSubagentRun): boolean {
@@ -849,7 +869,7 @@ export class SubagentBroker implements AgentToolsBroker {
         ? { changed_paths: live.changedPaths }
         : {}),
       ...(finished && run.finishedAt !== undefined
-        ? { duration_seconds: Math.round((run.finishedAt - run.createdAt) / 1_000) }
+        ? { duration_seconds: Math.round((this.#workedMs(run) ?? 0) / 1_000) }
         : {}),
       ...(tokens ? { tokens } : {}),
     }
