@@ -4558,6 +4558,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           pendingSession.current?.id === provisionalId ? pendingSession.current : undefined
         if (pending) pending.threadId = threadId
         const canonicalTitle = pending?.title ?? title
+        // The provisional row has no account of its own. Without this a chat on
+        // another account read as the default one until the next project list.
+        const startedOn =
+          namedAccount && namedAccount !== DEFAULT_ACCOUNT_ID ? { accountId: namedAccount } : {}
         setProjects((current) =>
           current.map((project) =>
             project.path !== projectPath
@@ -4569,7 +4573,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                   sessions: project.sessions.some((session) => session.id === provisionalId)
                     ? project.sessions.flatMap((session) =>
                         session.id === provisionalId
-                          ? [{ ...session, id: threadId }]
+                          ? [{ ...session, id: threadId, ...startedOn }]
                           : session.id === threadId
                             ? []
                             : [session],
@@ -4581,9 +4585,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                             id: threadId,
                             title: canonicalTitle,
                             provider: choice.provider,
-                            ...(namedAccount && namedAccount !== DEFAULT_ACCOUNT_ID
-                              ? { accountId: namedAccount }
-                              : {}),
+                            ...startedOn,
                             ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
                             ...(choice.agent
                               ? {

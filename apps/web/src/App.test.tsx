@@ -6179,6 +6179,77 @@ describe('new chats', () => {
     expect(running()).toBe('Team')
   })
 
+  it('never shows a new chat on another account than the one it started on', async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let startReleased: () => void = () => undefined
+    const startGate = new Promise<void>((resolve) => {
+      startReleased = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return {
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false, plan: 'Plus' },
+            {
+              id: 'team-9z8y7x',
+              provider: 'codex',
+              label: 'Team',
+              home: 'C:\\TasteCode\\accounts\\codex\\team-9z8y7x',
+              managed: true,
+              email: 'team@example.test',
+            },
+          ],
+          active: { codex: 'team-9z8y7x' },
+        }
+      }
+      if (method === 'thread.start') {
+        await startGate
+        serverProjects[0]!.sessions = [
+          {
+            id: 'chat-started',
+            title: 'First message',
+            provider: 'codex',
+            accountId: 'team-9z8y7x',
+            createdAt: 2,
+          },
+        ]
+        return { threadId: 'chat-started' }
+      }
+      if (method === 'thread.sendTurn') return { queued: false, turnId: 'turn-1' }
+      return request(method, params)
+    })
+    const running = () => composerProps().modelChoice?.account?.label
+    render(<App />)
+
+    await waitFor(() => expect(running()).toBe('Team'))
+    await act(async () => {
+      void composerProps().onSend('First message', [])
+      await Promise.resolve()
+    })
+    // Still starting: the chat has no account of its own yet.
+    await waitFor(() => expect(composerProps().threadId).toBeUndefined())
+    expect(running()).toBe('Team')
+
+    await act(async () => {
+      startReleased()
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(composerProps().threadId).toBe('chat-started'))
+    // Every render of it, not the last: the next project list would mend a
+    // chat that lost its account, after the composer had named the wrong one.
+    const shown = shellRenders.composer.mock.calls
+      .map(([props]) => props as ReturnType<typeof composerProps>)
+      .filter((props) => props.threadId === 'chat-started')
+      .map((props) => props.modelChoice?.account?.label)
+    expect(shown.length).toBeGreaterThan(0)
+    expect(new Set(shown)).toEqual(new Set(['Team']))
+  })
+
   it("checks the sign-in of the chat's own account, not the default one", async () => {
     const codex = serverProviders[0]!
     // The default account is signed out; the chat runs on Team, which is not.
