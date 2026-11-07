@@ -13429,6 +13429,94 @@ describe('live sessions', () => {
     await waitFor(() => expect(treeChatRow('Old chat').querySelector('.sess__spinner')).toBeNull())
   })
 
+  it('puts a prompt stopped before its turn started back without an error', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let rejectSend: ((reason: Error) => void) | undefined
+    const pendingSend = new Promise((_, reject) => {
+      rejectSend = reject
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' ? pendingSend : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
+    await waitForInitialWorkspace()
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Write the README' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+    expect(rpcCount('thread.interrupt')).toBe(1)
+
+    // The server cancels a prompt whose chat was still resuming when Stop came.
+    await act(async () => {
+      rejectSend?.(new Error('turn cancelled while resuming'))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('thread').textContent).not.toContain('Write the README')
+      expect((composer as HTMLTextAreaElement).value).toBe('Write the README')
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText('turn cancelled while resuming')).toBeNull()
+  })
+
+  it('still reports a rejected prompt after an earlier turn was stopped', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let sends = 0
+    let rejectSend: ((reason: Error) => void) | undefined
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.sendTurn') return request(method, params)
+      sends += 1
+      return sends === 1
+        ? new Promise((_, reject) => {
+            rejectSend = reject
+          })
+        : Promise.reject(new Error('cannot start a turn while restoring a checkpoint'))
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
+    await waitForInitialWorkspace()
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'First' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+    await act(async () => {
+      rejectSend?.(new Error('turn cancelled while resuming'))
+    })
+    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe('First'))
+
+    // The next send starts clean: its own rejection is an error again.
+    fireEvent.change(composer, { target: { value: 'Second' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain(
+        'cannot start a turn while restoring a checkpoint',
+      )
+    })
+  })
+
   it('queues Enter submissions while the active session is running', async () => {
     serverProjects = [
       {
