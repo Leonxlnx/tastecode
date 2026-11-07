@@ -40,6 +40,10 @@ export class ProviderHistory {
   #listings = new Map<ProviderId, Map<string, ProviderHistoryListing>>()
   #closed = false
   #accountSources = new Map<string, Promise<ProviderHistorySource>>()
+  /** What each source listed at its last scan, project or not, for the import list. */
+  #listed = new Map<ProviderId, ProviderHistorySession[]>()
+  /** Sources whose latest scan failed, so nobody waits on a listing that is not coming. */
+  #listFailed = new Set<ProviderId>()
 
   constructor(
     private store: Store,
@@ -75,6 +79,86 @@ export class ProviderHistory {
   hasCopy(threadId: string): boolean {
     const entry = this.#byThread.get(threadId)
     return entry !== undefined && !entry.session.internal
+  }
+
+  /** A source that has no listing to offer because its scan failed. */
+  listFailed(provider: ProviderId): boolean {
+    return this.#listFailed.has(provider) && !this.#listed.has(provider)
+  }
+
+  /** The providers that have a saved-session source. */
+  providers(): ProviderId[] {
+    return this.sources.map(({ provider }) => provider)
+  }
+
+  /**
+   * What a provider saved that a user could import: every session of its last
+   * scan, wherever it ran, except helper conversations and sessions a chat
+   * left, which a deleted chat counts as. Undefined until that scan is done.
+   */
+  savedSessions(
+    provider: ProviderId,
+  ): Array<{ session: ProviderHistorySession; imported: boolean }> | undefined {
+    const listed = this.#listed.get(provider)
+    if (!listed) return undefined
+    const source = this.sources.find((candidate) => candidate.provider === provider)
+    const resolve = (id: string) => source?.history.resolveSessionId?.(id) ?? id
+    const native = new Set(
+      this.store
+        .nativeProviderThreads(provider)
+        .map((thread) => resolve(thread.providerSessionId ?? thread.id)),
+    )
+    const left = new Set(this.store.leftProviderSessions(provider).map(resolve))
+    return listed.flatMap((session) => {
+      if (session.internal || !session.id || left.has(session.id)) return []
+      if (!path.isAbsolute(session.workspacePath) || !Number.isFinite(session.createdAt)) return []
+      const entry = this.#entries.get(`${provider}:${session.id}`)
+      if (entry?.session.internal) return []
+      const imported =
+        native.has(session.id) || (entry !== undefined && !!this.store.thread(entry.threadId))
+      return [{ session, imported }]
+    })
+  }
+
+  /**
+   * Makes a saved session a chat now, without waiting for a scan. `title`
+   * replaces the provider's own for this chat; later scans keep it.
+   */
+  adopt(
+    provider: ProviderId,
+    session: ProviderHistorySession,
+    projectPath: string,
+    title?: string,
+  ): string {
+    const threadId = `external:${provider}:${session.id}`
+    if (!this.store.thread(threadId)) {
+      this.store.addProviderThread(
+        threadId,
+        provider,
+        title ? { ...session, title } : session,
+        projectPath,
+      )
+      this.#internalWithoutCopy.delete(threadId)
+    }
+    if (session.approval && this.store.threadApproval(threadId) === undefined)
+      this.store.setThreadApproval(threadId, session.approval)
+    this.store.saveProviderHistory(provider, threadId, session)
+    this.#remember({ provider, threadId, session, loadedRevision: null })
+    return threadId
+  }
+
+  /**
+   * Keeps a saved session out of its folder's chats, the way a scan keeps out
+   * a removed copy. A scan imports everything saved in a project's folder, so
+   * without this a folder that became a project for one chosen chat would
+   * bring in all the others. Importing it later still works.
+   */
+  holdBack(provider: ProviderId, session: ProviderHistorySession): void {
+    if (this.#entries.has(`${provider}:${session.id}`)) return
+    const threadId = `external:${provider}:${session.id}`
+    if (this.store.thread(threadId)) return
+    this.store.saveProviderHistory(provider, threadId, session)
+    this.#remember({ provider, threadId, session, loadedRevision: null })
   }
 
   /** Native child history is read on demand; it never starts or resumes an engine. */
@@ -213,6 +297,8 @@ export class ProviderHistory {
               throw error
             },
           )
+          this.#listed.set(provider, sessions)
+          this.#listFailed.delete(provider)
           if (this.#closed || this.hooks.canImport?.() === false) return
           // Temporary sessions can close between scans, or disappear on restart.
           // Their durable marker must win even before discovery has seen a row.
@@ -263,31 +349,7 @@ export class ProviderHistory {
             }
           }
           this.store.batchLifecycleUpdates(() => {
-            // Saved sessions share a few folders, and the store does not cache a
-            // folder that is not a project.
-            const projectFolders = new Map<string, string | undefined>()
-            let aliases: Map<string, string[]> | undefined
-            const projectFor = (folder: string) => {
-              if (projectFolders.has(folder)) return projectFolders.get(folder)
-              let project = this.store.project(folder)?.path
-              if (project === undefined) {
-                // Providers may save the same folder with another case or separator.
-                // Only the file system can say whether such a spelling is the same folder.
-                if (!aliases) {
-                  aliases = new Map()
-                  for (const { path: stored } of this.store.projects()) {
-                    const spelling = folderSpelling(stored)
-                    aliases.set(spelling, [...(aliases.get(spelling) ?? []), stored])
-                  }
-                }
-                const candidates = aliases.get(folderSpelling(folder))
-                const identity = candidates && folderIdentity(folder)
-                if (identity)
-                  project = candidates.find((candidate) => folderIdentity(candidate) === identity)
-              }
-              projectFolders.set(folder, project)
-              return project
-            }
+            const folders = new ProjectFolders(this.store)
             for (const session of sessions) {
               if (session.internal || !session.id || left.has(session.id)) continue
               if (!path.isAbsolute(session.workspacePath) || !Number.isFinite(session.createdAt))
@@ -295,7 +357,7 @@ export class ProviderHistory {
               const native = nativeThreads.get(session.id)
               // An isolated chat runs its provider in a private worktree, but
               // belongs to the project it was started from.
-              const projectPath = projectFor(native?.projectPath ?? session.workspacePath)
+              const projectPath = folders.project(native?.projectPath ?? session.workspacePath)
               if (projectPath === undefined) continue
               const key = `${provider}:${session.id}`
               const previous = this.#entries.get(key)
@@ -384,6 +446,7 @@ export class ProviderHistory {
           }
           for (const threadId of repair) await this.load(threadId)
         } catch {
+          this.#listFailed.add(provider)
           // Never log source content or paths from a malformed provider record.
           this.hooks.log(`${provider} history could not be refreshed; will retry`)
         } finally {
@@ -509,6 +572,38 @@ export class ProviderHistory {
       ),
     ])
     this.#accountSources.clear()
+  }
+}
+
+/**
+ * Which project saved folders belong to. Saved sessions share a few folders, and
+ * the store does not cache a folder that is not a project.
+ */
+export class ProjectFolders {
+  #known = new Map<string, string | undefined>()
+  #aliases: Map<string, string[]> | undefined
+
+  constructor(private store: Store) {}
+
+  project(folder: string): string | undefined {
+    if (this.#known.has(folder)) return this.#known.get(folder)
+    let project = this.store.project(folder)?.path
+    if (project === undefined) {
+      // Providers may save the same folder with another case or separator.
+      // Only the file system can say whether such a spelling is the same folder.
+      if (!this.#aliases) {
+        this.#aliases = new Map()
+        for (const { path: stored } of this.store.projects()) {
+          const spelling = folderSpelling(stored)
+          this.#aliases.set(spelling, [...(this.#aliases.get(spelling) ?? []), stored])
+        }
+      }
+      const candidates = this.#aliases.get(folderSpelling(folder))
+      const identity = candidates && folderIdentity(folder)
+      if (identity) project = candidates.find((candidate) => folderIdentity(candidate) === identity)
+    }
+    this.#known.set(folder, project)
+    return project
   }
 }
 

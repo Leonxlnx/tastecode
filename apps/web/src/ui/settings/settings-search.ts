@@ -37,6 +37,13 @@ export const SETTINGS_PAGES: SettingsSearchEntry[] = [
   { id: 'page:skills', section: 'skills', title: 'Skills', page: true },
   { id: 'page:usage', section: 'usage', title: 'Usage', page: true },
   { id: 'page:phone', section: 'phone', title: 'Phone', page: true, visible: (c) => c.phone },
+  {
+    id: 'page:import',
+    section: 'import',
+    title: 'Import chats',
+    keywords: 'threads history migrate move t3 code claude codex grok opencode',
+    page: true,
+  },
   { id: 'page:data', section: 'data', title: 'Data & privacy', page: true },
   { id: 'page:debug', section: 'debug', title: 'Debug', page: true, visible: (c) => c.debug },
   { id: 'page:about', section: 'about', title: 'About', page: true },

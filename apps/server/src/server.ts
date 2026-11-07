@@ -66,6 +66,8 @@ import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envel
 import { createHistoryResponseProjector } from './history-response.js'
 import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
+import { ChatImportService, openCodeChatReader } from './chat-import.js'
+import { createT3CodeReader } from './chat-import-t3.js'
 import { ProviderHistory } from './provider-history.js'
 import { HistoryRefreshSchedule } from './history-refresh-schedule.js'
 import { STREAM_QUIET_BACKGROUND_WAIT_MS, StreamQuiet } from './stream-quiet.js'
@@ -412,6 +414,7 @@ export function startServer(
   const historySources = [
     {
       provider: 'codex',
+      name: 'Codex',
       load: async (accountHome?: string) =>
         (await import('@harness/adapter-codex')).createCodexHistorySource(
           accountHome === undefined ? {} : { codexHome: accountHome },
@@ -419,6 +422,7 @@ export function startServer(
     },
     {
       provider: 'claude-code',
+      name: 'Claude Code',
       load: async (accountHome?: string) =>
         (await import('@harness/adapter-claude-code')).createClaudeHistorySource(
           accountHome === undefined ? {} : { configDir: accountHome },
@@ -426,6 +430,7 @@ export function startServer(
     },
     {
       provider: 'grok',
+      name: 'Grok',
       load: async (accountHome?: string) =>
         (await import('@harness/adapter-grok')).createGrokHistorySource(
           accountHome === undefined ? {} : { root: accountHome },
@@ -433,6 +438,7 @@ export function startServer(
     },
   ] satisfies Array<{
     provider: ProviderId
+    name: string
     load(accountHome?: string): Promise<ProviderHistorySource>
   }>
   /** Why a source failed to load, keyed by the id prefix of the chats it imports. */
@@ -594,6 +600,28 @@ export function startServer(
     if (provider) await history.scanned(provider)
     if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
   }
+
+  const chatImport = new ChatImportService({
+    store,
+    history: () => {
+      startBackgroundWork()
+      return providerHistory ?? Promise.reject(new Error('Provider history is closed'))
+    },
+    providerNames: new Map(historySources.map(({ provider, name }) => [provider, name])),
+    readers: [
+      createT3CodeReader({
+        attachmentsDir: path.join(path.dirname(databasePath), 'imported-attachments'),
+      }),
+      openCodeChatReader(),
+    ],
+    changed: (threadIds) => {
+      lifecycleScheduler.changed()
+      push.broadcast('providerHistory.changed', { threadIds })
+      announceListChange()
+    },
+    progress: (job) => push.broadcast('chatImport.progress', job),
+    log: (message) => console.log(`[import] ${message}`),
+  })
 
   function historyProvider(threadId: string): ProviderId | undefined {
     const imported = /^external:([^:]+):/.exec(threadId)?.[1]
@@ -1321,6 +1349,15 @@ export function startServer(
         })
       }
 
+      case 'chatImport.scan':
+        parseParams(method, params)
+        return chatImport.scan()
+
+      case 'chatImport.start': {
+        const p = parseParams(method, params)
+        return chatImport.start(p.chats)
+      }
+
       case 'projects.add': {
         const p = parseParams(method, params)
         const project = store.addProject(p.path, p.name)
@@ -1906,6 +1943,7 @@ export function startServer(
       // Terminal jobs get a fixed shutdown budget; waiting on provider history
       // first would spend it. disposeAll below waits for the same close.
       void orchestrator.closeAllTerminals().catch(() => undefined)
+      chatImport.close()
       await providerHistory?.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
       usageHistoryClosing = true

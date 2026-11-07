@@ -371,7 +371,7 @@ function v2Usage(data: Record<string, JsonRpcValue>, model?: string): DomainEven
   }
 }
 
-function toolKind(name: string): Item['type'] {
+export function toolKind(name: string): Item['type'] {
   if (/^(bash|shell|command)$/i.test(name)) return 'command'
   if (/^(edit|write|patch|multiedit)$/i.test(name)) return 'file_change'
   return 'tool_call'

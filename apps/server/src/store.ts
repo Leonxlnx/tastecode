@@ -1795,6 +1795,38 @@ export class Store {
     this.#cacheThread(id, { ...thread, closedAt, lastActiveAt: session.updatedAt })
   }
 
+  /**
+   * A chat copied from another app. Its transcript is stored here, so it has no
+   * provider history row; `providerSessionId` is set only when the provider can
+   * resume that chat's own session.
+   */
+  addImportedThread(
+    id: string,
+    provider: ProviderId,
+    chat: {
+      title: string
+      projectPath: string
+      createdAt: number
+      updatedAt: number
+      archived?: boolean | undefined
+      providerSessionId?: string | undefined
+    },
+  ): void {
+    const thread = this.addThread({
+      id,
+      provider,
+      ...(chat.providerSessionId ? { providerSessionId: chat.providerSessionId } : {}),
+      projectPath: chat.projectPath,
+      title: chat.title || 'Untitled chat',
+      createdAt: chat.createdAt,
+    })
+    const closedAt = chat.archived ? chat.updatedAt : undefined
+    this.#db
+      .prepare('UPDATE threads SET closed_at = ?, last_active_at = ? WHERE id = ?')
+      .run(closedAt ?? null, chat.updatedAt, id)
+    this.#cacheThread(id, { ...thread, closedAt, lastActiveAt: chat.updatedAt })
+  }
+
   forgetWorktree(threadId: string): void {
     this.#db
       .prepare(`UPDATE threads SET worktree_path = NULL, worktree_branch = NULL WHERE id = ?`)
