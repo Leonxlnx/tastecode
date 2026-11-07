@@ -1,0 +1,369 @@
+@import '@fontsource-variable/public-sans';
+
+/* The usage popup rises from the usage button at the foot of the rail. It is
+   wider than the rail so each window gets a long bar, and it keeps the menu
+   ground and edge so it reads as one of the app's popups. Its own face,
+   Public Sans, gives the figures a voice the rest of the rail does not have;
+   the colours stay the theme's, so every theme carries it. */
+.menu.menu--usage {
+  min-width: 0;
+  width: min(368px, calc(100vw - 16px));
+  max-height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  border-radius: var(--r-panel);
+}
+
+.usage-pop {
+  --font-usage: 'Public Sans Variable', var(--font-ui);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-family: var(--font-usage);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-pop:focus-visible {
+  outline: none;
+}
+
+.usage-pop__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 12px 4px 20px;
+}
+
+.usage-pop__heading {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.usage-pop__title {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 24px;
+}
+
+.usage-pop__lead {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 16px;
+}
+
+.usage-pop__icon-button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-circle);
+  color: var(--text-3);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.usage-pop__icon-button:hover:not([aria-disabled='true']) {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+.usage-pop__icon-button:focus-visible,
+.usage-pop__retry:focus-visible,
+.usage-pop__history:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.usage-pop__icon-button[aria-disabled='true'] {
+  cursor: default;
+}
+
+.usage-pop__icon-button.is-busy svg {
+  animation: usage-pop-turn 1.2s linear infinite;
+}
+
+@keyframes usage-pop-turn {
+  to {
+    rotate: 360deg;
+  }
+}
+
+.usage-pop__body {
+  display: grid;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 20px;
+}
+
+.usage-pop__empty {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 20px;
+}
+
+.usage-pop__source {
+  display: grid;
+  gap: 18px;
+}
+
+/* Providers stand apart by a rule and air; a name sits close to its own bars. */
+.usage-pop__source + .usage-pop__source {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--menu-line);
+}
+
+.usage-pop__source-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 24px;
+  margin-bottom: -6px;
+}
+
+/* The provider's own mark colour is the one thing that tells two sources
+   apart at a glance; the bars stay in the text ink. */
+.usage-pop__mark {
+  flex: none;
+  color: var(--usage-ink, var(--text-2));
+}
+
+.usage-pop__source-name {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 600;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-pop__account {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.usage-pop__status {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.usage-pop__retry {
+  flex: none;
+  height: 24px;
+  margin-left: auto;
+  padding: 0 10px;
+  background: var(--surface-3);
+  border: 0;
+  border-radius: var(--r-pill);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.usage-pop__status + .usage-pop__retry {
+  margin-left: 0;
+}
+
+.usage-pop__retry:hover {
+  background: var(--menu-hover);
+}
+
+.usage-pop__limit {
+  display: grid;
+  gap: 8px;
+}
+
+.usage-pop__limit-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.usage-pop__limit-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* What is left is the popup's answer, so it is its largest type: the
+   figure with its percent sign hung on it, then a quiet "left". */
+.usage-pop__amount {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.usage-pop__figure {
+  color: var(--text);
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 30px;
+}
+
+.usage-pop__percent {
+  margin-left: 1px;
+  color: var(--text-2);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.usage-pop__figure-unit {
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
+.usage-pop__value {
+  flex: none;
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 600;
+}
+
+.usage-pop__limit[data-low] :is(.usage-pop__figure, .usage-pop__percent) {
+  color: var(--error);
+}
+
+/* One long, thick bar per window. The fill is a full-width pill slid left
+   by what is spent, so its leading end stays round at every length and the
+   fill moves by transform alone; the track clips it, and the pace mark sits
+   outside the clip so it can stand proud of the bar. */
+.usage-pop__bar {
+  position: relative;
+  height: 14px;
+}
+
+.usage-pop__track {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: var(--r-pill);
+}
+
+.usage-pop__fill {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--text) 86%, transparent);
+  border-radius: inherit;
+  transform: translateX(calc((var(--left, 0) - 1) * 100%));
+  transition: transform var(--dur-slow) var(--ease-out);
+  animation: usage-pop-fill 640ms var(--ease-out) both;
+}
+
+.usage-pop__limit[data-low] .usage-pop__fill {
+  background: var(--error);
+}
+
+@keyframes usage-pop-fill {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+/* Even pace: where the fill would end if the window were spent evenly. A
+   tick a little taller than the bar, so it reads on the fill and on the
+   empty track alike without cutting the fill in two. */
+.usage-pop__pace {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  background: color-mix(in srgb, var(--text) 50%, transparent);
+  border-radius: var(--r-xs);
+}
+
+/* While a source is checked, its bar is an empty track that breathes. */
+.usage-pop__bar.is-checking {
+  animation: usage-pop-breathe 1.4s var(--ease-out) infinite alternate;
+}
+
+@keyframes usage-pop-breathe {
+  from {
+    opacity: 0.45;
+  }
+}
+
+.usage-pop__reset {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 16px;
+}
+
+.usage-pop__foot {
+  flex: none;
+  padding: 4px;
+  border-top: 1px solid var(--menu-line);
+}
+
+.usage-pop__history {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px 0 16px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-popup-item);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.usage-pop__history:hover {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+.usage-pop__history svg {
+  color: var(--text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-pop__fill,
+  .usage-pop__bar.is-checking,
+  .usage-pop__icon-button.is-busy svg {
+    animation: none;
+    transition: none;
+  }
+}
