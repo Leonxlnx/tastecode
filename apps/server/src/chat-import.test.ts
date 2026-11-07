@@ -37,6 +37,14 @@ function folder(name: string): string {
   return created
 }
 
+/** The temporary folder is inside the home folder on Windows and outside it on macOS. */
+function homeLabel(folderPath: string): string {
+  const relative = path.relative(os.homedir(), folderPath)
+  return relative.startsWith('..') || path.isAbsolute(relative)
+    ? folderPath
+    : path.join('~', relative)
+}
+
 function session(id: string, workspacePath: string, title = id): ProviderHistorySession {
   return { id, workspacePath, title, createdAt: 1000, updatedAt: 2000, revision: '1' }
 }
@@ -237,7 +245,7 @@ describe('chat import scan', () => {
       }),
     ])
     expect(scan.folders).toEqual([
-      { path: site, name: 'site', label: site, isProject: false, missing: false },
+      { path: site, name: 'site', label: homeLabel(site), isProject: false, missing: false },
     ])
   })
 
