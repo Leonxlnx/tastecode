@@ -485,6 +485,12 @@ export function resolveWorkspacePath(workspacePath: string): string {
  * checkout is gone, the walk up can reach an unrelated repository above the
  * worktree directory.
  */
+/** One key per file whichever way an agent named it; Windows paths ignore case. */
+function checkoutPathKey(folder: string, file: string): string {
+  const resolved = path.resolve(folder, file)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
+
 function privateCheckoutPath(worktreePath: string): string {
   const root = canonicalCheckoutRoot(worktreePath)
   const marker = statSync(path.join(root, '.git'), { throwIfNoEntry: false })
@@ -811,6 +817,8 @@ export class Orchestrator {
   #turnStartSnapshots = new Map<string, { repoPath: string; commit: string }>()
   /** The files each chat's running turn reported changing, as the agent named them. */
   #turnWrittenPaths = new Map<string, Set<string>>()
+  /** The files each chat's last finished turn reported changing. */
+  #lastTurnWrittenPaths = new Map<string, Set<string>>()
   /** Turn diffs being built from a checkpoint, per chat. */
   #turnDiffBuilds = new Map<string, Promise<void>>()
   /** Chats resuming their provider session for a prompt the user just sent. */
@@ -4682,15 +4690,18 @@ export class Orchestrator {
     this.#turnStartSnapshots.delete(threadId)
     const written = this.#turnWrittenPaths.get(threadId)
     this.#turnWrittenPaths.delete(threadId)
+    // A chat that shared this checkout and ends later compares its files with these.
+    if (written) this.#lastTurnWrittenPaths.set(threadId, written)
+    else this.#lastTurnWrittenPaths.delete(threadId)
     if (!start || !written) return
     const provider = this.#store.thread(threadId)?.provider
     if (!provider || PROVIDER_CAPABILITIES[provider].turnDiffs) return
     if (this.#recordedTurnDiffs.get(threadId)?.turnId === turnId) return
-    if (this.#checkoutAccess.sharedSinceBegin(threadId)) return
     // Only the files the agent said it changed: the user may have edited
     // others meanwhile, and Undo must never revert those. A file changed only
     // by a command (a formatter, a generator) is therefore not on the card.
     const folder = path.resolve(start.repoPath)
+    if (!this.#checkoutWasOwn(threadId, folder, written)) return
     const files = [...written].flatMap((file) => {
       const relative = path.relative(folder, path.resolve(folder, file))
       return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? [relative] : []
@@ -4700,6 +4711,29 @@ export class Orchestrator {
       if (this.#turnDiffBuilds.get(threadId) === build) this.#turnDiffBuilds.delete(threadId)
     })
     this.#turnDiffBuilds.set(threadId, build)
+  }
+
+  /**
+   * Whether the files this turn wrote hold its changes only. Another chat that
+   * worked in the same checkout meanwhile may have changed them too. The
+   * exception is the chat's own sub-agent, or the chat that started this one,
+   * when the two wrote different files.
+   */
+  #checkoutWasOwn(threadId: string, folder: string, written: ReadonlySet<string>): boolean {
+    const others = this.#checkoutAccess.coWritersSinceBegin(threadId)
+    if (others.size === 0) return true
+    const own = new Set([...written].map((file) => checkoutPathKey(folder, file)))
+    const parent = this.#store.thread(threadId)?.ownerThreadId
+    for (const other of others) {
+      if (other !== parent && this.#store.thread(other)?.ownerThreadId !== threadId) return false
+      const theirs = [
+        ...(this.#turnWrittenPaths.get(other) ?? []),
+        ...(this.#lastTurnWrittenPaths.get(other) ?? []),
+      ]
+      const otherFolder = path.resolve(this.#repoPath(other))
+      if (theirs.some((file) => own.has(checkoutPathKey(otherFolder, file)))) return false
+    }
+    return true
   }
 
   async #recordTurnDiffFromCheckpoint(
