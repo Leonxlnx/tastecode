@@ -784,20 +784,29 @@ function withoutRestoreNotice(text: string | undefined): string | undefined {
   return text?.startsWith(RESTORE_CONTEXT_NOTICE) ? text.slice(RESTORE_CONTEXT_NOTICE.length) : text
 }
 
-function sameUserMessage(left: Item, right: Item): boolean {
-  let text = withoutRestoreNotice(right.text)
+/**
+ * The user's own words of a prompt TasteCode wrapped before sending it. Only
+ * exact prefixes and markers TasteCode writes are taken off, never user prose.
+ */
+export function userWords(text: string): string {
+  let words = withoutRestoreNotice(text) ?? text
   // A continued chat's first prompt carries the earlier conversation before the
   // user's words; local history keeps only the words.
-  if (text !== undefined) text = withoutContinuationContext(text)
+  words = withoutContinuationContext(words)
   // Sub-agent results the agent had not read go in front of the user's words.
-  if (text !== undefined) text = withoutUnreadSubagentResults(text)
+  words = withoutUnreadSubagentResults(words)
   // Native logs contain our Design follow-up envelope; local history keeps only
-  // the user's submission. Unwrap solely for echo matching, never arbitrary prose.
-  if (text?.startsWith('This is an ordinary user turn, not an active TasteCode Design phase. ')) {
+  // the user's submission.
+  if (words.startsWith('This is an ordinary user turn, not an active TasteCode Design phase. ')) {
     const marker = '\n\nUser request:\n'
-    const start = text.indexOf(marker)
-    if (start !== -1) text = text.slice(start + marker.length)
+    const start = words.indexOf(marker)
+    if (start !== -1) words = words.slice(start + marker.length)
   }
+  return words
+}
+
+function sameUserMessage(left: Item, right: Item): boolean {
+  const text = right.text === undefined ? undefined : userWords(right.text)
   return (
     (left.text === right.text || left.text === text) &&
     sameAttachments(left.attachments ?? [], right.attachments ?? [])
