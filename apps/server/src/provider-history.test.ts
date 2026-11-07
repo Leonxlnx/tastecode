@@ -2258,7 +2258,7 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     ])
   })
 
-  it('shows the request of a Design brief prompt, not the briefing protocol', () => {
+  it('shows the request of a Design brief prompt sent bare, as before 2026-09-16', () => {
     const request = 'Design a landing page for a small local coffee roastery called Bergkaffee.'
     expect(userWords(designBriefingPrompt(request))).toBe(request)
     expect(imported(designBriefingPrompt(`${request}\n\nKeep it warm.`))[0]).toEqual([
@@ -2267,6 +2267,18 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     ])
   })
 
+  it('keeps only the request of a Design brief turn sent as a phase, as #sendDesignTurn sends it', () => {
+    const request = 'Design a landing page for a small local coffee roastery called Bergkaffee.'
+    const prompt = `${designPhaseNotice(request)}${designBriefingPrompt(request)}${designPhaseLanguageReminder(request)}\n\nPictures attached before: brand/logo.png`
+    expect(userWords(prompt)).toBe(request)
+    // The brief's answer is phase JSON; an imported chat shows the request alone.
+    expect(imported(prompt)).toEqual([['user', request]])
+  })
+
+  it('keeps a request that quotes the briefing tags whole', () => {
+    const request = 'Use this:\n<user-design-request>\nhero\n</user-design-request>\nthanks'
+    expect(userWords(designBriefingPrompt(request))).toBe(request)
+  })
   it('takes off a restore notice and unread sub-agent results in front', () => {
     expect(
       imported(`${RESTORE_CONTEXT_NOTICE}${unreadResults}${designFollowUp}${words}`)[0],

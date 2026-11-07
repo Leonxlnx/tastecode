@@ -684,6 +684,8 @@ export function importedEvents(
       : [],
   )
   const echoed = new Set<string>()
+  // Design brief turns of a chat with no local log: only the request is the user's.
+  const briefs = new Set<string>()
   for (const event of events) {
     const id = turnId(event)
     if (!id) continue
@@ -695,8 +697,12 @@ export function importedEvents(
       (event.type === 'item.completed' || event.type === 'item.started') &&
       event.item.role === 'user' &&
       withoutRestoreNotice(event.item.text)?.startsWith(DESIGN_PHASE_MARKER)
-    )
-      echoed.add(id)
+    ) {
+      // Without a local log (an imported chat) nothing else shows what was asked.
+      if (!local.length && designBriefRequest(withoutRestoreNotice(event.item.text)!) !== undefined)
+        briefs.add(id)
+      else echoed.add(id)
+    }
   }
   const candidates = events
     .flatMap((event) => {
@@ -733,6 +739,13 @@ export function importedEvents(
     const id = turnId(event)
     if (id) currentTurn = id
     if (echoed.has(id ?? currentTurn) && event.type !== 'thread.started') continue
+    // The brief's own answer is phase JSON, which the Design activity shows in a local log.
+    if (
+      briefs.has(id ?? currentTurn) &&
+      (event.type === 'item.completed' || event.type === 'item.started') &&
+      event.item.role !== 'user'
+    )
+      continue
     // Historical permission requests must never become actionable approvals.
     if (
       event.type.startsWith('approval.') ||
@@ -806,13 +819,28 @@ export function userWords(text: string): string {
     const start = words.indexOf(marker)
     if (start !== -1) words = words.slice(start + marker.length)
   }
-  // A Design brief's prompt (designBriefingPrompt) ends with the request as the user wrote it.
-  if (words.startsWith(BRIEFING_START) && words.endsWith(BRIEFING_REQUEST_CLOSE)) {
-    const start = words.lastIndexOf(BRIEFING_REQUEST_OPEN)
-    if (start !== -1)
-      words = words.slice(start + BRIEFING_REQUEST_OPEN.length, -BRIEFING_REQUEST_CLOSE.length)
+  return designBriefRequest(words) ?? words
+}
+
+/**
+ * The request a Design brief prompt (designBriefingPrompt) carries as the user wrote
+ * it. Sent bare until 2026-09-16, since then between a phase notice and a language
+ * reminder, sometimes with a note on pictures attached before.
+ */
+function designBriefRequest(text: string): string | undefined {
+  let start = -1
+  if (text.startsWith(BRIEFING_START)) start = 0
+  else if (text.startsWith(DESIGN_PHASE_MARKER)) {
+    const at = text.indexOf(`\n\n${BRIEFING_START}`)
+    if (at !== -1) start = at + 2
   }
-  return words
+  if (start === -1) return undefined
+  // The template opens the request block once; the request may quote either tag itself.
+  const open = text.indexOf(BRIEFING_REQUEST_OPEN, start)
+  const close = text.lastIndexOf(BRIEFING_REQUEST_CLOSE)
+  return open !== -1 && close > open
+    ? text.slice(open + BRIEFING_REQUEST_OPEN.length, close)
+    : undefined
 }
 
 const BRIEFING_START = 'You are running TasteCode Design Briefing mode.\n'
