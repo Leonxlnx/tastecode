@@ -31,6 +31,7 @@ export type ProviderMark =
   | 'pi'
   | 'acp'
   | 'custom'
+  | 't3code'
   | AgentMark
 
 export type ProviderPresentation = {

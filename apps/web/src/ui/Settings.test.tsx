@@ -102,6 +102,7 @@ function renderSettings(
       showDebug={options.showDebug}
       onReset={options.onReset ?? (() => {})}
       onClose={options.onClose ?? (() => {})}
+      onOpenChat={() => {}}
       {...options.overrides}
     />
   )
@@ -1674,6 +1675,7 @@ describe('model settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
+        onOpenChat={() => {}}
       />
     )
     const view = render(settings(new Set(['grok:ling'])))
@@ -1838,6 +1840,7 @@ describe('model settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
+        onOpenChat={() => {}}
       />,
     )
 
@@ -1901,6 +1904,7 @@ describe('model settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
+        onOpenChat={() => {}}
       />,
     )
 
@@ -2113,6 +2117,7 @@ describe('provider settings', () => {
         onAccountChange={onAccountChange}
         onReset={() => {}}
         onClose={() => {}}
+        onOpenChat={() => {}}
       />,
     )
 
@@ -2233,6 +2238,7 @@ describe('provider settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
+        onOpenChat={() => {}}
       />
     )
     const view = render(settingsFor(onConnectionsChanged))
@@ -2391,6 +2397,7 @@ describe('provider settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
+        onOpenChat={() => {}}
       />,
     )
 

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { ChatImportJobSchema, ChatImportScanSchema } from './chat-import.js'
 import {
   ModelConnectionListSchema,
   ModelConnectionModelsSchema,
@@ -1860,6 +1861,22 @@ export const methods = {
     }),
   },
   /**
+   * What other apps saved on this computer. Ask again while a source says
+   * `scanning`: a first scan of a large history outlasts any one request.
+   */
+  'chatImport.scan': {
+    params: z.object({}),
+    result: ChatImportScanSchema,
+  },
+  /**
+   * Starts importing chats from the last scan and replies at once. Progress
+   * arrives on `chatImport.progress`, because a large import outlasts a request.
+   */
+  'chatImport.start': {
+    params: z.object({ chats: z.array(z.string()).min(1).max(20_000) }),
+    result: ChatImportJobSchema,
+  },
+  /**
    * Projects and sessions the server knows about. These replace what the
    * renderer used to keep in localStorage, where a reload could destroy it.
    */
@@ -2591,6 +2608,8 @@ export const channels = {
   }),
   /** Provider metadata or saved transcripts changed outside TasteCode. */
   'providerHistory.changed': z.object({ threadIds: z.array(z.string()) }),
+  /** An import moved on, or finished. */
+  'chatImport.progress': ChatImportJobSchema,
   /** Events from an ephemeral Side chat stay out of the main conversation stream. */
   'sideChat.event': z.object({
     threadId: z.string(),
