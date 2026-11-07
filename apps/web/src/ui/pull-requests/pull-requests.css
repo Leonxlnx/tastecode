@@ -577,6 +577,9 @@
 
 .pr-detail {
   display: grid;
+  /* One column no wider than the pane: an auto column took the toolbar's full width and pushed
+     the whole detail past a narrow stage's edge. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: 100%;
   height: 100%;
@@ -587,6 +590,9 @@
 .pr-detail-toolbar {
   position: relative;
   z-index: 4;
+  /* On a narrow stage the actions move under the tabs instead of past the edge. */
+  flex-wrap: wrap;
+  row-gap: 6px;
   justify-content: space-between;
   gap: 12px;
   min-height: 51px;
@@ -612,6 +618,7 @@
 
 .pr-detail-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 5px;
@@ -944,6 +951,8 @@
 
 .pr-facts {
   display: grid;
+  /* As in .pr-detail: an auto column took a long branch name's width past a narrow pane. */
+  grid-template-columns: minmax(0, 1fr);
   width: min(100%, 660px);
   padding: 5px 0 3px;
 }
@@ -973,6 +982,7 @@
   flex: 1;
   color: var(--text-2);
   font-size: var(--t-sm);
+  overflow-wrap: anywhere;
 }
 
 .pr-fact-content > .menuwrap {

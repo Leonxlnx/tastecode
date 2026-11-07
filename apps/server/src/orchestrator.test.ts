@@ -202,7 +202,6 @@ const CAPABILITIES: Capabilities = {
 class FakeSession implements AgentSession {
   /** Set before attach to model an agent that negotiated no session reload. */
   static nextResumable: boolean | undefined
-  readonly capabilities = CAPABILITIES
   readonly resumable = FakeSession.nextResumable
   emit: (event: DomainEvent) => void = () => {}
   disposed = false
@@ -251,7 +250,10 @@ class FakeSession implements AgentSession {
 
   #listeners: Array<(event: DomainEvent) => void> = []
 
-  constructor(readonly id: string) {}
+  constructor(
+    readonly id: string,
+    readonly capabilities = CAPABILITIES,
+  ) {}
 
   async sendTurn(
     _threadId: string,
@@ -495,6 +497,7 @@ function harness(
   stopSettleMs?: number,
 ) {
   const sessions: FakeSession[] = []
+  const sessionCapabilities: Capabilities[] = []
   const received: Array<{
     threadId: string
     event: DomainEvent
@@ -543,7 +546,7 @@ function harness(
       startedOptions.push(options)
       const barrier = startBarriers.shift()
       if (barrier) await barrier
-      const session = new FakeSession(`s${sessions.length + 1}`)
+      const session = new FakeSession(`s${sessions.length + 1}`, sessionCapabilities.shift())
       sessions.push(session)
       return {
         thread: {
@@ -569,7 +572,7 @@ function harness(
             resumedOptions.push(options)
             const barrier = resumeBarriers.shift()
             if (barrier) await barrier
-            const session = new FakeSession(`s${sessions.length + 1}`)
+            const session = new FakeSession(`s${sessions.length + 1}`, sessionCapabilities.shift())
             sessions.push(session)
             return {
               thread: {
@@ -637,6 +640,7 @@ function harness(
     store,
     models,
     sessions,
+    sessionCapabilities,
     received,
     sideReceived,
     lifecycles,
@@ -661,6 +665,143 @@ function harness(
     capturePreview,
   }
 }
+
+describe('queue steering capability lifecycle', () => {
+  it.each(['new', 'persisted'] as const)(
+    'pushes steering availability for the first turn of a %s chat without queueing',
+    async (kind) => {
+      const { orchestrator, store, sessions, queueStates } = harness()
+      try {
+        let threadId: string
+        if (kind === 'persisted') {
+          store.addProject('/repo')
+          store.addThread({
+            id: 'persisted',
+            projectPath: '/repo',
+            provider: 'codex',
+            title: 'Old',
+          })
+          threadId = 'persisted'
+          expect(orchestrator.queue(threadId).canSteer).toBe(false)
+        } else {
+          threadId = (await orchestrator.startThread('codex', '/repo')).id
+        }
+        await orchestrator.submitTurn(threadId, 'First')
+
+        expect(orchestrator.queue(threadId)).toEqual({ items: [], canSteer: true })
+        expect(queueStates).toEqual([{ threadId, itemIds: [], canSteer: true }])
+        sessions[0]!.emit(turnStarted(threadId, 's1-turn'))
+        sessions[0]!.emit(message('Streaming', 's1-turn'))
+        expect(queueStates).toHaveLength(1)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+
+  it.each(['close', 'disconnect', 'idle', 'dispose'] as const)(
+    'pushes loss of steering availability on runtime %s',
+    async (reason) => {
+      const { orchestrator, store, sessions, queueStates } = harness(undefined, undefined, 1)
+      try {
+        const { id } = await orchestrator.startThread('codex', '/repo')
+        if (reason === 'idle') await orchestrator.startThread('codex', '/repo')
+        queueStates.length = 0
+        if (reason === 'close') await orchestrator.close(id)
+        else if (reason === 'disconnect') sessions[0]!.emitDisconnected()
+        else if (reason === 'dispose') await orchestrator.disposeAll()
+        else {
+          sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+          sessions[1]!.emit({ type: 'turn.completed', turnId: 's2-turn', status: 'completed' })
+        }
+
+        expect(orchestrator.queue(id).canSteer).toBe(false)
+        expect(queueStates).toEqual([{ threadId: id, itemIds: [], canSteer: false }])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+
+  it('publishes the replacement session capability when a chat moves providers', async () => {
+    const { orchestrator, store, sessionCapabilities, queueStates } = harness()
+    try {
+      const { id } = await orchestrator.startThread('codex', '/repo')
+      queueStates.length = 0
+      sessionCapabilities.push({ ...CAPABILITIES, steer: false })
+      await orchestrator.changeProvider(id, { provider: 'grok' })
+      expect(orchestrator.queue(id).canSteer).toBe(false)
+      expect(queueStates).toEqual([{ threadId: id, itemIds: [], canSteer: false }])
+
+      await orchestrator.changeProvider(id, { provider: 'codex', model: 'next-model' })
+      expect(orchestrator.queue(id).canSteer).toBe(true)
+      expect(queueStates.at(-1)).toEqual({ threadId: id, itemIds: [], canSteer: true })
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
+  it.each(['attach', 'close', 'disconnect', 'idle', 'dispose'] as const)(
+    'finishes runtime %s when the steering listener throws',
+    async (reason) => {
+      const { orchestrator, store, sessions, queueNotificationError } = harness(
+        undefined,
+        undefined,
+        1,
+      )
+      try {
+        if (reason === 'attach') queueNotificationError.current = new Error('listener failed')
+        const { id } = await orchestrator.startThread('codex', '/repo')
+        if (reason === 'idle') await orchestrator.startThread('codex', '/repo')
+        queueNotificationError.current = new Error('listener failed')
+
+        if (reason === 'close') await orchestrator.close(id)
+        else if (reason === 'disconnect') sessions[0]!.emitDisconnected()
+        else if (reason === 'idle') {
+          sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+          sessions[1]!.emit({ type: 'turn.completed', turnId: 's2-turn', status: 'completed' })
+        } else await orchestrator.disposeAll()
+
+        await vi.waitFor(() => expect(sessions[0]!.disposed).toBe(true))
+        expect(orchestrator.queue(id).canSteer).toBe(false)
+        // Cleanup must also let a later shutdown finish, including any remaining runtime.
+        await orchestrator.disposeAll()
+        expect(sessions.every((session) => session.disposed)).toBe(true)
+      } finally {
+        queueNotificationError.current = undefined
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+
+  it.each(['grok', 'api'] as const)(
+    'keeps unsupported %s sessions unavailable and refuses to steer their queued prompts',
+    async (provider) => {
+      const { orchestrator, store, sessions, sessionCapabilities, queueStates } = harness()
+      try {
+        sessionCapabilities.push({ ...CAPABILITIES, steer: false })
+        const { id } = await orchestrator.startThread(provider, '/repo')
+        await orchestrator.submitTurn(id, 'First')
+        const queued = await orchestrator.submitTurn(id, 'Next')
+        if (!queued.queued) throw new Error('expected queued prompt')
+        expect(queueStates).toEqual([
+          { threadId: id, itemIds: [queued.queuedTurn.id], canSteer: false },
+        ])
+        await expect(orchestrator.steerQueuedTurn(id, queued.queuedTurn.id)).rejects.toThrow(
+          'this agent does not support steering a running turn',
+        )
+        expect(sessions[0]!.steered).toEqual([])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+})
 
 describe('failed provider starts', () => {
   const cleanupFailure = (message: string, dispose: () => Promise<void>) => {
@@ -781,6 +922,31 @@ describe('failed provider starts', () => {
       )
     } finally {
       await restarted.orchestrator.disposeAll()
+    }
+  })
+
+  it('starts a Side chat for a resting main chat without resuming the main chat', async () => {
+    const { orchestrator, sessions, store } = harness()
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    store.append('persisted-thread', userMessage('u1', 'Main question', 't1'))
+    try {
+      const side = await orchestrator.startSideThread('persisted-thread')
+      // One agent process: the Side chat's own. It reads the main chat's saved history.
+      expect(sessions).toHaveLength(1)
+      expect(store.thread(side.id)).toMatchObject({
+        ephemeral: true,
+        parentThreadId: 'persisted-thread',
+        provider: 'codex',
+      })
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
     }
   })
 
@@ -1265,11 +1431,13 @@ describe('idle thread runtime retention', () => {
     const store = new Store(':memory:')
     const { orchestrator, sessions } = harness(undefined, store, 8, 1_000)
     try {
-      const thread = await orchestrator.startThread('codex', process.cwd())
-      sessions[0]?.emit({
-        type: 'thread.error',
-        threadId: thread.id,
-        message: 'provider failed before the queued retry',
+      const thread = { id: 'persisted-queued' }
+      store.addProject(process.cwd())
+      store.addThread({
+        id: thread.id,
+        projectPath: process.cwd(),
+        provider: 'codex',
+        title: 'Queued retry',
       })
       store.enqueueQueuedTurn({
         id: 'queued',
@@ -1279,6 +1447,7 @@ describe('idle thread runtime retention', () => {
         options: {},
         createdAt: Date.now(),
       })
+      await orchestrator.setThreadApproval(thread.id, 'full')
 
       await vi.advanceTimersByTimeAsync(10_000)
       expect(sessions[0]?.disposed).toBe(false)
@@ -1560,6 +1729,18 @@ const message = (text: string, turnId = 't1'): DomainEvent => ({
     role: 'assistant',
     status: 'completed',
     text,
+    createdAt: 0,
+  },
+})
+
+const fileEdit = (path: string, turnId: string): DomainEvent => ({
+  type: 'item.completed',
+  item: {
+    id: `edit-${path}`,
+    turnId,
+    type: 'file_change',
+    status: 'completed',
+    path,
     createdAt: 0,
   },
 })
@@ -2594,6 +2775,63 @@ describe('durable turn timing', () => {
     } finally {
       now.mockRestore()
       await orchestrator.disposeAll()
+    }
+  })
+
+  it('starts the turn of a prompt that waited for its chat to resume at the send', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const { orchestrator, sessions, store } = harness()
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    try {
+      const sending = orchestrator.submitTurn('persisted-thread', 'first', [], {}, 'first')
+      // The resume took 15 s.
+      now.mockReturnValue(16_000)
+      const sent = await sending
+      if (sent.queued) throw new Error('expected a turn')
+      sessions[0]!.emit({
+        type: 'turn.started',
+        turn: {
+          id: sent.turnId,
+          threadId: 'persisted-thread',
+          status: 'running',
+          createdAt: 16_000,
+        },
+      })
+      sessions[0]!.emit({ type: 'turn.completed', turnId: sent.turnId, status: 'completed' })
+
+      // The chat is attached now: the next prompt starts when it starts.
+      now.mockReturnValue(20_000)
+      const next = await orchestrator.submitTurn('persisted-thread', 'second', [], {}, 'second')
+      if (next.queued) throw new Error('expected a turn')
+      now.mockReturnValue(21_000)
+      sessions[0]!.emit({
+        type: 'turn.started',
+        turn: {
+          id: next.turnId,
+          threadId: 'persisted-thread',
+          status: 'running',
+          createdAt: 21_000,
+        },
+      })
+
+      const starts = store
+        .history('persisted-thread')
+        .map(({ event }) => event)
+        .filter(
+          (event): event is Extract<DomainEvent, { type: 'turn.started' }> =>
+            event.type === 'turn.started',
+        )
+      expect(starts.map(({ turn }) => turn.createdAt)).toEqual([1_000, 20_000])
+    } finally {
+      now.mockRestore()
+      await orchestrator.disposeAll()
+      store.close()
     }
   })
 })
@@ -8701,9 +8939,12 @@ describe('several sessions at once', () => {
       expect(turnsCompleted(received)).toEqual([
         expect.objectContaining({ turnId: 's1-turn', status: 'interrupted' }),
       ])
+      // The tool the user stopped closes as interrupted (still `started`), not
+      // failed: ending the turn at once borrows restart recovery's settling,
+      // where a dead runtime's work does count as failed.
       expect(received.map(({ event }) => event)).toContainEqual({
         type: 'item.completed',
-        item: expect.objectContaining({ id: 'tool-1', status: 'failed' }),
+        item: expect.objectContaining({ id: 'tool-1', status: 'started' }),
       })
       expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
       expect(orchestrator.inboxStatus(thread.id)).not.toBe('working')
@@ -8711,6 +8952,97 @@ describe('several sessions at once', () => {
       confirm()
       await expect(stopping).resolves.toBeUndefined()
       await orchestrator.disposeAll()
+    })
+
+    it('keeps a stopped tool interrupted when the agent later reports it failed', async () => {
+      const { orchestrator, thread, session, store, stopping, confirm } =
+        await stoppedWhileUnconfirmed()
+      confirm()
+      await stopping
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+      // Codex reports the killed process after the turn ended.
+      session.emit({
+        type: 'item.completed',
+        item: {
+          id: 'tool-1',
+          turnId: 's1-turn',
+          type: 'tool_call',
+          status: 'failed',
+          text: 'runner error: runner pipe closed',
+          createdAt: 1,
+        },
+      })
+      const lastTool = () =>
+        store
+          .history(thread.id)
+          .flatMap(({ event }) =>
+            event.type === 'item.completed' && event.item.id === 'tool-1' ? [event.item] : [],
+          )
+          .at(-1)
+      expect(lastTool()).toMatchObject({ status: 'started' })
+
+      // The next turn's own failures are failures again.
+      session.turnIds.push('s2-turn')
+      await orchestrator.submitTurn(thread.id, 'try again')
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 's2-turn', threadId: thread.id, status: 'running', createdAt: 2 },
+      })
+      session.emit({
+        type: 'item.completed',
+        item: { ...lastTool()!, id: 'tool-2', turnId: 's2-turn', status: 'failed' },
+      })
+      expect(
+        store
+          .history(thread.id)
+          .flatMap(({ event }) =>
+            event.type === 'item.completed' && event.item.id === 'tool-2' ? [event.item] : [],
+          )
+          .at(-1),
+      ).toMatchObject({ status: 'failed' })
+      await orchestrator.disposeAll()
+    })
+
+    it('keeps a stopped tool interrupted after the database and server reopen', async () => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), 'stopped-tool-restart-'))
+      const database = path.join(directory, 'state.db')
+      let store = new Store(database)
+      try {
+        const { orchestrator, sessions } = harness(undefined, store)
+        const thread = await orchestrator.startThread('codex', '/repo')
+        const session = sessions[0]!
+        await orchestrator.submitTurn(thread.id, 'run the tests')
+        session.emit({
+          type: 'turn.started',
+          turn: { id: 's1-turn', threadId: thread.id, status: 'running', createdAt: 1 },
+        })
+        session.emit(tool('started'))
+        await orchestrator.interrupt(thread.id)
+        await orchestrator.disposeAll()
+        store.close()
+
+        // Restart recovery settles what a dead runtime left open, as failed.
+        // The Stop already closed this turn's work, so nothing is left for it.
+        store = new Store(database)
+        expect(store.recoverInterruptedThreads()).toEqual([])
+        const lastTool = compactHistoryReplay(store.history(thread.id))
+          .flatMap(({ event }) =>
+            (event.type === 'item.started' || event.type === 'item.completed') &&
+            event.item.id === 'tool-1'
+              ? [event]
+              : [],
+          )
+          .at(-1)
+        expect(lastTool).toMatchObject({ item: { id: 'tool-1', status: 'started' } })
+        expect(store.history(thread.id).at(-1)?.event).toMatchObject({
+          type: 'turn.completed',
+          turnId: 's1-turn',
+          status: 'interrupted',
+        })
+      } finally {
+        store.close()
+        rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      }
     })
 
     it('records nothing more of the stopped turn, its end included', async () => {
@@ -8878,6 +9210,57 @@ describe('several sessions at once', () => {
       expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
       await orchestrator.disposeAll()
     })
+  })
+
+  it('shows a chat as starting while it resumes for a sent prompt, and idle at Stop', async () => {
+    const { orchestrator, store } = harness()
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    try {
+      expect(orchestrator.inboxStatus('persisted-thread')).toBe('idle')
+      const before = orchestrator.sidebarStatusRevision()
+      const sending = orchestrator.submitTurn('persisted-thread', 'stop this', [], {}, 'stopped')
+      const stopped = expect(sending).rejects.toThrow('turn cancelled while resuming')
+      expect(orchestrator.inboxStatus('persisted-thread')).toBe('starting')
+      expect(orchestrator.sidebarStatusChangesSince(before)).toEqual(['persisted-thread'])
+
+      const starting = orchestrator.sidebarStatusRevision()
+      await orchestrator.interrupt('persisted-thread')
+      // At the Stop, not when the cancelled resume has wound down.
+      expect(orchestrator.inboxStatus('persisted-thread')).toBe('idle')
+      expect(orchestrator.sidebarStatusChangesSince(starting)).toEqual(['persisted-thread'])
+      await stopped
+      expect(orchestrator.inboxStatus('persisted-thread')).toBe('idle')
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
+  it('goes from starting to working when a resumed chat starts its turn', async () => {
+    const { sessions, orchestrator, store } = harness()
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    try {
+      const sending = orchestrator.submitTurn('persisted-thread', 'go', [], {}, 'go')
+      expect(orchestrator.inboxStatus('persisted-thread')).toBe('starting')
+      await expect(sending).resolves.toMatchObject({ queued: false })
+      expect(sessions[0]!.sent).toEqual(['go'])
+      expect(orchestrator.inboxStatus('persisted-thread')).toBe('working')
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
   })
 
   it('cancels a cold resume on Stop and allows a later submission', async () => {
@@ -9662,8 +10045,10 @@ describe('session-owned subagent snapshots', () => {
         status: 'completed',
         subagent: { state: 'running', background: true, toolUses: 3 },
       })
+      // The launch the user stopped is interrupted, not failed; its row reads
+      // the sub-agent's own state.
       expect(items.find(({ id }) => id === 'explorer')).toMatchObject({
-        status: 'failed',
+        status: 'started',
         subagent: { state: 'interrupted' },
       })
       expect(
@@ -10338,6 +10723,12 @@ describe('isolated sessions', { timeout: 60_000 }, () => {
       execFileSync('git', args, { cwd: fixtureRepo, windowsHide: true })
     git('config', 'user.email', 'test@example.com')
     git('config', 'user.name', 'Test')
+    // As in gitRepositoryTemplate: no gc or maintenance left running in the
+    // background after the commit, writing in .git/objects while a test copies
+    // the repository (ENOENT on .git/objects in cpSync, twice on macOS).
+    git('config', 'gc.auto', '0')
+    git('config', 'gc.autoDetach', 'false')
+    git('config', 'maintenance.auto', 'false')
     writeFileSync(path.join(fixtureRepo, 'file.txt'), 'original\n')
     git('add', '.')
     git('commit', '-m', 'first')
@@ -10920,6 +11311,141 @@ describe('rolling a session back', () => {
     } finally {
       await orchestrator.disposeAll()
     }
+  })
+
+  it('builds the turn diff from its checkpoint when the agent reports none, and undoes it', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('claude-code', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    await orchestrator.sendTurn(thread.id, 'change the file and add one')
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+    writeFileSync(path.join(repo, 'file.txt'), 'agent change\n')
+    writeFileSync(path.join(repo, 'added.txt'), 'new file\n')
+    sessions[0]!.emit(fileEdit('file.txt', 'turn-1'))
+    // Claude Code names files by absolute path.
+    sessions[0]!.emit(fileEdit(path.join(repo, 'added.txt'), 'turn-1'))
+    sessions[0]!.emit(message('Done.', 'turn-1'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    await vi.waitFor(() => expect(store.turnDiff(thread.id, 'turn-1')).toBeTruthy(), {
+      timeout: 15_000,
+    })
+    const diff = store.turnDiff(thread.id, 'turn-1')!
+    expect(diff).toContain('diff --git a/file.txt b/file.txt')
+    expect(diff).toContain('+agent change')
+    expect(diff).toContain('diff --git a/added.txt b/added.txt')
+
+    await orchestrator.undoTurnChanges(thread.id, 'turn-1', diff)
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
+    expect(existsSync(path.join(repo, 'added.txt'))).toBe(false)
+    await orchestrator.disposeAll()
+  })
+
+  it('keeps files the agent did not report out of a turn diff built from its checkpoint', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('claude-code', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    await orchestrator.sendTurn(thread.id, 'change the file')
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+    writeFileSync(path.join(repo, 'file.txt'), 'agent change\n')
+    sessions[0]!.emit(fileEdit('file.txt', 'turn-1'))
+    // Meanwhile the user edits another file, and a command rewrites a third.
+    writeFileSync(path.join(repo, 'notes.txt'), 'user work\n')
+    writeFileSync(path.join(repo, 'formatted.txt'), 'from a formatter\n')
+    sessions[0]!.emit({
+      type: 'item.completed',
+      item: {
+        id: 'cmd-1',
+        turnId: 'turn-1',
+        type: 'command',
+        status: 'completed',
+        command: 'npx prettier --write .',
+        createdAt: 0,
+      },
+    })
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    await vi.waitFor(() => expect(store.turnDiff(thread.id, 'turn-1')).toBeTruthy(), {
+      timeout: 15_000,
+    })
+    const diff = store.turnDiff(thread.id, 'turn-1')!
+    expect(diff).toContain('diff --git a/file.txt b/file.txt')
+    expect(diff).not.toContain('notes.txt')
+    expect(diff).not.toContain('formatted.txt')
+
+    await orchestrator.undoTurnChanges(thread.id, 'turn-1', diff)
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
+    expect(readFileSync(path.join(repo, 'notes.txt'), 'utf8')).toBe('user work\n')
+    await orchestrator.disposeAll()
+  })
+
+  it("keeps an agent's own turn diff", async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('claude-code', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    await orchestrator.sendTurn(thread.id, 'change the file')
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+    writeFileSync(path.join(repo, 'file.txt'), 'agent change\n')
+    sessions[0]!.emit(fileEdit('file.txt', 'turn-1'))
+    sessions[0]!.emit({ type: 'diff.updated', turnId: 'turn-1', diff: 'agent patch' })
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(store.turnDiff(thread.id, 'turn-1')).toBe('agent patch')
+    await orchestrator.disposeAll()
+  })
+
+  it('takes no second snapshot after a turn that ran no command and changed no file', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('claude-code', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    await orchestrator.sendTurn(thread.id, 'only answer')
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+    writeFileSync(path.join(repo, 'unrelated.txt'), 'user work\n')
+    sessions[0]!.emit(message('An answer.', 'turn-1'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(store.turnDiff(thread.id, 'turn-1')).toBeUndefined()
+    await orchestrator.disposeAll()
+  })
+
+  it('takes no second snapshot for an agent that reports its turn diffs itself', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    await orchestrator.sendTurn(thread.id, 'only answer')
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+    writeFileSync(path.join(repo, 'unrelated.txt'), 'user work\n')
+    sessions[0]!.emit(fileEdit('unrelated.txt', 'turn-1'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(store.turnDiff(thread.id, 'turn-1')).toBeUndefined()
+    await orchestrator.disposeAll()
+  })
+
+  it('builds no turn diff when another chat worked in the same checkout', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const first = await orchestrator.startThread('claude-code', repo)
+    const second = await orchestrator.startThread('claude-code', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    sessions[1]!.turnIds.push('turn-2')
+    await orchestrator.sendTurn(first.id, 'change the file')
+    sessions[0]!.emit(turnStarted(first.id, 'turn-1'))
+    await orchestrator.sendTurn(second.id, 'add a file')
+    sessions[1]!.emit(turnStarted(second.id, 'turn-2'))
+    writeFileSync(path.join(repo, 'file.txt'), 'first chat\n')
+    writeFileSync(path.join(repo, 'added.txt'), 'second chat\n')
+    sessions[0]!.emit(fileEdit('file.txt', 'turn-1'))
+    sessions[1]!.emit(fileEdit('added.txt', 'turn-2'))
+    sessions[1]!.emit({ type: 'turn.completed', turnId: 'turn-2', status: 'completed' })
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(store.turnDiff(first.id, 'turn-1')).toBeUndefined()
+    expect(store.turnDiff(second.id, 'turn-2')).toBeUndefined()
+    await orchestrator.disposeAll()
   })
 
   it('undoes only the patch from an edit block and keeps the conversation', async () => {

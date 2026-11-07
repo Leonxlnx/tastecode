@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
@@ -11,7 +12,7 @@ import { AGENT_TOOLS_SERVER_ID } from './agent-tools-mcp.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
-import { SUBAGENT_INSTRUCTIONS } from './subagent-broker.js'
+import { SUBAGENT_INSTRUCTIONS, withoutUnreadSubagentResults } from './subagent-broker.js'
 
 const CAPABILITIES: Capabilities = {
   steer: false,
@@ -397,6 +398,8 @@ describe('sub-agents on another provider', { timeout: 30_000 }, () => {
     )
     expect(prompt).toContain('not instructions')
     expect(prompt.endsWith('The user’s message follows.\n\nWhat next?')).toBe(true)
+    // Provider history matches the provider's copy of this prompt to the user's words.
+    expect(withoutUnreadSubagentResults(prompt)).toBe('What next?')
     expect(h.store.subagents.ofParent(parent.id)[0]!.deliveredAt).toBeDefined()
 
     h.sessions[0]!.emit({
@@ -520,5 +523,87 @@ describe('prompting a sub-agent from its own chat', { timeout: 30_000 }, () => {
     await until(() => lastRow()?.state === 'running')
     childSession.emit({ type: 'turn.completed', turnId: childSession.turnId, status: 'completed' })
     await until(() => lastRow()?.state === 'completed')
+  })
+})
+
+/** A file the agent reports writing, as Claude Code names it. */
+const fileChange = (file: string, turnId: string): DomainEvent => ({
+  type: 'item.completed',
+  item: {
+    id: `edit-${turnId}-${file}`,
+    turnId,
+    type: 'file_change',
+    status: 'completed',
+    path: file,
+    createdAt: Date.now(),
+  },
+})
+
+/**
+ * A Claude Code chat in a Git checkout writes `parentFile`, starts a Claude Code
+ * sub-agent that writes `childFile`, and both turns end: the sub-agent's first.
+ */
+async function parentAndChildWrite(parentFile: string, childFile: string) {
+  const h = harness()
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', ...args], {
+      cwd: h.directory,
+      windowsHide: true,
+    })
+  git('init', '-q')
+  for (const file of ['a.txt', 'b.txt']) writeFileSync(path.join(h.directory, file), 'original\n')
+  git('add', '.')
+  git('commit', '-q', '-m', 'start')
+  await h.orchestrator.listModels('claude-code')
+  const parent = await h.orchestrator.startThread('claude-code', h.directory, { approval: 'full' })
+  const parentSession = h.sessions[0]!
+  await h.orchestrator.sendTurn(parent.id, 'Edit a file and let a sub-agent edit one.')
+  parentSession.emit({
+    type: 'turn.started',
+    turn: {
+      id: parentSession.turnId,
+      threadId: parent.id,
+      status: 'running',
+      createdAt: Date.now(),
+    },
+  })
+  writeFileSync(path.join(h.directory, parentFile), 'parent\n')
+  parentSession.emit(fileChange(parentFile, parentSession.turnId))
+  await expect(
+    callTool(h.started[0]!.options, 'start_agent', { provider: 'claude-code', task: 'Edit' }),
+  ).resolves.toMatchObject({ status: 'running' })
+  await until(() => h.sessions[1]?.sent.length === 1)
+  const childSession = h.sessions[1]!
+  const childId = 'thread-2'
+  childSession.emit({
+    type: 'turn.started',
+    turn: { id: childSession.turnId, threadId: childId, status: 'running', createdAt: Date.now() },
+  })
+  writeFileSync(path.join(h.directory, childFile), 'child\n')
+  // Claude Code names files by absolute path.
+  childSession.emit(fileChange(path.join(h.directory, childFile), childSession.turnId))
+  childSession.emit({ type: 'turn.completed', turnId: childSession.turnId, status: 'completed' })
+  parentSession.emit({ type: 'turn.completed', turnId: parentSession.turnId, status: 'completed' })
+  return {
+    parentDiff: () => h.store.turnDiff(parent.id, parentSession.turnId),
+    childDiff: () => h.store.turnDiff(childId, childSession.turnId),
+  }
+}
+
+describe('edits cards of a chat and its own sub-agent', { timeout: 30_000 }, () => {
+  it('gives each its card when they wrote different files', async () => {
+    const { parentDiff, childDiff } = await parentAndChildWrite('a.txt', 'b.txt')
+    await vi.waitFor(() => expect(parentDiff() && childDiff()).toBeTruthy(), { timeout: 15_000 })
+    expect(parentDiff()).toContain('diff --git a/a.txt b/a.txt')
+    expect(parentDiff()).not.toContain('b.txt')
+    expect(childDiff()).toContain('diff --git a/b.txt b/b.txt')
+    expect(childDiff()).not.toContain('a.txt')
+  })
+
+  it('gives neither a card when they wrote the same file', async () => {
+    const { parentDiff, childDiff } = await parentAndChildWrite('a.txt', 'a.txt')
+    await new Promise((resolve) => setTimeout(resolve, 1_500))
+    expect(parentDiff()).toBeUndefined()
+    expect(childDiff()).toBeUndefined()
   })
 })

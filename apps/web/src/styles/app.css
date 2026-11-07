@@ -3216,7 +3216,7 @@
 
 .orb--stop {
   background: var(--composer-stop);
-  color: var(--composer-on-orb);
+  color: var(--composer-on-stop);
 }
 
 @media (hover: hover) and (pointer: fine) {

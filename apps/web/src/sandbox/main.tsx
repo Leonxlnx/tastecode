@@ -42,7 +42,13 @@ applyFontPreference(readFontPreference(appearanceMode))
 applyAccentPreference(readAccentPreference(appearanceMode))
 document.documentElement.dataset['shell'] = 'web'
 
-const transport = new DemoTransport()
+// `?usageReset=60&chat=demo-focus-ring` exercises a quota reset in sixty seconds.
+const usageResetSeconds = Number(new URLSearchParams(window.location.search).get('usageReset'))
+const transport = new DemoTransport(
+  usageResetSeconds > 0 && Number.isFinite(usageResetSeconds)
+    ? { usageResetMs: Math.min(usageResetSeconds, 604_800) * 1000 }
+    : {},
+)
 
 createRoot(root).render(
   <StrictMode>

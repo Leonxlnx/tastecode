@@ -1,0 +1,67 @@
+/* Resume at usage reset (UsageResetNotice): a composer shelf row in the one notice look
+   (styles/notice.css), whose message has a title and a few lines under it. */
+
+.composer__shelf:has(.composer__usage-reset) {
+  container-type: inline-size;
+  container-name: usage-reset;
+}
+
+.composer__error-row.composer__usage-reset {
+  align-items: flex-start;
+}
+
+.composer__usage-reset > .notice-icon {
+  margin-top: 5px;
+}
+
+.composer__usage-reset > .notice__text {
+  flex: 1;
+  min-width: 0;
+  padding-block: 3px;
+}
+
+.composer__usage-reset-copy {
+  display: grid;
+  gap: 2px;
+  line-height: 1.45;
+}
+
+.composer__usage-reset-copy strong {
+  font-weight: 550;
+}
+
+.composer__usage-reset-copy span {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.composer__usage-reset-copy time {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer__usage-reset-action:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.composer__usage-reset-action:disabled:hover {
+  background: transparent;
+  color: var(--text-3);
+}
+
+/* Narrow composers put the action under the copy instead of squeezing it. */
+@container usage-reset (max-width: 540px) {
+  .composer__usage-reset {
+    flex-wrap: wrap;
+  }
+
+  .composer__usage-reset > .notice__text {
+    flex-basis: calc(100% - 32px);
+  }
+
+  /* Under the copy: the action's label lines up with the text (icon 16 px + gap 8 px). */
+  .composer__usage-reset > .composer__usage-reset-action {
+    margin-left: 14px;
+  }
+}

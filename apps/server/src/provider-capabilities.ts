@@ -63,6 +63,12 @@ export type ProviderControlCapabilities = Readonly<{
    * live windows from running sessions keep current.
    */
   limitReadsWhenShown?: boolean
+  /**
+   * The agent reports the diff of every turn that changed files itself
+   * (server-internal). For the others the server builds it from the turn's
+   * checkpoint, at the cost of one more snapshot when the turn ends.
+   */
+  turnDiffs?: boolean
 }>
 
 const unsupported: ProviderControlCapabilities = {
@@ -178,6 +184,8 @@ export const PROVIDER_CAPABILITIES = {
     usageLimits: true,
     rateLimitReset: true,
     limitReadIntervalMs: PROCESS_LIMIT_READ_INTERVAL_MS,
+    // turn/diff/updated after every item that changed a file.
+    turnDiffs: true,
   },
   cursor: {
     ...unsupported,

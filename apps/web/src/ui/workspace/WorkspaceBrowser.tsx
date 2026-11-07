@@ -30,12 +30,14 @@ import { runAgentBrowserCommand } from './agent-browser-executor.js'
 import { errorMessage } from '../../boundary.js'
 import { IconMorph } from '../IconMorph.js'
 import { Skeleton, SkeletonLines, SkeletonStatus } from '../Skeleton.js'
+import { BrowserRecentPages } from './BrowserRecentPages.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import {
   browserLoadFailureView,
   loadRejectionFailure,
   type BrowserLoadFailureView,
 } from './browser-load-error.js'
+import { rememberBrowserVisit } from './browser-history.js'
 import type { BrowserPageInfo } from './browser-page.js'
 import { browserShortcut, browserShortcutHints } from './browser-shortcuts.js'
 import { browserAddress } from './browser-url.js'
@@ -145,6 +147,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   active,
   navigation,
   focusAddressOnOpen,
+  keepHistory,
   tabId,
   onPageInfo,
   onClose,
@@ -158,6 +161,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   navigation?: BrowserNavigationRequest | undefined
   /** The user opened this tab to type a URL: focus the address once it mounts. */
   focusAddressOnOpen?: boolean | undefined
+  /** Lists this tab's pages under Recently used: the user's own, not an agent's or a preview's. */
+  keepHistory?: boolean | undefined
   /** Passed back to onPageInfo, so one stable owner callback serves every tab. */
   tabId?: string | undefined
   /** The page's URL and title whenever either changes, for the tab label. */
@@ -223,6 +228,14 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     pageInfoListener.current?.(tabId, { url: state.url, title: state.url ? state.title : '' })
   }, [tabId, state.url, state.title])
 
+  // History records committed top-level navigations once each, when their load ends: a
+  // replaceState, an in-page route or a later title writes nothing, and an address that
+  // failed or was stopped is never listed.
+  const keepHistoryRef = useRef(keepHistory)
+  keepHistoryRef.current = keepHistory
+  const committedVisit = useRef(false)
+  const loadFailed = useRef(false)
+
   const syncGuestState = useCallback((pageReady = false) => {
     const view = guest.current
     if (!view) return
@@ -266,12 +279,24 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       syncGuestState(true)
     }
     const onStart = () => {
+      loadFailed.current = false
       stopRequested.current = false
       setError(undefined)
       setFailure(undefined)
       setState((current) => ({ ...current, loading: true }))
     }
-    const onStop = () => syncGuestState(true)
+    const onStop = () => {
+      syncGuestState(true)
+      if (!committedVisit.current) return
+      committedVisit.current = false
+      if (!keepHistoryRef.current || loadFailed.current || stopRequested.current) return
+      try {
+        const url = webPageUrl(view.getURL())
+        if (url) rememberBrowserVisit(url, view.getTitle())
+      } catch {
+        // A guest detached between its event and this read records nothing.
+      }
+    }
     const onNavigationStart = (event: Event) => {
       const navigation = NavigationEventSchema.safeParse(event)
       if (!navigation.success || navigation.data.isMainFrame === false) return
@@ -291,6 +316,10 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       }
       syncGuestState()
     }
+    const onCommit = (event: Event) => {
+      committedVisit.current = true
+      onNavigate(event)
+    }
     const onNavigateInPage = (event: Event) => {
       const navigation = NavigationEventSchema.safeParse(event)
       if (!navigation.success || navigation.data.isMainFrame !== false) onNavigate(event)
@@ -301,6 +330,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     }
     const onFail = (event: Event) => {
       const failure = LoadFailureEventSchema.safeParse(event)
+      if (failure.success && failure.data.isMainFrame !== false) loadFailed.current = true
       if (failure.success && failure.data.isMainFrame !== false && !stopRequested.current) {
         const url = webPageUrl(failure.data.validatedURL)
         const failedView = browserLoadFailureView({
@@ -331,7 +361,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     view.addEventListener('dom-ready', onReady)
     view.addEventListener('did-start-loading', onStart)
     view.addEventListener('did-stop-loading', onStop)
-    view.addEventListener('did-navigate', onNavigate)
+    view.addEventListener('did-navigate', onCommit)
     view.addEventListener('did-navigate-in-page', onNavigateInPage)
     view.addEventListener('page-title-updated', onTitle)
     view.addEventListener('did-fail-load', onFail)
@@ -372,7 +402,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       view.removeEventListener('dom-ready', onReady)
       view.removeEventListener('did-start-loading', onStart)
       view.removeEventListener('did-stop-loading', onStop)
-      view.removeEventListener('did-navigate', onNavigate)
+      view.removeEventListener('did-navigate', onCommit)
       view.removeEventListener('did-navigate-in-page', onNavigateInPage)
       view.removeEventListener('page-title-updated', onTitle)
       view.removeEventListener('did-fail-load', onFail)
@@ -551,6 +581,18 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   )
   const macOS = isMacOS()
   const hints = browserShortcutHints(macOS)
+
+  const startBrowsing = (
+    <div className="workspace-browser__placeholder">
+      <WorkspaceEmptyState
+        kind="browser"
+        title={isDesktop ? 'Start browsing' : 'Desktop browser unavailable'}
+        detail={
+          isDesktop ? 'Enter a URL to open a page.' : 'The in-app browser runs in the desktop app.'
+        }
+      />
+    </div>
+  )
 
   const loadingFirstPage = Boolean(state.url) && state.loading && !hasRenderedPage && !failure
   // Later loads keep the current page visible under a thin progress line.
@@ -797,17 +839,13 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
             </WorkspaceEmptyState>
           </div>
         ) : !state.url ? (
-          <div className="workspace-browser__placeholder">
-            <WorkspaceEmptyState
-              kind="browser"
-              title={isDesktop ? 'Start browsing' : 'Desktop browser unavailable'}
-              detail={
-                isDesktop
-                  ? 'Enter a URL to open a page.'
-                  : 'The in-app browser runs in the desktop app.'
-              }
-            />
-          </div>
+          // A row loads in this tab, so only the user's own tabs offer the list:
+          // never the agent's, and never where no page can load.
+          keepHistory && isDesktop ? (
+            <BrowserRecentPages onOpen={navigate}>{startBrowsing}</BrowserRecentPages>
+          ) : (
+            startBrowsing
+          )
         ) : null}
         {error ? (
           <div className="workspace-browser__error" role="alert">

@@ -165,6 +165,7 @@ import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 import { pollUsageLimits, UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
 import { sameAccount } from './usage-summary-state.js'
+import { UsageResetController, usageResetAt } from './usage-reset.js'
 import { poolsOf, recommendedAccounts } from './account-pool.js'
 import {
   AccountLabelContext,
@@ -920,6 +921,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     | undefined
   >(undefined)
   const pendingInterruptThreadIds = useRef(new Set<string>())
+  // Chats stopped while a prompt sent from this window was still on its way to
+  // a turn. The server then rejects that prompt, which is the Stop, not an error.
+  const stoppedTurnStarts = useRef(new Set<string>())
   const pendingProviderHistoryIds = useRef(new Set<string>())
   const providerHistoryReads = useRef(new Map<string, object>())
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurn[]>([])
@@ -1176,6 +1180,20 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const reportError = useCallback((message: string) => {
     setActionError({ id: crypto.randomUUID(), message })
   }, [])
+  const usageResumes = useMemo(
+    () =>
+      new UsageResetController(
+        transport,
+        {
+          read: () => readSetting('harness.usage-resumes'),
+          write: (value) => localStorage.setItem('harness.usage-resumes', value),
+        },
+        reportError,
+      ),
+    [transport, reportError],
+  )
+  const scheduledResumes = useSyncExternalStore(usageResumes.subscribe, usageResumes.snapshot)
+  useEffect(() => usageResumes.start(), [usageResumes])
   const feedback = useFeedbackStatus(transport)
   const refreshFeedback = feedback.refresh
   const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>()
@@ -4699,8 +4717,19 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
 
   const requestInterrupt = useCallback(
     (threadId: string) => {
+      stoppedTurnStarts.current.add(threadId)
       setStoppingThreadId(threadId)
       setStoppingRows((rows) => withStoppingRow(rows, threadId, Date.now()))
+      // A row still starting may have no turn yet for the Stop to end, so no
+      // event will settle it: the server answers at once and drops the prompt
+      // only when the chat's resume has wound down.
+      setProjects((current) =>
+        updateSession(current, threadId, (session) =>
+          session.status === 'starting'
+            ? { ...session, status: 'idle', statusSince: Date.now() }
+            : session,
+        ),
+      )
       void transport
         .request('thread.interrupt', { threadId })
         .catch((error) => {
@@ -4804,6 +4833,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       let threadId = activeId
       let optimisticAdded = false
       let optimisticTurnId: string | undefined
+      let rowBeforeStart: Pick<Session, 'status' | 'statusSince'> | undefined
       const optimisticItemId = createOptimisticMessageId()
       const optimisticCreatedAt = Date.now()
       let titledOnCreate = false
@@ -4946,6 +4976,16 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         threadController.update(threadId, next)
         publishThread(threadId, next)
         if (threadId === activeIdRef.current) setThreadRevealRequest((request) => request + 1)
+        // The row starts with the chat. Its first event can be many seconds
+        // away: a chat whose provider session must resume first sends none.
+        const startingId = threadId
+        setProjects((current) =>
+          updateSession(current, startingId, (session) => {
+            if (runsTurn(session.status)) return session
+            rowBeforeStart = { status: session.status, statusSince: session.statusSince }
+            return { ...session, status: 'starting', statusSince: Date.now() }
+          }),
+        )
       } else if (wasRunning && steering) {
         const next = appendUserMessage(
           before,
@@ -5069,6 +5109,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           }
           void refreshProjects().catch(() => undefined)
         }
+        // Only a Stop from here on can have cancelled this prompt.
+        stoppedTurnStarts.current.delete(threadId)
         const turnRequest = transport.request('thread.sendTurn', {
           threadId,
           text,
@@ -5147,6 +5189,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           return
         }
         if (queuedActionId) settleQueueAction(queuedActionId, 'steer')
+        // Stopped before its turn started (for one, while the chat resumed):
+        // the prompt goes back into the composer below, and that says enough.
+        const stoppedBeforeStart =
+          !turnAccepted && !wasRunning && stoppedTurnStarts.current.delete(threadId)
         threadController.forgetSubmission(threadId, optimisticItemId)
         if (optimisticQueueId) {
           updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
@@ -5164,6 +5210,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
             threadController.update(threadId, next)
             publishThread(threadId, next)
           }
+          const previous = rowBeforeStart
+          if (previous) {
+            const rejectedId = threadId
+            setProjects((current) =>
+              updateSession(current, rejectedId, (session) =>
+                session.status === 'starting' ? { ...session, ...previous } : session,
+              ),
+            )
+          }
           restoreRejectedDraft(threadId, { text, attachments })
         } else if (steering) {
           const current = threadController.snapshot(threadId)
@@ -5173,7 +5228,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
             publishThread(threadId, next)
           }
         }
-        reportError(error instanceof Error ? error.message : String(error))
+        if (!stoppedBeforeStart) reportError(error instanceof Error ? error.message : String(error))
       }
     },
     [
@@ -5569,6 +5624,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       const earlierId = activeIdRef.current
       const found = findSession(projectsRef.current, earlierId)
       if (!earlierId || !found) return
+      usageResumes.cancel(earlierId)
       const { project, session: earlier } = found
       const choice =
         selectedModelChoice?.provider === earlier.provider &&
@@ -5630,6 +5686,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       selectSession,
       refreshProjects,
       reportError,
+      usageResumes,
     ],
   )
 
@@ -7374,6 +7431,38 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     () => (activeId ? continuedIn(projects, activeId) : undefined),
     [activeId, projects],
   )
+  const scheduledResume = scheduledResumes.find((entry) => entry.threadId === activeId)
+  const resetSummary =
+    activeSession &&
+    usageState.find(
+      (state) =>
+        state.provider === activeSession.provider &&
+        sameAccount(state.accountId, activeSession.accountId),
+    )?.summary
+  const resetLimits = resetSummary?.limitSource
+    ? resetSummary.limitSource.status === 'ready'
+      ? resetSummary.limitSource.limits
+      : []
+    : (resetSummary?.limits ?? [])
+  const resetAt = scheduledResume?.resetsAt ?? usageResetAt(resetLimits, Date.now())
+  const resetRequest =
+    thread.error && !thread.running
+      ? thread.items.findLast((item) => item.type === 'message' && item.role === 'user')
+      : undefined
+  const usageReset: ComposerError['usageReset'] =
+    activeSession &&
+    resetRequest &&
+    !continuedChat &&
+    (scheduledResume ||
+      accountAtLimit(usageState, activeSession.provider, activeSession.accountId, Date.now()))
+      ? {
+          resetsAt: resetAt,
+          source: `${providerName(activeSession.provider)}${selectedModelChoice ? ` · ${formatModelName(selectedModelChoice.model.displayName)}` : ''}`,
+          scheduled: Boolean(scheduledResume),
+          schedule: () => usageResumes.schedule(activeSession, resetRequest.id, resetAt!),
+          cancel: () => usageResumes.cancel(activeSession.id),
+        }
+      : undefined
   const continueOptions = useMemo(() => {
     if (
       !activeSession ||
@@ -7499,6 +7588,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   // Once continued, the failed turn's row leads to the chat that carries it on.
   /** Sets the chat up to switch, with the request that failed back in the composer. */
   const switchAtLimit = (choice: ModelChoice) => {
+    if (activeId) usageResumes.cancel(activeId)
     commitModelChoice(choice)
     const request = lastRequest(thread.items)
     if (request) editMessage(request.text, request.attachments)
@@ -7563,7 +7653,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     ...(thread.error && activeId
       ? [
           reportable(
-            { ...thread.error, id: `chat:${activeId}:${thread.error.id}`, ...continueOffer },
+            {
+              ...thread.error,
+              id: `chat:${activeId}:${thread.error.id}`,
+              ...continueOffer,
+              usageReset,
+              ...(scheduledResume ? { dismiss: () => usageResumes.cancel(activeId) } : {}),
+            },
             'turn',
           ),
         ]

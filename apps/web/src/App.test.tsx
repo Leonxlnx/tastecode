@@ -4663,7 +4663,9 @@ describe('web client', () => {
     })
     render(<App />)
 
-    expect(await screen.findByText('Add a provider to start chatting.')).toBeTruthy()
+    const note = await screen.findByText('Add a provider to start chatting.')
+    // A new install's first state is a note, not an error.
+    expect(note.closest('.composer__error-row')?.getAttribute('data-notice-tone')).toBe('info')
     fireEvent.click(screen.getByRole('button', { name: 'Add provider' }))
     expect(await screen.findByRole('heading', { name: 'Add providers' })).toBeTruthy()
     const codexRow = () =>
@@ -5638,6 +5640,93 @@ describe('new chats', () => {
     // A chat on the active account uses the catalog's list again.
     fireEvent.click(await waitFor(() => treeChatRow('Work chat')))
     await waitFor(() => expect(offered()).toEqual(['work-plan-model', 'personal-plan-model']))
+  })
+
+  it('snoozes a limited chat and resumes it at reset even after another chat is opened', async () => {
+    const resetAt = Date.now() + 60_000
+    serverProjects[0]!.sessions = [
+      { id: 'chat-limited', title: 'Limited chat', provider: 'codex', createdAt: 1 },
+      { id: 'chat-other', title: 'Other chat', provider: 'codex', createdAt: 2 },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'usage.summary')
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [{ label: 'Session', usedPercent: 100, resetsAt: resetAt }],
+        }))
+      if (
+        method === 'thread.history' &&
+        (params as { threadId: string }).threadId === 'chat-limited'
+      ) {
+        return Promise.resolve({
+          running: false,
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'item.completed',
+                item: {
+                  id: 'ask-limited',
+                  turnId: 'failed-turn',
+                  type: 'message',
+                  role: 'user',
+                  status: 'completed',
+                  text: 'Finish the tests',
+                  createdAt: 1,
+                },
+              },
+            },
+            {
+              seq: 2,
+              event: {
+                type: 'thread.error',
+                threadId: 'chat-limited',
+                message: 'Usage limit reached',
+              },
+            },
+            { seq: 3, event: { type: 'turn.completed', turnId: 'failed-turn', status: 'failed' } },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Limited chat')))
+    const recovery = await waitFor(() => {
+      const row = composerProps().errors?.find((error) => error.usageReset)
+      expect(row?.usageReset?.resetsAt).toBe(resetAt)
+      return row!.usageReset!
+    })
+    expect(
+      transport.request.mock.calls.filter(([method]) => method === 'thread.sendTurn'),
+    ).toHaveLength(0)
+    await act(async () => recovery.schedule())
+    expect(transport.request).toHaveBeenCalledWith('thread.snooze', {
+      threadId: 'chat-limited',
+      wakeAt: resetAt,
+    })
+    await waitFor(() =>
+      expect(composerProps().errors?.find((error) => error.usageReset)?.usageReset?.scheduled).toBe(
+        true,
+      ),
+    )
+    expect(localStorage.getItem('harness.usage-resumes')).toContain('ask-limited')
+    fireEvent.click(await waitFor(() => treeChatRow('Other chat')))
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(resetAt + 1000)
+      await act(async () => setConnectionState('open'))
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith(
+          'thread.sendTurn',
+          expect.objectContaining({ threadId: 'chat-limited' }),
+        ),
+      )
+      expect(localStorage.getItem('harness.usage-resumes')).toBe('[]')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('offers to continue a chat at its plan limit on another signed-in account', async () => {
@@ -13258,6 +13347,176 @@ describe('live sessions', () => {
     expect(screen.queryByRole('button', { name: 'Remove reference.png' })).toBeNull()
   })
 
+  it('shows a chat starting in the sidebar from the send until Stop', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let rejectSend: ((reason: Error) => void) | undefined
+    // A chat that resumes first sends no event until its turn starts.
+    const pendingSend = new Promise((_, reject) => {
+      rejectSend = reject
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' ? pendingSend : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
+    await waitForInitialWorkspace()
+    expect(treeChatRow('Old chat').querySelector('.sess__spinner')).toBeNull()
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Write the README' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() =>
+      expect(treeChatRow('Old chat').querySelector('.sess__spinner')).not.toBeNull(),
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+    // The server answers the Stop at once and cancels the prompt seconds later.
+    await waitFor(() => expect(rpcCount('thread.interrupt')).toBe(1))
+    await act(async () => undefined)
+    expect(treeChatRow('Old chat').querySelector('.sess__spinner')).toBeNull()
+
+    await act(async () => {
+      rejectSend?.(new Error('turn cancelled while resuming'))
+    })
+    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe('Write the README'))
+    expect(treeChatRow('Old chat').querySelector('.sess__spinner')).toBeNull()
+  })
+
+  it('sets a chat row back when the server rejects its prompt', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let rejectSend: ((reason: Error) => void) | undefined
+    const pendingSend = new Promise((_, reject) => {
+      rejectSend = reject
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' ? pendingSend : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
+    await waitForInitialWorkspace()
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Not now' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() =>
+      expect(treeChatRow('Old chat').querySelector('.sess__spinner')).not.toBeNull(),
+    )
+
+    await act(async () => {
+      rejectSend?.(new Error('cannot start a turn while restoring a checkpoint'))
+    })
+    await waitFor(() => expect(treeChatRow('Old chat').querySelector('.sess__spinner')).toBeNull())
+  })
+
+  it('puts a prompt stopped before its turn started back without an error', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let rejectSend: ((reason: Error) => void) | undefined
+    const pendingSend = new Promise((_, reject) => {
+      rejectSend = reject
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' ? pendingSend : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
+    await waitForInitialWorkspace()
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Write the README' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+    expect(rpcCount('thread.interrupt')).toBe(1)
+
+    // The server cancels a prompt whose chat was still resuming when Stop came.
+    await act(async () => {
+      rejectSend?.(new Error('turn cancelled while resuming'))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('thread').textContent).not.toContain('Write the README')
+      expect((composer as HTMLTextAreaElement).value).toBe('Write the README')
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText('turn cancelled while resuming')).toBeNull()
+  })
+
+  it('still reports a rejected prompt after an earlier turn was stopped', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let sends = 0
+    let rejectSend: ((reason: Error) => void) | undefined
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.sendTurn') return request(method, params)
+      sends += 1
+      return sends === 1
+        ? new Promise((_, reject) => {
+            rejectSend = reject
+          })
+        : Promise.reject(new Error('cannot start a turn while restoring a checkpoint'))
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
+    await waitForInitialWorkspace()
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'First' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+    await act(async () => {
+      rejectSend?.(new Error('turn cancelled while resuming'))
+    })
+    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe('First'))
+
+    // The next send starts clean: its own rejection is an error again.
+    fireEvent.change(composer, { target: { value: 'Second' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain(
+        'cannot start a turn while restoring a checkpoint',
+      )
+    })
+  })
+
   it('queues Enter submissions while the active session is running', async () => {
     serverProjects = [
       {
@@ -15864,6 +16123,66 @@ describe('split view', () => {
       expect(within(transcriptIn('Right chat')).getByText('from the right')).toBeTruthy()
     })
     expect(within(transcriptIn('Left chat')).queryByText('from the right')).toBeNull()
+  })
+
+  it('updates steering capability in the beside pane and keeps it when focus changes', async () => {
+    const request = transport.request.getMockImplementation()!
+    const canSteer = new Map<string, boolean>()
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.queue') {
+        const { threadId } = methods[method].params.parse(params)
+        return Promise.resolve({ items: [], canSteer: canSteer.get(threadId) ?? false })
+      }
+      if (method === 'thread.history') {
+        const { threadId } = methods[method].params.parse(params)
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'turn.started',
+                turn: { id: `${threadId}-turn`, threadId, status: 'running', createdAt: 1 },
+              },
+            },
+          ],
+          running: true,
+        })
+      }
+      return request(method, params)
+    })
+    await openSplit()
+    for (const title of ['Left chat', 'Right chat']) {
+      fireEvent.change(within(pane(title)).getByPlaceholderText('Do anything'), {
+        target: { value: 'Change direction' },
+      })
+    }
+    const steerIn = (title: string) =>
+      within(pane(title)).queryByRole('button', { name: 'Steer current draft' })
+    expect(steerIn('Left chat')).toBeNull()
+    expect(steerIn('Right chat')).toBeNull()
+
+    const push = (threadId: string, available: boolean) => {
+      canSteer.set(threadId, available)
+      act(() =>
+        transport.listeners.get('thread.queue')?.({ threadId, items: [], canSteer: available }),
+      )
+    }
+    push('left-thread', true)
+    await waitFor(() => expect(steerIn('Left chat')).toBeTruthy())
+    expect(steerIn('Right chat')).toBeNull()
+    fireEvent.click(treeChatRow('Left chat'))
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    expect(steerIn('Left chat')).toBeTruthy()
+    fireEvent.click(treeChatRow('Right chat'))
+    await waitFor(() => expect(isFocused('Right chat')).toBe(true))
+    expect(steerIn('Left chat')).toBeTruthy()
+
+    push('left-thread', false)
+    push('right-thread', true)
+    await waitFor(() => {
+      expect(steerIn('Left chat')).toBeNull()
+      expect(steerIn('Right chat')).toBeTruthy()
+    })
   })
 
   it('moves focus on a press in the other pane without remounting either transcript', async () => {

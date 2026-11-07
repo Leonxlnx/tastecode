@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceBrowser } from './WorkspaceBrowser.js'
+import { readBrowserHistory, rememberBrowserVisit } from './browser-history.js'
 import { PLAIN_HTTP_LOOPBACK_ONLY } from './browser-url.js'
 
 // What Electron rejects <webview>.loadURL() with, verbatim from the desktop shell.
@@ -682,6 +683,189 @@ describe('WorkspaceBrowser keys', () => {
     expect(nativeBrowser.shortcutListeners.size).toBe(0)
   })
 })
+
+describe('WorkspaceBrowser history', () => {
+  beforeEach(() => localStorage.clear())
+
+  const openPage = async (value: string) => {
+    const view = guests.at(-1)!
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+    const address = screen.getByLabelText('Browser address')
+    fireEvent.change(address, { target: { value } })
+    fireEvent.submit(address.closest('form')!)
+    await waitFor(() => expect(view.loadURL).toHaveBeenCalled())
+    return view
+  }
+
+  it('keeps the plain empty state until a page has been opened', () => {
+    render(<WorkspaceBrowser active keepHistory />)
+
+    expect(screen.getByText('Start browsing')).toBeTruthy()
+    expect(screen.queryByText('Recently used')).toBeNull()
+  })
+
+  it('lists a page from a closed tab on the next tab, with its time', async () => {
+    const first = render(<WorkspaceBrowser active keepHistory />)
+    await openPage('example.com/docs')
+    first.unmount()
+
+    render(<WorkspaceBrowser active keepHistory />)
+
+    expect(screen.getByText('Recently used')).toBeTruthy()
+    expect(screen.queryByText('Start browsing')).toBeNull()
+    const row = screen.getByRole('button', { name: /Example/ })
+    expect(row.textContent).toContain('example.com/docs · just now')
+    expect(row.getAttribute('title')).toBe('https://example.com/docs')
+  })
+
+  it('opens a listed page in the same tab and leaves the list', async () => {
+    rememberBrowserVisit('https://example.com/docs', 'Example docs')
+    render(<WorkspaceBrowser active keepHistory />)
+    const view = guests[0]!
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+
+    fireEvent.click(screen.getByRole('button', { name: /Example docs/ }))
+
+    await waitFor(() => expect(view.loadURL).toHaveBeenCalledWith('https://example.com/docs'))
+    expect(screen.queryByText('Recently used')).toBeNull()
+    expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(
+      'https://example.com/docs',
+    )
+  })
+
+  it('loads a listed page picked before the guest has finished starting', async () => {
+    rememberBrowserVisit('https://example.com/docs', 'Example docs')
+    render(<WorkspaceBrowser active keepHistory />)
+    const view = guests[0]!
+
+    fireEvent.click(screen.getByRole('button', { name: /Example docs/ }))
+    expect(view.loadURL).not.toHaveBeenCalled()
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+
+    await waitFor(() => expect(view.loadURL).toHaveBeenCalledWith('https://example.com/docs'))
+  })
+
+  it('updates a page in the list when another tab opens one', async () => {
+    render(<WorkspaceBrowser active keepHistory />)
+    expect(screen.queryByText('Recently used')).toBeNull()
+
+    act(() => rememberBrowserVisit('https://example.com/docs', 'Example docs'))
+
+    expect(screen.getByRole('button', { name: /Example docs/ })).toBeTruthy()
+  })
+
+  it('never lists an address that failed to load', async () => {
+    render(<WorkspaceBrowser active keepHistory />)
+    const view = guests[0]!
+    view.loadURL.mockImplementation(async () => {
+      view.isLoading.mockReturnValue(true)
+      view.dispatchEvent(new Event('did-start-loading'))
+      view.isLoading.mockReturnValue(false)
+      // Chromium reports the failed address as the guest's own while its error page shows.
+      view.getURL.mockReturnValue('https://nonexistent-host.invalid/')
+      // Chromium commits its error page as a navigation too.
+      dispatchGuestEvent(view, 'did-navigate', { url: 'https://nonexistent-host.invalid/' })
+      dispatchGuestEvent(view, 'did-fail-load', {
+        errorCode: -105,
+        errorDescription: 'ERR_NAME_NOT_RESOLVED',
+        isMainFrame: true,
+        validatedURL: 'https://nonexistent-host.invalid/',
+      })
+      view.dispatchEvent(new Event('did-stop-loading'))
+    })
+
+    await openPage('nonexistent-host.invalid')
+
+    await waitFor(() => expect(failureView()?.title).toContain('nonexistent-host.invalid'))
+    expect(readBrowserHistory()).toEqual([])
+  })
+
+  it('waits for the page before listing it', async () => {
+    render(<WorkspaceBrowser active keepHistory />)
+    const view = guests[0]!
+    view.loadURL.mockImplementation(async () => {
+      view.isLoading.mockReturnValue(true)
+      view.dispatchEvent(new Event('did-start-loading'))
+    })
+
+    await openPage('example.com/slow')
+    expect(readBrowserHistory()).toEqual([])
+
+    view.isLoading.mockReturnValue(false)
+    view.getURL.mockReturnValue('https://example.com/slow')
+    view.getTitle.mockReturnValue('Slow page')
+    act(() => {
+      dispatchGuestEvent(view, 'did-navigate', { url: 'https://example.com/slow' })
+      view.dispatchEvent(new Event('did-stop-loading'))
+    })
+
+    expect(readBrowserHistory()[0]).toMatchObject({
+      url: 'https://example.com/slow',
+      title: 'Slow page',
+    })
+  })
+
+  it('records a committed page once, not its later title, routes or replaced state', async () => {
+    render(<WorkspaceBrowser active keepHistory />)
+    const view = await openPage('example.com/')
+    await waitFor(() => expect(readBrowserHistory()).toHaveLength(1))
+    const writes = vi.spyOn(Storage.prototype, 'setItem')
+
+    view.getURL.mockReturnValue('https://example.com/settings')
+    act(() => {
+      dispatchGuestEvent(view, 'page-title-updated', { title: 'Docs, loaded' })
+      dispatchGuestEvent(view, 'did-navigate-in-page', {
+        isMainFrame: true,
+        url: 'https://example.com/settings',
+      })
+      view.dispatchEvent(new Event('did-stop-loading'))
+    })
+
+    expect(writes.mock.calls.filter(([key]) => key === 'harness.browserHistory')).toEqual([])
+    expect(readBrowserHistory().map(({ url }) => url)).toEqual(['https://example.com/'])
+    writes.mockRestore()
+  })
+
+  it('never lists a page the user stopped', async () => {
+    render(<WorkspaceBrowser active keepHistory />)
+    const view = guests[0]!
+    view.loadURL.mockImplementation(async () => {
+      view.isLoading.mockReturnValue(true)
+      view.dispatchEvent(new Event('did-start-loading'))
+      view.getURL.mockReturnValue('https://example.com/stopped')
+      dispatchGuestEvent(view, 'did-navigate', { url: 'https://example.com/stopped' })
+    })
+    await openPage('example.com/stopped')
+    fireEvent.click(screen.getByRole('button', { name: /Stop/ }))
+    view.isLoading.mockReturnValue(false)
+    act(() => view.dispatchEvent(new Event('did-stop-loading')))
+
+    expect(readBrowserHistory()).toEqual([])
+  })
+  it('offers the list only on a tab that keeps history, so a row never drives an agent tab', () => {
+    rememberBrowserVisit('https://example.com/docs', 'Example docs')
+    render(<WorkspaceBrowser active />)
+
+    expect(screen.queryByText('Recently used')).toBeNull()
+    expect(screen.getByText('Start browsing')).toBeTruthy()
+  })
+
+  it('leaves out the pages of a tab that does not keep history', async () => {
+    render(
+      <WorkspaceBrowser
+        active
+        navigation={{ requestId: 'preview', url: 'http://127.0.0.1:4321/' }}
+      />,
+    )
+    const view = guests[0]!
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+
+    await waitFor(() => expect(view.loadURL).toHaveBeenCalled())
+    await waitFor(() => expect((view.getURL as () => string)()).toBe('http://127.0.0.1:4321/'))
+    expect(readBrowserHistory()).toEqual([])
+  })
+})
+
 function failureView(): { title: string; detail: string } | null {
   const view = document.querySelector('.workspace-browser__failure')
   if (!view) return null

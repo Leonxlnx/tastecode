@@ -1305,6 +1305,26 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Resume at usage reset
+                <span class="d"
+                  >In review,
+                  <a href="https://github.com/Leonxlnx/tastecode/pull/2239">PR #2239</a>: a failed
+                  chat at a reported usage limit offers Resume at reset. The chat snoozes until
+                  every exhausted window with a known deadline resets, then continues its previous
+                  request on the same provider, account and model. A neutral scheduled notice shows
+                  the reset time and Cancel auto-resume. Schedules survive reloads; TasteCode must
+                  be open, or reopened after the deadline. A manual continuation, provider/model
+                  change, settlement or early wake cancels the schedule. Unknown reset times stay
+                  unavailable rather than guessing; refreshed later limits postpone the resume. The
+                  shared flow also supports direct API sources when limits are supplied, without a
+                  vendor CLI dependency.</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Switch an open chat to another provider: in an open chat the model picker lists the
                 chat's own models first, then every other provider's, then every other signed-in
                 account of a provider as a source of its own, named after the account (Claude Code
@@ -1490,10 +1510,12 @@
                 <span class="d"
                   >Enter queues while an agent runs; Ctrl/Command+Enter and the visible Steer
                   control redirect the current turn; every queued row can also steer immediately,
-                  except while a Design run owns the chat: then queued prompts offer no Steer and
-                  wait until the run finishes; a prompt steered in after the turn's first response
-                  carries the transcript's spinner under it until the agent adds its next row, the
-                  turn ends, fails or is stopped</span
+                  and availability refreshes when a session attaches or leaves, including a chat's
+                  first turn, a restored chat and either pane in split view; except while a Design
+                  run owns the chat: then queued prompts offer no Steer and wait until the run
+                  finishes; a prompt steered in after the turn's first response carries the
+                  transcript's spinner under it until the agent adds its next row, the turn ends,
+                  fails or is stopped</span
                 ></span
               ></label
             >
@@ -4073,7 +4095,11 @@
                   comments and the agent are put on white too; a failed load shows a calm view in
                   the canvas with the host, one plain sentence, Retry and Edit address, reported
                   once and not at all after Stop, while a refused address says why; loads after the
-                  first page keep it visible under a thin progress line</span
+                  first page keep it visible under a thin progress line; a Browser tab the user
+                  opened lists Recently used pages from earlier tabs and app sessions, newest first
+                  and up to 50, each with its title, address and age, and a row opens its page in
+                  that tab; only pages that finished loading are listed, never the agent's tab or a
+                  Design preview, and the list stays in this device's renderer storage</span
                 ></span
               ></label
             >
