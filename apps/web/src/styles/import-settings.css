@@ -9,15 +9,6 @@
   gap: 16px;
 }
 
-.settings .import-sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
 /* The strip: figures read first, so they carry the page's largest number.
    Colour stays neutral; only the chosen cell's rule marks the filter. */
 
@@ -120,6 +111,19 @@
 
 .settings .import-search .set-input {
   padding-left: 28px;
+}
+
+.settings .import-search:has(.import-search__clear) .set-input {
+  padding-right: 56px;
+}
+
+.settings .import-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.settings .import-search__clear {
+  position: absolute;
+  right: 0;
 }
 
 .settings .import-archived {

@@ -197,7 +197,6 @@ function ImportList(props: {
   onOpenChat: (threadId: string) => void
 }) {
   const { scan, selected, open, job } = props
-  const searchId = useId()
   // A source that left the list since it was picked falls back to all of them.
   const source = scan.sources.some(({ id }) => id === props.source) ? props.source : ALL_SOURCES
   const counts = useMemo(() => sourceCounts(scan, props.archived), [scan, props.archived])
@@ -251,18 +250,30 @@ function ImportList(props: {
       />
 
       <div className="import-tools">
-        <label className="import-search" htmlFor={searchId}>
+        <div className="import-search">
           <Search size={14} aria-hidden />
-          <span className="import-sr">Search chats and folders</span>
           <input
-            id={searchId}
             className="set-input"
             type="search"
             placeholder="Search chats"
+            aria-label="Search chats and folders"
             value={props.query}
             onChange={(event) => props.onQuery(event.target.value)}
           />
-        </label>
+          {searching ? (
+            <button
+              className="set-button set-button--quiet import-search__clear"
+              type="button"
+              aria-label="Clear search"
+              onClick={(event) => {
+                props.onQuery('')
+                event.currentTarget.parentElement?.querySelector('input')?.focus()
+              }}
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
         {hidden ? (
           <label className="import-archived">
             <input

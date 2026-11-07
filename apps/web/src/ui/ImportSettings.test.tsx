@@ -149,6 +149,9 @@ describe('Import chats settings', () => {
     expect(screen.queryByText('Other')).toBeNull()
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'nothing like it' } })
     expect(screen.getByText('No chats match that search.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+    expect(screen.getByRole<HTMLInputElement>('searchbox').value).toBe('')
+    expect(screen.queryByText('No chats match that search.')).toBeNull()
   })
 
   it('leaves archived chats out until asked, because most people archived them on purpose', async () => {
