@@ -2752,6 +2752,63 @@ describe('durable turn timing', () => {
       await orchestrator.disposeAll()
     }
   })
+
+  it('starts the turn of a prompt that waited for its chat to resume at the send', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const { orchestrator, sessions, store } = harness()
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    try {
+      const sending = orchestrator.submitTurn('persisted-thread', 'first', [], {}, 'first')
+      // The resume took 15 s.
+      now.mockReturnValue(16_000)
+      const sent = await sending
+      if (sent.queued) throw new Error('expected a turn')
+      sessions[0]!.emit({
+        type: 'turn.started',
+        turn: {
+          id: sent.turnId,
+          threadId: 'persisted-thread',
+          status: 'running',
+          createdAt: 16_000,
+        },
+      })
+      sessions[0]!.emit({ type: 'turn.completed', turnId: sent.turnId, status: 'completed' })
+
+      // The chat is attached now: the next prompt starts when it starts.
+      now.mockReturnValue(20_000)
+      const next = await orchestrator.submitTurn('persisted-thread', 'second', [], {}, 'second')
+      if (next.queued) throw new Error('expected a turn')
+      now.mockReturnValue(21_000)
+      sessions[0]!.emit({
+        type: 'turn.started',
+        turn: {
+          id: next.turnId,
+          threadId: 'persisted-thread',
+          status: 'running',
+          createdAt: 21_000,
+        },
+      })
+
+      const starts = store
+        .history('persisted-thread')
+        .map(({ event }) => event)
+        .filter(
+          (event): event is Extract<DomainEvent, { type: 'turn.started' }> =>
+            event.type === 'turn.started',
+        )
+      expect(starts.map(({ turn }) => turn.createdAt)).toEqual([1_000, 20_000])
+    } finally {
+      now.mockRestore()
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
 })
 
 describe('history replay', () => {
