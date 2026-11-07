@@ -59,6 +59,32 @@ describe('WorkspaceReview', () => {
     expect(screen.queryByText(/isolated session/i)).toBeNull()
   })
 
+  it('shows no change counts until the checkout’s diff has arrived', async () => {
+    let answer!: (diff: SessionDiff) => void
+    const pending = new Promise<SessionDiff>((resolve) => (answer = resolve))
+    render(
+      <WorkspaceReview
+        transport={
+          new TestTransport((method: string) =>
+            method === 'workspace.diff' ? pending : Promise.reject(new Error(method)),
+          )
+        }
+        projectPath="/repo"
+        branch="main"
+        theme="dark"
+      />,
+    )
+
+    expect(await screen.findByText('main')).toBeTruthy()
+    // Unknown, not zero: no "+0 −0, 0 files" while the diff is on its way.
+    expect(screen.queryByLabelText('Diff statistics')).toBeNull()
+    expect(screen.queryByText('0 files')).toBeNull()
+
+    await act(async () => answer({ threadId: 'w', version: 'v', files: [] }))
+    expect(screen.getByLabelText('Diff statistics').textContent).toBe('+0−0')
+    expect(screen.getByText('0 files')).toBeTruthy()
+  })
+
   it('names the whole branch on its truncated toolbar label', async () => {
     const branch = 'feature/a-branch-name-long-enough-to-truncate-in-a-narrow-panel'
     render(
