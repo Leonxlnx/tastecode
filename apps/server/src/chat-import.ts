@@ -15,6 +15,7 @@ import type {
 import { createOpenCodeHistorySource } from '@harness/adapter-opencode/history'
 import {
   importedEvents,
+  folderKey,
   ProjectFolders,
   savedFolder,
   type ProviderHistory,
@@ -87,6 +88,17 @@ export class ChatImportService {
     const history = await this.deps.history().catch(() => undefined)
     const sources: ChatImportSource[] = []
     const listed = new Map<string, Listed>()
+    // One string per folder, the first spelling seen, so the list groups it once and an
+    // import adds it as one project, however each app spelled it.
+    const spellings = new Map<string, string>()
+    const fileUnder = (folder: string) => {
+      const key = folderKey(folder)
+      const known = spellings.get(key)
+      if (known !== undefined) return known
+      const spelled = savedFolder(folder)
+      spellings.set(key, spelled)
+      return spelled
+    }
     const saved = new Map<ProviderId, Map<string, ProviderHistorySession>>()
     for (const [provider, name] of this.deps.providerNames) {
       const sessions = history?.providers().includes(provider)
@@ -106,7 +118,7 @@ export class ChatImportService {
             id: `${provider}:${session.id}`,
             source: provider,
             title: session.title,
-            folder: savedFolder(session.workspacePath),
+            folder: fileUnder(session.workspacePath),
             provider,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
@@ -132,7 +144,7 @@ export class ChatImportService {
       }
       if (chats.length) sources.push({ ...named, state: 'ready' })
       for (const found of chats) {
-        const saved_ = { ...found, workspacePath: savedFolder(found.workspacePath) }
+        const saved_ = { ...found, workspacePath: fileUnder(found.workspacePath) }
         const id = `${reader.id}:${saved_.id}`
         const mirrored = saved_.nativeSession
           ? `${saved_.provider}:${saved_.nativeSession}`
@@ -346,7 +358,7 @@ function folderLabel(folder: string, home = os.homedir()): string {
 }
 
 function samePath(left: string, right: string): boolean {
-  return path.resolve(savedFolder(left)) === path.resolve(savedFolder(right))
+  return folderKey(left) === folderKey(right)
 }
 
 function describe(error: unknown): string {

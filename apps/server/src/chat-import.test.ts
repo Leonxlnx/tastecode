@@ -11,7 +11,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ChatImportService, importedThreadId, openCodeChatReader } from './chat-import.js'
 import { createT3CodeReader } from './chat-import-t3.js'
-import { ProviderHistory, savedFolder } from './provider-history.js'
+import { ProjectFolders, ProviderHistory, savedFolder } from './provider-history.js'
 import { Store } from './store.js'
 
 let root: string
@@ -730,11 +730,46 @@ describe('saved folder spelling', () => {
     },
   )
 
-  it('drops the long-path prefix and turns slashes around on Windows only', () => {
+  it.runIf(process.platform === 'win32')(
+    'files one folder once across drive case and a trailing separator',
+    async () => {
+      const site = folder('site')
+      const lower = `${site[0]!.toLowerCase()}${site.slice(1)}\\`
+      const { service: scanner, run } = await service({
+        sessions: [session('one', site), session('two', lower)],
+      })
+      const scan = await scanner.scan()
+      expect(scan.folders.map(({ path: saved }) => saved)).toEqual([site])
+      expect(new Set(scan.chats.map(({ folder: saved }) => saved))).toEqual(new Set([site]))
+      const job = await run(['codex:one', 'codex:two'])
+      expect(job.projects).toEqual([site])
+    },
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'continues a T3 Code chat on its Codex session when only the drive case differs',
+    async () => {
+      const site = folder('site')
+      const t3 = path.join(root, 't3')
+      t3Database(t3, [{ id: 'thread', folder: site, native: 'native-1' }])
+      const lower = `${site[0]!.toLowerCase()}${site.slice(1)}`
+      const { service: scanner } = await service({ sessions: [session('native-1', lower)], t3 })
+      const { chats } = await scanner.scan()
+      expect(chats).toEqual([
+        expect.objectContaining({ id: 't3-code:thread', continuation: 'session' }),
+      ])
+    },
+  )
+
+  it('gives each folder one spelling on Windows and leaves it alone elsewhere', () => {
     expect(savedFolder('\\\\?\\E:\\work\\site', 'win32')).toBe('E:\\work\\site')
     expect(savedFolder('\\\\?\\UNC\\server\\share\\site', 'win32')).toBe('\\\\server\\share\\site')
     expect(savedFolder('E:/work/site', 'win32')).toBe('E:\\work\\site')
     expect(savedFolder('E:\\work\\site', 'win32')).toBe('E:\\work\\site')
+    expect(savedFolder('e:\\work\\site\\', 'win32')).toBe('E:\\work\\site')
+    expect(savedFolder('e:\\', 'win32')).toBe('E:\\')
+    expect(savedFolder('\\\\server\\share\\', 'win32')).toBe('\\\\server\\share\\')
     expect(savedFolder('/work/site', 'darwin')).toBe('/work/site')
+    expect(savedFolder('/work/site/', 'darwin')).toBe('/work/site/')
   })
 })

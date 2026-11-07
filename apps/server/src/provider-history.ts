@@ -613,9 +613,11 @@ function folderSpelling(folder: string): string {
 }
 
 /**
- * One spelling per folder, so it is one group and at most one new project. On
- * Windows, OpenCode saves `E:/work/site` and Codex sometimes `\\?\E:\work\site`,
- * where everything else says `E:\work\site`.
+ * The spelling a folder is filed under. On Windows the same folder arrives as
+ * `E:/work/site` (OpenCode), `\\?\E:\work\site` (Codex at times), with a
+ * lowercase drive (CLIs started from VS Code) or with a trailing separator;
+ * all of them become `E:\work\site`. Elsewhere a folder stays as saved. Case
+ * beyond the drive letter is kept; folderKey compares without it.
  */
 export function savedFolder(folder: string, platform = process.platform): string {
   if (platform !== 'win32') return folder
@@ -624,7 +626,16 @@ export function savedFolder(folder: string, platform = process.platform): string
     : folder.startsWith('\\\\?\\')
       ? folder.slice(4)
       : folder
-  return path.win32.normalize(plain)
+  let spelled = path.win32.normalize(plain).replace(/^[a-z]:/, (drive) => drive.toUpperCase())
+  const { root } = path.win32.parse(spelled)
+  if (spelled.length > root.length) spelled = spelled.replace(/\\+$/, '')
+  return spelled
+}
+
+/** Equal for two spellings of one folder path: on Windows also across letter case. */
+export function folderKey(folder: string, platform = process.platform): string {
+  const spelled = savedFolder(folder, platform)
+  return platform === 'win32' ? spelled.toLowerCase() : spelled
 }
 
 /** Same device and file id; a missing folder has none. */
