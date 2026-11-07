@@ -731,6 +731,32 @@ describe('saved folder spelling', () => {
   )
 
   it.runIf(process.platform === 'win32')(
+    'keeps reaching a long-path chat whose folder is gone',
+    async () => {
+      // Gone folders have no file identity, so only the spelling can match them.
+      const gone = path.join(root, 'gone')
+      const sessions = [session('two', `\\\\?\\${gone}`)]
+      const { service: scanner, run } = await service({ sessions })
+      await scanner.scan()
+      const job = await run(['codex:two'])
+      expect(job.projects).toEqual([gone])
+      sessions[0] = { ...sessions[0]!, title: 'Renamed in Codex', revision: '2' }
+      await history.refresh()
+      expect(store.thread('external:codex:two')?.title).toBe('Renamed in Codex')
+    },
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'finds a project an earlier build saved with slashes once its folder is gone',
+    () => {
+      const gone = path.join(root, 'gone')
+      store.addProject(gone.replaceAll('\\', '/'))
+      expect(new ProjectFolders(store).project(gone)).toBe(gone.replaceAll('\\', '/'))
+      expect(new ProjectFolders(store).project(path.join(root, 'other'))).toBeUndefined()
+    },
+  )
+
+  it.runIf(process.platform === 'win32')(
     'files one folder once across drive case and a trailing separator',
     async () => {
       const site = folder('site')

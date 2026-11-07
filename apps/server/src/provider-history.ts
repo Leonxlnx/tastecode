@@ -588,7 +588,10 @@ export class ProjectFolders {
 
   project(folder: string): string | undefined {
     if (this.#known.has(folder)) return this.#known.get(folder)
-    let project = this.store.project(folder)?.path
+    const spelled = savedFolder(folder)
+    let project =
+      this.store.project(folder)?.path ??
+      (spelled === folder ? undefined : this.store.project(spelled)?.path)
     if (project === undefined) {
       // Providers may save the same folder with another case or separator.
       // Only the file system can say whether such a spelling is the same folder.
@@ -602,6 +605,9 @@ export class ProjectFolders {
       const candidates = this.#aliases.get(folderSpelling(folder))
       const identity = candidates && folderIdentity(folder)
       if (identity) project = candidates.find((candidate) => folderIdentity(candidate) === identity)
+      // A folder that is gone has no identity; then only another spelling of the
+      // same path counts, case aside where the file system ignores case.
+      else project = candidates?.find((candidate) => folderKey(candidate) === folderKey(folder))
     }
     this.#known.set(folder, project)
     return project
