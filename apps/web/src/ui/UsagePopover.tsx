@@ -53,10 +53,18 @@ export function UsagePopover(props: {
   useLayoutEffect(() => panel.current?.focus(), [])
 
   // A source without plan limits is left out; one that could not be read yet is not.
-  const states = props.states.filter((state) => {
+  const visible = props.states.filter((state) => {
     const source = limitSource(state)
     return source?.status !== 'unavailable' || source.reason === 'failed'
   })
+  // Each provider's accounts stay together, where its first one is.
+  const providerOrder = new Map<ProviderId, number>()
+  for (const state of visible) {
+    if (!providerOrder.has(state.provider)) providerOrder.set(state.provider, providerOrder.size)
+  }
+  const states = visible.toSorted(
+    (a, b) => (providerOrder.get(a.provider) ?? 0) - (providerOrder.get(b.provider) ?? 0),
+  )
   // Ages are read when the popup opens and when the values change.
   const now = Date.now()
   const busy = states.some((state) => state.status === 'loading')

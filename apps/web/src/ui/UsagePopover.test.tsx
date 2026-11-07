@@ -99,18 +99,24 @@ describe('UsagePopover', () => {
     expect(screen.queryByRole('progressbar')).toBeNull()
   })
 
-  it('names each account when a provider shows more than one', () => {
+  it('names each account when a provider shows more than one, and keeps them together', () => {
     popover(
       [
         ready('claude-code', [{ label: 'Session', usedPercent: 10 }]),
+        ready('codex', [{ label: '7 days', usedPercent: 30 }]),
         ready('claude-code', [{ label: 'Session', usedPercent: 70 }], 'work'),
       ],
       { accountLabel: (_provider, accountId) => (accountId === 'work' ? 'Work' : 'Personal') },
     )
-    expect(screen.getByRole('region', { name: 'Claude Code · Personal' })).toBeTruthy()
     expect(
       screen.getByRole('progressbar', { name: 'Claude Code · Work Session left' }),
     ).toBeTruthy()
+    // Codex keeps its plain name: it shows one account.
+    expect(
+      Array.from(document.querySelectorAll('.usage-pop__source')).map((source) =>
+        source.getAttribute('aria-label'),
+      ),
+    ).toEqual(['Claude Code · Personal', 'Claude Code · Work', 'Codex'])
   })
 
   it('keeps a source being checked as an empty track and offers Retry once a read fails', () => {
