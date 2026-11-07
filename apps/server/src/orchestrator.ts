@@ -796,6 +796,8 @@ export class Orchestrator {
   /** Prompts on their way to each thread that have not started or queued yet. */
   #incomingSubmissions = new Map<string, Set<Promise<unknown>>>()
   #startingTurns = new Set<string>()
+  /** Chats resuming their provider session for a prompt the user just sent. */
+  #resumingForPrompt = new Set<string>()
   #turnStartBarriers = new Map<string, TurnStartBarrier>()
   #pendingTurnStarts = new Map<string, PendingTurnStart>()
   #acceptedTurnStarts = new Map<string, Map<string, PendingTurnStart>>()
@@ -3399,7 +3401,16 @@ export class Orchestrator {
     }
     const approvalChange = this.#approvalChanges.get(threadId)
     if (approvalChange) await approvalChange.catch(() => undefined)
-    await this.#ensureThread(threadId, options)
+    // A resume can take many seconds. The chat shows the prompt starting from
+    // the moment it was sent, not only once the provider session is back.
+    // From there, the turn start (or the queue) that follows sets its status.
+    const resuming = !this.#threads.has(threadId)
+    if (resuming) this.#addSidebarStatus(this.#resumingForPrompt, threadId)
+    try {
+      await this.#ensureThread(threadId, options)
+    } finally {
+      if (resuming) this.#deleteSidebarStatus(this.#resumingForPrompt, threadId)
+    }
     if (panicGeneration !== this.#panicGeneration || disposeGeneration !== this.#disposeGeneration)
       throw new Error('turn cancelled by panic stop or shutdown')
     if (this.#changingProvider.has(threadId)) {
@@ -4057,7 +4068,11 @@ export class Orchestrator {
     }
     if ((projection?.approvals?.size ?? 0) > 0) return 'approval'
     if ((projection?.inputs?.size ?? 0) > 0) return 'input'
-    if (this.#startingTurns.has(threadId) || this.#designStartingThreads.has(threadId)) {
+    if (
+      this.#startingTurns.has(threadId) ||
+      this.#designStartingThreads.has(threadId) ||
+      this.#resumingForPrompt.has(threadId)
+    ) {
       return 'starting'
     }
     if (this.#activeTurns.has(threadId) || this.#acceptedTurnStarts.has(threadId)) return 'working'
@@ -4957,6 +4972,8 @@ export class Orchestrator {
         // that resume so its pending submission cannot run after the user stops it.
         if (this.#resumingThreads.has(threadId)) {
           this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
+          // The prompt is cancelled now; the resume it waits on may take seconds to end.
+          this.#deleteSidebarStatus(this.#resumingForPrompt, threadId)
           return
         }
         if (incoming.length === 0) return
