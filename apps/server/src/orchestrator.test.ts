@@ -8857,9 +8857,12 @@ describe('several sessions at once', () => {
       expect(turnsCompleted(received)).toEqual([
         expect.objectContaining({ turnId: 's1-turn', status: 'interrupted' }),
       ])
+      // The tool the user stopped closes as interrupted (still `started`), not
+      // failed: ending the turn at once borrows restart recovery's settling,
+      // where a dead runtime's work does count as failed.
       expect(received.map(({ event }) => event)).toContainEqual({
         type: 'item.completed',
-        item: expect.objectContaining({ id: 'tool-1', status: 'failed' }),
+        item: expect.objectContaining({ id: 'tool-1', status: 'started' }),
       })
       expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
       expect(orchestrator.inboxStatus(thread.id)).not.toBe('working')
@@ -8867,6 +8870,48 @@ describe('several sessions at once', () => {
       confirm()
       await expect(stopping).resolves.toBeUndefined()
       await orchestrator.disposeAll()
+    })
+
+    it('keeps a stopped tool interrupted after the database and server reopen', async () => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), 'stopped-tool-restart-'))
+      const database = path.join(directory, 'state.db')
+      let store = new Store(database)
+      try {
+        const { orchestrator, sessions } = harness(undefined, store)
+        const thread = await orchestrator.startThread('codex', '/repo')
+        const session = sessions[0]!
+        await orchestrator.submitTurn(thread.id, 'run the tests')
+        session.emit({
+          type: 'turn.started',
+          turn: { id: 's1-turn', threadId: thread.id, status: 'running', createdAt: 1 },
+        })
+        session.emit(tool('started'))
+        await orchestrator.interrupt(thread.id)
+        await orchestrator.disposeAll()
+        store.close()
+
+        // Restart recovery settles what a dead runtime left open, as failed.
+        // The Stop already closed this turn's work, so nothing is left for it.
+        store = new Store(database)
+        expect(store.recoverInterruptedThreads()).toEqual([])
+        const lastTool = compactHistoryReplay(store.history(thread.id))
+          .flatMap(({ event }) =>
+            (event.type === 'item.started' || event.type === 'item.completed') &&
+            event.item.id === 'tool-1'
+              ? [event]
+              : [],
+          )
+          .at(-1)
+        expect(lastTool).toMatchObject({ item: { id: 'tool-1', status: 'started' } })
+        expect(store.history(thread.id).at(-1)?.event).toMatchObject({
+          type: 'turn.completed',
+          turnId: 's1-turn',
+          status: 'interrupted',
+        })
+      } finally {
+        store.close()
+        rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      }
     })
 
     it('records nothing more of the stopped turn, its end included', async () => {
@@ -9869,8 +9914,10 @@ describe('session-owned subagent snapshots', () => {
         status: 'completed',
         subagent: { state: 'running', background: true, toolUses: 3 },
       })
+      // The launch the user stopped is interrupted, not failed; its row reads
+      // the sub-agent's own state.
       expect(items.find(({ id }) => id === 'explorer')).toMatchObject({
-        status: 'failed',
+        status: 'started',
         subagent: { state: 'interrupted' },
       })
       expect(

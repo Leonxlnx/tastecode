@@ -1809,6 +1809,22 @@ describe('completed activity disclosure', () => {
     expect(screen.queryByText('Viewed image')).toBeNull()
   })
 
+  it('shows work the user stopped as interrupted, not failed or still running', () => {
+    // How the server closes a stopped turn's open work: still `started`.
+    const { container } = renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Make the hero and run the tests' }),
+      turnItem('image-1', 2, { type: 'tool_call', status: 'started', text: 'image generation' }),
+      turnItem('command-1', 3, { type: 'command', status: 'started', command: 'npm test' }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: /Worked for|Stopped after|Ran|Generat/ }))
+    expect(screen.getByRole('button', { name: 'Image generation interrupted' })).toBeTruthy()
+    expect(screen.getByText('Command interrupted: npm test')).toBeTruthy()
+    expect(screen.queryByText('Could not generate an image')).toBeNull()
+    expect(screen.queryByText(/Command failed/)).toBeNull()
+    expect(container.querySelectorAll('.aux--live')).toHaveLength(0)
+  })
+
   it('keeps image inspection status honest live and after replay', () => {
     const startedImage = turnItem('image-1', 2, {
       type: 'tool_call',

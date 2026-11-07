@@ -5136,7 +5136,10 @@ export class Orchestrator {
     try {
       // Stop ends the running turn only. A background sub-agent whose launching call already
       // completed keeps running in the live session, which reports how it ends.
-      open = this.#store.interruptedLifecycleEvents(threadId, { launchedSubagents: false })
+      open = this.#store.interruptedLifecycleEvents(threadId, {
+        launchedSubagents: false,
+        stoppedByUser: true,
+      })
     } catch (error) {
       this.#onLog(`Could not settle the stopped turn's open work: ${errorMessage(error)}`)
     }
