@@ -101,7 +101,7 @@ export class ChatImportService {
             id: `${provider}:${session.id}`,
             source: provider,
             title: session.title,
-            folder: session.workspacePath,
+            folder: savedFolder(session.workspacePath),
             provider,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
@@ -127,8 +127,7 @@ export class ChatImportService {
       }
       if (chats.length) sources.push({ ...named, state: 'ready' })
       for (const found of chats) {
-        // OpenCode on Windows saves `E:/work/site`; every other app here says `E:\work\site`.
-        const saved_ = { ...found, workspacePath: path.normalize(found.workspacePath) }
+        const saved_ = { ...found, workspacePath: savedFolder(found.workspacePath) }
         const id = `${reader.id}:${saved_.id}`
         const mirrored = saved_.nativeSession
           ? `${saved_.provider}:${saved_.nativeSession}`
@@ -342,7 +341,22 @@ function folderLabel(folder: string, home = os.homedir()): string {
 }
 
 function samePath(left: string, right: string): boolean {
-  return path.resolve(left) === path.resolve(right)
+  return path.resolve(savedFolder(left)) === path.resolve(savedFolder(right))
+}
+
+/**
+ * One spelling per folder, so it is one group and at most one new project. On
+ * Windows, OpenCode saves `E:/work/site` and Codex sometimes `\\?\E:\work\site`,
+ * where everything else says `E:\work\site`.
+ */
+export function savedFolder(folder: string, platform = process.platform): string {
+  if (platform !== 'win32') return folder
+  const plain = folder.startsWith('\\\\?\\UNC\\')
+    ? `\\\\${folder.slice(8)}`
+    : folder.startsWith('\\\\?\\')
+      ? folder.slice(4)
+      : folder
+  return path.win32.normalize(plain)
 }
 
 function describe(error: unknown): string {

@@ -9,7 +9,12 @@ import type {
   ProviderHistorySource,
 } from '@harness/contracts'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ChatImportService, importedThreadId, openCodeChatReader } from './chat-import.js'
+import {
+  ChatImportService,
+  importedThreadId,
+  openCodeChatReader,
+  savedFolder,
+} from './chat-import.js'
 import { createT3CodeReader } from './chat-import-t3.js'
 import { ProviderHistory } from './provider-history.js'
 import { Store } from './store.js'
@@ -709,5 +714,29 @@ describe('OpenCode chats', () => {
     const job = await run(['opencode:ses_one', 'codex:one'])
     expect(job.projects).toEqual([site])
     expect(store.projects().map(({ path: saved }) => saved)).toEqual([site])
+  })
+})
+
+describe('saved folder spelling', () => {
+  it.runIf(process.platform === 'win32')(
+    'lists a Codex session saved under the long-path prefix in its folder',
+    async () => {
+      const site = folder('site')
+      const { service: scanner, run } = await service({
+        sessions: [session('one', site), session('two', `\\\\?\\${site}`)],
+      })
+      const scan = await scanner.scan()
+      expect(scan.folders.map(({ path: saved }) => saved)).toEqual([site])
+      const job = await run(['codex:one', 'codex:two'])
+      expect(job.projects).toEqual([site])
+    },
+  )
+
+  it('drops the long-path prefix and turns slashes around on Windows only', () => {
+    expect(savedFolder('\\\\?\\E:\\work\\site', 'win32')).toBe('E:\\work\\site')
+    expect(savedFolder('\\\\?\\UNC\\server\\share\\site', 'win32')).toBe('\\\\server\\share\\site')
+    expect(savedFolder('E:/work/site', 'win32')).toBe('E:\\work\\site')
+    expect(savedFolder('E:\\work\\site', 'win32')).toBe('E:\\work\\site')
+    expect(savedFolder('/work/site', 'darwin')).toBe('/work/site')
   })
 })
