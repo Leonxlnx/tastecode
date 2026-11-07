@@ -43,12 +43,18 @@ applyAccentPreference(readAccentPreference(appearanceMode))
 document.documentElement.dataset['shell'] = 'web'
 
 // `?usageReset=60&chat=demo-focus-ring` exercises a quota reset in sixty seconds.
-const usageResetSeconds = Number(new URLSearchParams(window.location.search).get('usageReset'))
-const transport = new DemoTransport(
-  usageResetSeconds > 0 && Number.isFinite(usageResetSeconds)
+// `?accounts=8` signs each provider that holds several accounts in eight times.
+const search = new URLSearchParams(window.location.search)
+const usageResetSeconds = Number(search.get('usageReset'))
+const accountsPerProvider = Number(search.get('accounts'))
+const transport = new DemoTransport({
+  ...(usageResetSeconds > 0 && Number.isFinite(usageResetSeconds)
     ? { usageResetMs: Math.min(usageResetSeconds, 604_800) * 1000 }
-    : {},
-)
+    : {}),
+  ...(accountsPerProvider > 1 && Number.isFinite(accountsPerProvider)
+    ? { accountsPerProvider }
+    : {}),
+})
 
 createRoot(root).render(
   <StrictMode>

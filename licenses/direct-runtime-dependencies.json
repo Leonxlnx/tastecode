@@ -40,6 +40,13 @@
       "source": "https://github.com/fontsource/font-files"
     },
     {
+      "name": "@fontsource-variable/public-sans",
+      "use": "Public Sans variable font",
+      "license": "OFL-1.1",
+      "metadataLicenses": ["OFL-1.1"],
+      "source": "https://github.com/fontsource/font-files"
+    },
+    {
       "name": "@napi-rs/keyring",
       "use": "OS credential-store integration",
       "license": "MIT",
