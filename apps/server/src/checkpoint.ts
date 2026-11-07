@@ -454,26 +454,32 @@ export async function changedSince(repoPath: string, commit: string): Promise<st
 }
 
 /**
- * Everything that changed in a checkout since a snapshot, as one patch with
- * paths relative to `repoPath`, the form provider turn diffs have. Empty when
- * nothing changed; undefined when git cannot say.
+ * How `files` (relative to `repoPath`) changed since a snapshot, as one patch
+ * with paths relative to `repoPath`, the form provider turn diffs have. Empty
+ * when they did not change; undefined when git cannot say.
  */
-export async function patchSince(repoPath: string, commit: string): Promise<string | undefined> {
+export async function patchSince(
+  repoPath: string,
+  commit: string,
+  files: readonly string[],
+): Promise<string | undefined> {
   assertCommit(commit)
+  if (files.length === 0) return ''
   const now = await takeSnapshot(repoPath)
   if (now.commit === commit) return ''
   const root = canonicalCheckoutRoot(repoPath)
-  const scope = path.relative(root, realpathSync(repoPath)) || '.'
+  const scope = path.relative(root, realpathSync(repoPath))
+  const posix = (value: string) => value.split(path.sep).join('/')
   const out = await git(root, [
     'diff',
     '--binary',
     '--no-color',
     '--no-ext-diff',
-    ...(scope === '.' ? [] : [`--relative=${scope.split(path.sep).join('/')}`]),
+    ...(scope === '' ? [] : [`--relative=${posix(scope)}`]),
     commit,
     now.commit,
     '--',
-    `:(literal)${scope}`,
+    ...files.map((file) => `:(literal)${posix(path.join(scope, file))}`),
   ])
   if (out === undefined) return undefined
   return out === '' ? '' : `${out}\n`

@@ -11087,6 +11087,8 @@ describe('rolling a session back', () => {
     writeFileSync(path.join(repo, 'file.txt'), 'agent change\n')
     writeFileSync(path.join(repo, 'added.txt'), 'new file\n')
     sessions[0]!.emit(fileEdit('file.txt', 'turn-1'))
+    // Claude Code names files by absolute path.
+    sessions[0]!.emit(fileEdit(path.join(repo, 'added.txt'), 'turn-1'))
     sessions[0]!.emit(message('Done.', 'turn-1'))
     sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
 
@@ -11101,6 +11103,44 @@ describe('rolling a session back', () => {
     await orchestrator.undoTurnChanges(thread.id, 'turn-1', diff)
     expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
     expect(existsSync(path.join(repo, 'added.txt'))).toBe(false)
+    await orchestrator.disposeAll()
+  })
+
+  it('keeps files the agent did not report out of a turn diff built from its checkpoint', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('claude-code', repo)
+    sessions[0]!.turnIds.push('turn-1')
+    await orchestrator.sendTurn(thread.id, 'change the file')
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+    writeFileSync(path.join(repo, 'file.txt'), 'agent change\n')
+    sessions[0]!.emit(fileEdit('file.txt', 'turn-1'))
+    // Meanwhile the user edits another file, and a command rewrites a third.
+    writeFileSync(path.join(repo, 'notes.txt'), 'user work\n')
+    writeFileSync(path.join(repo, 'formatted.txt'), 'from a formatter\n')
+    sessions[0]!.emit({
+      type: 'item.completed',
+      item: {
+        id: 'cmd-1',
+        turnId: 'turn-1',
+        type: 'command',
+        status: 'completed',
+        command: 'npx prettier --write .',
+        createdAt: 0,
+      },
+    })
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    await vi.waitFor(() => expect(store.turnDiff(thread.id, 'turn-1')).toBeTruthy(), {
+      timeout: 15_000,
+    })
+    const diff = store.turnDiff(thread.id, 'turn-1')!
+    expect(diff).toContain('diff --git a/file.txt b/file.txt')
+    expect(diff).not.toContain('notes.txt')
+    expect(diff).not.toContain('formatted.txt')
+
+    await orchestrator.undoTurnChanges(thread.id, 'turn-1', diff)
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
+    expect(readFileSync(path.join(repo, 'notes.txt'), 'utf8')).toBe('user work\n')
     await orchestrator.disposeAll()
   })
 

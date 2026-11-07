@@ -236,6 +236,8 @@ const MODEL_WINDOW_WAIT_MS = 2_000
  * is left out rather than stored with every replay of the chat.
  */
 const MAX_CHECKPOINT_TURN_DIFF_CHARS = 4 * 1024 * 1024
+/** Each file is one pathspec on the git command line, which Windows caps at 32k characters. */
+const MAX_CHECKPOINT_TURN_DIFF_FILES = 200
 
 type DesignAgentModule = typeof import('@harness/design-agent')
 let loadedDesignAgent: DesignAgentModule | undefined
@@ -805,8 +807,8 @@ export class Orchestrator {
   #startingTurns = new Set<string>()
   /** The checkpoint each chat's latest turn started from, for agents that report no turn diff. */
   #turnStartSnapshots = new Map<string, { repoPath: string; commit: string }>()
-  /** Chats whose running turn ran a command or changed a file. */
-  #turnsThatMayWrite = new Set<string>()
+  /** The files each chat's running turn reported changing, as the agent named them. */
+  #turnWrittenPaths = new Map<string, Set<string>>()
   /** Turn diffs being built from a checkpoint, per chat. */
   #turnDiffBuilds = new Map<string, Promise<void>>()
   #turnStartBarriers = new Map<string, TurnStartBarrier>()
@@ -3727,13 +3729,16 @@ export class Orchestrator {
       this.#touchThreadRuntime(threadId)
       this.#addSidebarStatus(this.#activeTurns, threadId)
       this.#activeTurnIds.set(threadId, event.turn.id)
-      this.#turnsThatMayWrite.delete(threadId)
+      this.#turnWrittenPaths.delete(threadId)
     }
     if (
       (event.type === 'item.started' || event.type === 'item.completed') &&
-      (event.item.type === 'command' || event.item.type === 'file_change')
+      event.item.type === 'file_change' &&
+      event.item.path
     ) {
-      this.#turnsThatMayWrite.add(threadId)
+      const paths = this.#turnWrittenPaths.get(threadId) ?? new Set<string>()
+      paths.add(event.item.path)
+      this.#turnWrittenPaths.set(threadId, paths)
     }
     if (event.type === 'turn.completed' || event.type === 'thread.error') {
       this.#markIdleRuntimeEligible(threadId)
@@ -4636,14 +4641,23 @@ export class Orchestrator {
   #noteTurnDiffFromCheckpoint(threadId: string, turnId: string): void {
     const start = this.#turnStartSnapshots.get(threadId)
     this.#turnStartSnapshots.delete(threadId)
-    // A turn that only answered changed nothing; it costs no snapshot.
-    const mayHaveWritten = this.#turnsThatMayWrite.delete(threadId)
-    if (!start || !mayHaveWritten) return
+    const written = this.#turnWrittenPaths.get(threadId)
+    this.#turnWrittenPaths.delete(threadId)
+    if (!start || !written) return
     const provider = this.#store.thread(threadId)?.provider
     if (!provider || PROVIDER_CAPABILITIES[provider].turnDiffs) return
     if (this.#recordedTurnDiffs.get(threadId)?.turnId === turnId) return
     if (this.#checkoutAccess.sharedSinceBegin(threadId)) return
-    const build = this.#recordTurnDiffFromCheckpoint(threadId, turnId, start).finally(() => {
+    // Only the files the agent said it changed: the user may have edited
+    // others meanwhile, and Undo must never revert those. A file changed only
+    // by a command (a formatter, a generator) is therefore not on the card.
+    const folder = path.resolve(start.repoPath)
+    const files = [...written].flatMap((file) => {
+      const relative = path.relative(folder, path.resolve(folder, file))
+      return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? [relative] : []
+    })
+    if (files.length === 0 || files.length > MAX_CHECKPOINT_TURN_DIFF_FILES) return
+    const build = this.#recordTurnDiffFromCheckpoint(threadId, turnId, start, files).finally(() => {
       if (this.#turnDiffBuilds.get(threadId) === build) this.#turnDiffBuilds.delete(threadId)
     })
     this.#turnDiffBuilds.set(threadId, build)
@@ -4653,9 +4667,10 @@ export class Orchestrator {
     threadId: string,
     turnId: string,
     start: { repoPath: string; commit: string },
+    files: string[],
   ): Promise<void> {
     try {
-      const diff = await patchSince(start.repoPath, start.commit)
+      const diff = await patchSince(start.repoPath, start.commit, files)
       if (!diff) return
       if (diff.length > MAX_CHECKPOINT_TURN_DIFF_CHARS) {
         this.#onLog(`Turn diff from checkpoint left out: ${diff.length} characters`)
