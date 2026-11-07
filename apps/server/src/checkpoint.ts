@@ -453,6 +453,38 @@ export async function changedSince(repoPath: string, commit: string): Promise<st
   return out.split('\0').filter(Boolean)
 }
 
+/**
+ * How `files` (relative to `repoPath`) changed since a snapshot, as one patch
+ * with paths relative to `repoPath`, the form provider turn diffs have. Empty
+ * when they did not change; undefined when git cannot say.
+ */
+export async function patchSince(
+  repoPath: string,
+  commit: string,
+  files: readonly string[],
+): Promise<string | undefined> {
+  assertCommit(commit)
+  if (files.length === 0) return ''
+  const now = await takeSnapshot(repoPath)
+  if (now.commit === commit) return ''
+  const root = canonicalCheckoutRoot(repoPath)
+  const scope = path.relative(root, realpathSync(repoPath))
+  const posix = (value: string) => value.split(path.sep).join('/')
+  const out = await git(root, [
+    'diff',
+    '--binary',
+    '--no-color',
+    '--no-ext-diff',
+    ...(scope === '' ? [] : [`--relative=${posix(scope)}`]),
+    commit,
+    now.commit,
+    '--',
+    ...files.map((file) => `:(literal)${posix(path.join(scope, file))}`),
+  ])
+  if (out === undefined) return undefined
+  return out === '' ? '' : `${out}\n`
+}
+
 const protectedSnapshots = new Map<string, { repoPath: string; commit: string }>()
 const SNAPSHOT_CACHE_LIMIT = 64
 

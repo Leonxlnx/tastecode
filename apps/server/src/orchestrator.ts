@@ -37,6 +37,7 @@ import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import {
   changedSince,
+  patchSince,
   restoreSnapshot,
   takeSnapshot,
   retainCheckpoint,
@@ -229,6 +230,14 @@ const MAX_CONTINUED_CHATS = 8
  * rather than holding the turn.
  */
 const MODEL_WINDOW_WAIT_MS = 2_000
+/**
+ * A turn diff built from a checkpoint is kept in the chat's log like an
+ * agent's own. One that grew past this (generated files, a vendored folder)
+ * is left out rather than stored with every replay of the chat.
+ */
+const MAX_CHECKPOINT_TURN_DIFF_CHARS = 4 * 1024 * 1024
+/** Each file is one pathspec on the git command line, which Windows caps at 32k characters. */
+const MAX_CHECKPOINT_TURN_DIFF_FILES = 200
 
 type DesignAgentModule = typeof import('@harness/design-agent')
 let loadedDesignAgent: DesignAgentModule | undefined
@@ -796,6 +805,12 @@ export class Orchestrator {
   /** Prompts on their way to each thread that have not started or queued yet. */
   #incomingSubmissions = new Map<string, Set<Promise<unknown>>>()
   #startingTurns = new Set<string>()
+  /** The checkpoint each chat's latest turn started from, for agents that report no turn diff. */
+  #turnStartSnapshots = new Map<string, { repoPath: string; commit: string }>()
+  /** The files each chat's running turn reported changing, as the agent named them. */
+  #turnWrittenPaths = new Map<string, Set<string>>()
+  /** Turn diffs being built from a checkpoint, per chat. */
+  #turnDiffBuilds = new Map<string, Promise<void>>()
   /** Chats resuming their provider session for a prompt the user just sent. */
   #resumingForPrompt = new Set<string>()
   #turnStartBarriers = new Map<string, TurnStartBarrier>()
@@ -3709,6 +3724,7 @@ export class Orchestrator {
       }
     }
     if (event.type === 'turn.completed') {
+      this.#noteTurnDiffFromCheckpoint(threadId, event.turnId)
       this.#deleteAcceptedTurnStart(threadId, event.turnId)
       const draining = this.#drainingQueues.get(threadId)
       if (draining) draining.completedTurnId = event.turnId
@@ -3724,6 +3740,16 @@ export class Orchestrator {
       this.#touchThreadRuntime(threadId)
       this.#addSidebarStatus(this.#activeTurns, threadId)
       this.#activeTurnIds.set(threadId, event.turn.id)
+      this.#turnWrittenPaths.delete(threadId)
+    }
+    if (
+      (event.type === 'item.started' || event.type === 'item.completed') &&
+      event.item.type === 'file_change' &&
+      event.item.path
+    ) {
+      const paths = this.#turnWrittenPaths.get(threadId) ?? new Set<string>()
+      paths.add(event.item.path)
+      this.#turnWrittenPaths.set(threadId, paths)
     }
     if (event.type === 'turn.completed' || event.type === 'thread.error') {
       this.#markIdleRuntimeEligible(threadId)
@@ -4599,6 +4625,8 @@ export class Orchestrator {
     const stored = this.#store.thread(threadId)
     if (!stored) return
     const repoPath = this.#repoPath(threadId)
+    // Its snapshot and the last turn's diff would race for the same refs.
+    await this.#turnDiffBuilds.get(threadId)
 
     try {
       const snapshot = await takeSnapshot(repoPath, {
@@ -4611,9 +4639,64 @@ export class Orchestrator {
         commit: snapshot.commit,
         label: checkpointLabel(label),
       })
+      this.#turnStartSnapshots.set(threadId, { repoPath, commit: snapshot.commit })
     } catch {
+      this.#turnStartSnapshots.delete(threadId)
       // A folder that is not a repository is a normal case. Failing the turn
       // over a backup the user never asked for would be the wrong trade.
+    }
+  }
+
+  /**
+   * The edits card and its Undo read a turn's diff, which only some agents
+   * report. For the others it is what changed in the checkout since the
+   * checkpoint the turn started from, unless another chat wrote in the same
+   * checkout meanwhile: its changes would then count as this turn's.
+   */
+  #noteTurnDiffFromCheckpoint(threadId: string, turnId: string): void {
+    const start = this.#turnStartSnapshots.get(threadId)
+    this.#turnStartSnapshots.delete(threadId)
+    const written = this.#turnWrittenPaths.get(threadId)
+    this.#turnWrittenPaths.delete(threadId)
+    if (!start || !written) return
+    const provider = this.#store.thread(threadId)?.provider
+    if (!provider || PROVIDER_CAPABILITIES[provider].turnDiffs) return
+    if (this.#recordedTurnDiffs.get(threadId)?.turnId === turnId) return
+    if (this.#checkoutAccess.sharedSinceBegin(threadId)) return
+    // Only the files the agent said it changed: the user may have edited
+    // others meanwhile, and Undo must never revert those. A file changed only
+    // by a command (a formatter, a generator) is therefore not on the card.
+    const folder = path.resolve(start.repoPath)
+    const files = [...written].flatMap((file) => {
+      const relative = path.relative(folder, path.resolve(folder, file))
+      return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? [relative] : []
+    })
+    if (files.length === 0 || files.length > MAX_CHECKPOINT_TURN_DIFF_FILES) return
+    const build = this.#recordTurnDiffFromCheckpoint(threadId, turnId, start, files).finally(() => {
+      if (this.#turnDiffBuilds.get(threadId) === build) this.#turnDiffBuilds.delete(threadId)
+    })
+    this.#turnDiffBuilds.set(threadId, build)
+  }
+
+  async #recordTurnDiffFromCheckpoint(
+    threadId: string,
+    turnId: string,
+    start: { repoPath: string; commit: string },
+    files: string[],
+  ): Promise<void> {
+    try {
+      const diff = await patchSince(start.repoPath, start.commit, files)
+      if (!diff) return
+      if (diff.length > MAX_CHECKPOINT_TURN_DIFF_CHARS) {
+        this.#onLog(`Turn diff from checkpoint left out: ${diff.length} characters`)
+        return
+      }
+      // A newer turn has started meanwhile; the card is its own now.
+      if (this.#activeTurnIds.has(threadId) || this.#startingTurns.has(threadId)) return
+      if (!this.#store.thread(threadId)) return
+      this.#record(threadId, { type: 'diff.updated', turnId, diff })
+    } catch (error) {
+      this.#onLog(`Turn diff from checkpoint failed: ${errorMessage(error)}`)
     }
   }
 
@@ -5551,6 +5634,8 @@ export class Orchestrator {
 
   async disposeAll(): Promise<void> {
     this.#disposeGeneration += 1
+    // Their git runs work in the checkouts.
+    await Promise.allSettled(this.#turnDiffBuilds.values())
     this.#subagents.dispose()
     const agentToolsClosed = this.#agentTools?.close()
     this.#agentToolGrants.clear()
