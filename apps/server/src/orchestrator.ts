@@ -798,6 +798,8 @@ export class Orchestrator {
   #startingTurns = new Set<string>()
   /** Chats resuming their provider session for a prompt the user just sent. */
   #resumingForPrompt = new Set<string>()
+  /** When a prompt that had to wait for its chat's resume was sent, until its turn starts. */
+  #resumedPromptSentAt = new Map<string, number>()
   #turnStartBarriers = new Map<string, TurnStartBarrier>()
   #pendingTurnStarts = new Map<string, PendingTurnStart>()
   #acceptedTurnStarts = new Map<string, Map<string, PendingTurnStart>>()
@@ -3405,6 +3407,7 @@ export class Orchestrator {
     // the moment it was sent, not only once the provider session is back.
     // From there, the turn start (or the queue) that follows sets its status.
     const resuming = !this.#threads.has(threadId)
+    const sentAt = Date.now()
     if (resuming) this.#addSidebarStatus(this.#resumingForPrompt, threadId)
     try {
       await this.#ensureThread(threadId, options)
@@ -3455,7 +3458,15 @@ export class Orchestrator {
       return { queued: true, queuedTurn: this.#publicQueuedTurn(queuedTurn) }
     }
 
-    const turnId = await this.sendTurn(threadId, text, attachments, options, submission)
+    // Its turn started when it was sent: the chat counted the working time
+    // from there, and must not jump back by the resume once the turn starts.
+    if (resuming) this.#resumedPromptSentAt.set(threadId, sentAt)
+    let turnId: string
+    try {
+      turnId = await this.sendTurn(threadId, text, attachments, options, submission)
+    } finally {
+      this.#resumedPromptSentAt.delete(threadId)
+    }
     if (this.#activeTurnIds.get(threadId) === turnId) {
       this.#addSidebarStatus(this.#activeTurns, threadId)
     }
@@ -6519,8 +6530,10 @@ ${JSON.stringify(deck, null, 2)}
   }
 
   #beginTurnStart(threadId: string, submission?: UserSubmission): PendingTurnStart {
+    const sentAt = this.#resumedPromptSentAt.get(threadId)
+    this.#resumedPromptSentAt.delete(threadId)
     const pending = {
-      acceptedAt: Date.now(),
+      acceptedAt: sentAt ?? Date.now(),
       ...(submission ? { submission } : {}),
     }
     this.#pendingTurnStarts.set(threadId, pending)
