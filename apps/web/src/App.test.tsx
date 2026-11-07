@@ -4663,7 +4663,9 @@ describe('web client', () => {
     })
     render(<App />)
 
-    expect(await screen.findByText('Add a provider to start chatting.')).toBeTruthy()
+    const note = await screen.findByText('Add a provider to start chatting.')
+    // A new install's first state is a note, not an error.
+    expect(note.closest('.composer__error-row')?.getAttribute('data-notice-tone')).toBe('info')
     fireEvent.click(screen.getByRole('button', { name: 'Add provider' }))
     expect(await screen.findByRole('heading', { name: 'Add providers' })).toBeTruthy()
     const codexRow = () =>
