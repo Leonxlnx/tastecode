@@ -6,6 +6,7 @@ import type {
   Model,
   PlanStep,
   ProviderCommand,
+  ProviderAccount,
   ProviderId,
   ProviderLimit,
   ProviderStatus,
@@ -367,6 +368,99 @@ export const DEMO_PROVIDERS: ReadonlyArray<DemoProvider> = [
 
 export function demoProvider(id: ProviderId): DemoProvider | undefined {
   return DEMO_PROVIDERS.find((entry) => entry.status.id === id)
+}
+
+/**
+ * `?accounts=N` signs every provider that holds several accounts in N times,
+ * so the views that list accounts can be seen full. The first is the
+ * provider's default account with its usual limits; the others vary by place.
+ */
+const DEMO_ACCOUNT_NAMES = [
+  'Personal',
+  'Work',
+  'Client Northwind',
+  'Client Helio',
+  'Research',
+  'Side project',
+  'Team shared',
+  'Backup',
+  'Studio',
+  'Agency',
+  'Lab',
+  'Night shift',
+] as const
+export const DEMO_ACCOUNTS_MAX = DEMO_ACCOUNT_NAMES.length
+const DEMO_ACCOUNT_PLANS = new Map<ProviderId, readonly string[]>([
+  ['claude-code', ['max', 'pro', 'max x20', 'pro', 'max', 'team', 'pro', 'max', 'pro', 'max']],
+  ['codex', ['pro', 'plus', 'plus', 'pro x5', 'plus', 'team', 'plus', 'business', 'plus', 'plus']],
+])
+/** How much of each window an account has used, by its place in the list. */
+const SESSION_USED = [38, 72, 12, 95, 54, 0, 88, 27, 63, 41, 9, 77]
+const WEEKLY_USED = [61, 44, 83, 97, 30, 18, 66, 52, 71, 25, 90, 35]
+/** Plans with a weekly window only. */
+const WEEKLY_ONLY = new Set(['max x20', 'pro x5', 'pro x20'])
+
+function demoAccountId(index: number): string {
+  return index === 0 ? 'default' : `demo-account-${index + 1}`
+}
+
+function demoAccountPlan(provider: DemoProvider, index: number): string {
+  return DEMO_ACCOUNT_PLANS.get(provider.status.id)?.[index] ?? provider.plan
+}
+
+export function demoAccounts(
+  platform: DemoPlatform,
+  home: string,
+  provider: DemoProvider,
+  count: number,
+): ProviderAccount[] {
+  return DEMO_ACCOUNT_NAMES.slice(0, count).map((label, index) => {
+    const id = demoAccountId(index)
+    const plan = demoAccountPlan(provider, index)
+    if (index === 0) {
+      return {
+        id,
+        provider: provider.status.id,
+        label,
+        managed: false,
+        email: provider.email,
+        plan,
+      }
+    }
+    return {
+      id,
+      provider: provider.status.id,
+      label,
+      home: demoJoin(platform, home, '.tastecode', 'accounts', id),
+      managed: true,
+      email: `${label.toLowerCase().replace(/\s+/g, '.')}@example.com`,
+      plan,
+    }
+  })
+}
+
+/** A listed account's limits: the provider's windows at this account's place. */
+export function demoAccountLimits(
+  provider: DemoProvider,
+  accountId: string,
+  now: number,
+): ProviderLimit[] | undefined {
+  const index = DEMO_ACCOUNT_NAMES.findIndex((_, place) => demoAccountId(place) === accountId)
+  if (index <= 0) return undefined
+  const weeklyOnly = WEEKLY_ONLY.has(demoAccountPlan(provider, index))
+  return provider
+    .limits(now)
+    .filter((limit) => !(weeklyOnly && limit.windowMinutes === 300))
+    .map((limit) => {
+      const session = limit.windowMinutes === 300
+      return {
+        ...limit,
+        usedPercent: (session ? SESSION_USED : WEEKLY_USED)[index] ?? limit.usedPercent,
+        ...(limit.resetsAt === undefined
+          ? {}
+          : { resetsAt: limit.resetsAt + index * (session ? 37 : 9 * 60) * 60_000 }),
+      }
+    })
 }
 
 /** An item as a transcript script writes it; the server adds identity and time. */
