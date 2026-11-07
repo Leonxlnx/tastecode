@@ -2857,14 +2857,15 @@ export class Orchestrator {
       )
         throw new Error('Side chat start cancelled by shutdown or panic stop')
     }
-    await this.#ensureThread(parentThreadId)
+    // The main chat's own process is not needed: a Side chat reads its saved
+    // history. Resuming it cost a second agent process (about 300 MB for
+    // Claude Code) and, for Codex, 10-15 s before the Side chat could start.
     const storedParent = this.#store.thread(parentThreadId)
     if (!storedParent) throw new Error(`no such thread: ${parentThreadId}`)
     if (storedParent.ephemeral) throw new Error('Side chat cannot be opened inside Side chat.')
     const parentHistory = await this.history(parentThreadId)
 
-    const parent = this.#get(parentThreadId).thread
-    const provider = parent.provider
+    const provider = storedParent.provider
     const workspacePath =
       storedParent.worktreePath ?? resolveWorkspacePath(storedParent.projectPath)
     const approval =
