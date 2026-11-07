@@ -40,6 +40,8 @@ export class ProviderHistory {
   #listings = new Map<ProviderId, Map<string, ProviderHistoryListing>>()
   #closed = false
   #accountSources = new Map<string, Promise<ProviderHistorySource>>()
+  /** What each source listed at its last scan, project or not, for the import list. */
+  #listed = new Map<ProviderId, ProviderHistorySession[]>()
 
   constructor(
     private store: Store,
@@ -75,6 +77,81 @@ export class ProviderHistory {
   hasCopy(threadId: string): boolean {
     const entry = this.#byThread.get(threadId)
     return entry !== undefined && !entry.session.internal
+  }
+
+  /** The providers that have a saved-session source. */
+  providers(): ProviderId[] {
+    return this.sources.map(({ provider }) => provider)
+  }
+
+  /**
+   * What a provider saved that a user could import: every session of its last
+   * scan, wherever it ran, except helper conversations and sessions a chat
+   * left, which a deleted chat counts as. Undefined until that scan is done.
+   */
+  savedSessions(
+    provider: ProviderId,
+  ): Array<{ session: ProviderHistorySession; imported: boolean }> | undefined {
+    const listed = this.#listed.get(provider)
+    if (!listed) return undefined
+    const source = this.sources.find((candidate) => candidate.provider === provider)
+    const resolve = (id: string) => source?.history.resolveSessionId?.(id) ?? id
+    const native = new Set(
+      this.store
+        .nativeProviderThreads(provider)
+        .map((thread) => resolve(thread.providerSessionId ?? thread.id)),
+    )
+    const left = new Set(this.store.leftProviderSessions(provider).map(resolve))
+    return listed.flatMap((session) => {
+      if (session.internal || !session.id || left.has(session.id)) return []
+      if (!path.isAbsolute(session.workspacePath) || !Number.isFinite(session.createdAt)) return []
+      const entry = this.#entries.get(`${provider}:${session.id}`)
+      if (entry?.session.internal) return []
+      const imported =
+        native.has(session.id) || (entry !== undefined && !!this.store.thread(entry.threadId))
+      return [{ session, imported }]
+    })
+  }
+
+  /**
+   * Makes a saved session a chat now, without waiting for a scan. `title`
+   * replaces the provider's own for this chat; later scans keep it.
+   */
+  adopt(
+    provider: ProviderId,
+    session: ProviderHistorySession,
+    projectPath: string,
+    title?: string,
+  ): string {
+    const threadId = `external:${provider}:${session.id}`
+    if (!this.store.thread(threadId)) {
+      this.store.addProviderThread(
+        threadId,
+        provider,
+        title ? { ...session, title } : session,
+        projectPath,
+      )
+      this.#internalWithoutCopy.delete(threadId)
+    }
+    if (session.approval && this.store.threadApproval(threadId) === undefined)
+      this.store.setThreadApproval(threadId, session.approval)
+    this.store.saveProviderHistory(provider, threadId, session)
+    this.#remember({ provider, threadId, session, loadedRevision: null })
+    return threadId
+  }
+
+  /**
+   * Keeps a saved session out of its folder's chats, the way a scan keeps out
+   * a removed copy. A scan imports everything saved in a project's folder, so
+   * without this a folder that became a project for one chosen chat would
+   * bring in all the others. Importing it later still works.
+   */
+  holdBack(provider: ProviderId, session: ProviderHistorySession): void {
+    if (this.#entries.has(`${provider}:${session.id}`)) return
+    const threadId = `external:${provider}:${session.id}`
+    if (this.store.thread(threadId)) return
+    this.store.saveProviderHistory(provider, threadId, session)
+    this.#remember({ provider, threadId, session, loadedRevision: null })
   }
 
   /** Native child history is read on demand; it never starts or resumes an engine. */
@@ -213,6 +290,7 @@ export class ProviderHistory {
               throw error
             },
           )
+          this.#listed.set(provider, sessions)
           if (this.#closed || this.hooks.canImport?.() === false) return
           // Temporary sessions can close between scans, or disappear on restart.
           // Their durable marker must win even before discovery has seen a row.
@@ -513,8 +591,7 @@ export class ProjectFolders {
       }
       const candidates = this.#aliases.get(folderSpelling(folder))
       const identity = candidates && folderIdentity(folder)
-      if (identity)
-        project = candidates.find((candidate) => folderIdentity(candidate) === identity)
+      if (identity) project = candidates.find((candidate) => folderIdentity(candidate) === identity)
     }
     this.#known.set(folder, project)
     return project
