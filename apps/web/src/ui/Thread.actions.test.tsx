@@ -1033,6 +1033,36 @@ describe('completed activity disclosure', () => {
     expect(screen.getByText('Command failed: pnpm test')).toBeTruthy()
   })
 
+  it('names a command without the PowerShell that wrapped it on Windows', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Look' }),
+      // As Codex reports it on Windows: the argv joined into one quoted line.
+      turnItem('command-1', 2, {
+        type: 'command',
+        command:
+          '"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe" -Command \'git diff -- public/index.html\'',
+      }),
+      turnItem('command-2', 3, {
+        type: 'command',
+        command:
+          'C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe -NoProfile -Command "Get-Content \'a b.txt\'; echo \\"\\$env:PATH\\""',
+      }),
+      turnItem('command-3', 4, { type: 'command', command: "pwsh -c 'npm test'", exitCode: 1 }),
+      // A ' inside a single-quoted payload, quoted POSIX-style both ways.
+      turnItem('command-4', 5, {
+        type: 'command',
+        command: `pwsh.exe -Command ''"'"'{0:N4}'"'"' -f $img.Width; Write-Output '\\''done'\\'''`,
+      }),
+      turnItem('answer-1', 6, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    expect(screen.getByText('git diff -- public/index.html')).toBeTruthy()
+    expect(screen.getByText('Get-Content \'a b.txt\'; echo "$env:PATH"')).toBeTruthy()
+    expect(screen.getByText('Command failed: npm test')).toBeTruthy()
+    expect(screen.getByText("'{0:N4}' -f $img.Width; Write-Output 'done'")).toBeTruthy()
+  })
+
   it('names a command after the cd into its absolute folder', () => {
     renderCompleted([
       turnItem('prompt-1', 1, { role: 'user', text: 'Look' }),
