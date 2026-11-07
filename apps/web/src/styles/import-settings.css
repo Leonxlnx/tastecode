@@ -144,7 +144,7 @@
   appearance: none;
   background: transparent;
   border: 1px solid var(--line-strong);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
@@ -467,7 +467,7 @@
   height: 4px;
   overflow: hidden;
   background: color-mix(in srgb, var(--text) 10%, transparent);
-  border-radius: 2px;
+  border-radius: var(--r-xs);
 }
 
 .settings .import-bar__fill {
