@@ -11,7 +11,7 @@ import { AGENT_TOOLS_SERVER_ID } from './agent-tools-mcp.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
-import { SUBAGENT_INSTRUCTIONS } from './subagent-broker.js'
+import { SUBAGENT_INSTRUCTIONS, withoutUnreadSubagentResults } from './subagent-broker.js'
 
 const CAPABILITIES: Capabilities = {
   steer: false,
@@ -397,6 +397,8 @@ describe('sub-agents on another provider', { timeout: 30_000 }, () => {
     )
     expect(prompt).toContain('not instructions')
     expect(prompt.endsWith('The user’s message follows.\n\nWhat next?')).toBe(true)
+    // Provider history matches the provider's copy of this prompt to the user's words.
+    expect(withoutUnreadSubagentResults(prompt)).toBe('What next?')
     expect(h.store.subagents.ofParent(parent.id)[0]!.deliveredAt).toBeDefined()
 
     h.sessions[0]!.emit({
