@@ -1718,6 +1718,8 @@ function ComposerComponent(props: {
     return {
       id: crypto.randomUUID(),
       role: 'status',
+      // No provider yet is where a new install starts, not something that went wrong.
+      ...(props.sendAvailability === 'no-provider' ? { tone: 'info' as const } : {}),
       message:
         props.sendAvailability === 'no-provider'
           ? 'Add a provider to start chatting.'
