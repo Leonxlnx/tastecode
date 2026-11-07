@@ -921,6 +921,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     | undefined
   >(undefined)
   const pendingInterruptThreadIds = useRef(new Set<string>())
+  // Chats stopped while a prompt sent from this window was still on its way to
+  // a turn. The server then rejects that prompt, which is the Stop, not an error.
+  const stoppedTurnStarts = useRef(new Set<string>())
   const pendingProviderHistoryIds = useRef(new Set<string>())
   const providerHistoryReads = useRef(new Map<string, object>())
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurn[]>([])
@@ -4714,6 +4717,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
 
   const requestInterrupt = useCallback(
     (threadId: string) => {
+      stoppedTurnStarts.current.add(threadId)
       setStoppingThreadId(threadId)
       setStoppingRows((rows) => withStoppingRow(rows, threadId, Date.now()))
       void transport
@@ -5084,6 +5088,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           }
           void refreshProjects().catch(() => undefined)
         }
+        // Only a Stop from here on can have cancelled this prompt.
+        stoppedTurnStarts.current.delete(threadId)
         const turnRequest = transport.request('thread.sendTurn', {
           threadId,
           text,
@@ -5162,6 +5168,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           return
         }
         if (queuedActionId) settleQueueAction(queuedActionId, 'steer')
+        // Stopped before its turn started (for one, while the chat resumed):
+        // the prompt goes back into the composer below, and that says enough.
+        const stoppedBeforeStart =
+          !turnAccepted && !wasRunning && stoppedTurnStarts.current.delete(threadId)
         threadController.forgetSubmission(threadId, optimisticItemId)
         if (optimisticQueueId) {
           updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
@@ -5188,7 +5198,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
             publishThread(threadId, next)
           }
         }
-        reportError(error instanceof Error ? error.message : String(error))
+        if (!stoppedBeforeStart) reportError(error instanceof Error ? error.message : String(error))
       }
     },
     [
