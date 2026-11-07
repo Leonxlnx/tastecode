@@ -258,7 +258,7 @@ function ImportList(props: {
             id={searchId}
             className="set-input"
             type="search"
-            placeholder="Search chats and folders"
+            placeholder="Search chats"
             value={props.query}
             onChange={(event) => props.onQuery(event.target.value)}
           />
