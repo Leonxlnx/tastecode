@@ -497,3 +497,8 @@
     align-items: flex-end;
   }
 }
+
+/* Focus moving down the list stops above the bar instead of under it. */
+.settings .settings__main:has(.import-bar) {
+  scroll-padding-bottom: 128px;
+}
