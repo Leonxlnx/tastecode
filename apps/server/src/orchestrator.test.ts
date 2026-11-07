@@ -9036,6 +9036,57 @@ describe('several sessions at once', () => {
     })
   })
 
+  it('shows a chat as starting while it resumes for a sent prompt, and idle at Stop', async () => {
+    const { orchestrator, store } = harness()
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    try {
+      expect(orchestrator.inboxStatus('persisted-thread')).toBe('idle')
+      const before = orchestrator.sidebarStatusRevision()
+      const sending = orchestrator.submitTurn('persisted-thread', 'stop this', [], {}, 'stopped')
+      const stopped = expect(sending).rejects.toThrow('turn cancelled while resuming')
+      expect(orchestrator.inboxStatus('persisted-thread')).toBe('starting')
+      expect(orchestrator.sidebarStatusChangesSince(before)).toEqual(['persisted-thread'])
+
+      const starting = orchestrator.sidebarStatusRevision()
+      await orchestrator.interrupt('persisted-thread')
+      // At the Stop, not when the cancelled resume has wound down.
+      expect(orchestrator.inboxStatus('persisted-thread')).toBe('idle')
+      expect(orchestrator.sidebarStatusChangesSince(starting)).toEqual(['persisted-thread'])
+      await stopped
+      expect(orchestrator.inboxStatus('persisted-thread')).toBe('idle')
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
+  it('goes from starting to working when a resumed chat starts its turn', async () => {
+    const { sessions, orchestrator, store } = harness()
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    try {
+      const sending = orchestrator.submitTurn('persisted-thread', 'go', [], {}, 'go')
+      expect(orchestrator.inboxStatus('persisted-thread')).toBe('starting')
+      await expect(sending).resolves.toMatchObject({ queued: false })
+      expect(sessions[0]!.sent).toEqual(['go'])
+      expect(orchestrator.inboxStatus('persisted-thread')).toBe('working')
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
   it('cancels a cold resume on Stop and allows a later submission', async () => {
     const { sessions, orchestrator, store } = harness()
     store.addProject('/repo')
