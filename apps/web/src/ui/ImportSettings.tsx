@@ -579,6 +579,18 @@ function ChatRow(props: {
     ...(chat.archived ? ['Archived'] : []),
     ...(props.showCopy && chat.continuation === 'copy' ? ['Copy'] : []),
   ]
+  const when = lastUsed(chat.updatedAt, props.now)
+  // What the row shows besides the title, said once for a screen reader; the folder's
+  // own app and Copy count too when the row leaves them to the folder.
+  const description = [
+    savedBy,
+    ...(chat.archived ? ['Archived'] : []),
+    ...(chat.continuation === 'copy' ? ['Copy'] : []),
+    when,
+  ]
+    .filter(Boolean)
+    .join(', ')
+  const describedBy = useId()
   return (
     <li>
       <label className="import-row import-chat">
@@ -586,6 +598,7 @@ function ChatRow(props: {
           className="import-check"
           type="checkbox"
           aria-label={title}
+          aria-describedby={describedBy}
           checked={props.checked}
           disabled={props.disabled}
           onChange={props.onChange}
@@ -601,7 +614,10 @@ function ChatRow(props: {
         <span className="import-row__count" title={savedBy || undefined}>
           {mark ? <ProviderIcon mark={mark} size={13} /> : null}
         </span>
-        <span className="import-row__when">{lastUsed(chat.updatedAt, props.now)}</span>
+        <span className="import-row__when">{when}</span>
+        <span className="visually-hidden" id={describedBy}>
+          {description}
+        </span>
       </label>
     </li>
   )

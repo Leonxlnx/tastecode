@@ -129,6 +129,8 @@ describe('Import chats settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /site/ }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'two' }))
+    // The row leaves its app to the folder; a screen reader still hears it.
+    expect(screen.getByRole('checkbox', { name: 'two', description: /^Codex, / })).toBeTruthy()
     expect(screen.getByText('1 chat from 1 folder · 1 new project')).toBeTruthy()
     expect(screen.getByText('1 of 2 chats', { selector: '.import-folder__count' })).toBeTruthy()
     const box = screen.getByRole<HTMLInputElement>('checkbox', {
