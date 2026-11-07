@@ -8872,6 +8872,55 @@ describe('several sessions at once', () => {
       await orchestrator.disposeAll()
     })
 
+    it('keeps a stopped tool interrupted when the agent later reports it failed', async () => {
+      const { orchestrator, thread, session, store, stopping, confirm } =
+        await stoppedWhileUnconfirmed()
+      confirm()
+      await stopping
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+      // Codex reports the killed process after the turn ended.
+      session.emit({
+        type: 'item.completed',
+        item: {
+          id: 'tool-1',
+          turnId: 's1-turn',
+          type: 'tool_call',
+          status: 'failed',
+          text: 'runner error: runner pipe closed',
+          createdAt: 1,
+        },
+      })
+      const lastTool = () =>
+        store
+          .history(thread.id)
+          .flatMap(({ event }) =>
+            event.type === 'item.completed' && event.item.id === 'tool-1' ? [event.item] : [],
+          )
+          .at(-1)
+      expect(lastTool()).toMatchObject({ status: 'started' })
+
+      // The next turn's own failures are failures again.
+      session.turnIds.push('s2-turn')
+      await orchestrator.submitTurn(thread.id, 'try again')
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 's2-turn', threadId: thread.id, status: 'running', createdAt: 2 },
+      })
+      session.emit({
+        type: 'item.completed',
+        item: { ...lastTool()!, id: 'tool-2', turnId: 's2-turn', status: 'failed' },
+      })
+      expect(
+        store
+          .history(thread.id)
+          .flatMap(({ event }) =>
+            event.type === 'item.completed' && event.item.id === 'tool-2' ? [event.item] : [],
+          )
+          .at(-1),
+      ).toMatchObject({ status: 'failed' })
+      await orchestrator.disposeAll()
+    })
+
     it('keeps a stopped tool interrupted after the database and server reopen', async () => {
       const directory = mkdtempSync(path.join(os.tmpdir(), 'stopped-tool-restart-'))
       const database = path.join(directory, 'state.db')
