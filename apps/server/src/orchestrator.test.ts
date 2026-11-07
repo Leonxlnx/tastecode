@@ -10698,6 +10698,12 @@ describe('isolated sessions', { timeout: 60_000 }, () => {
       execFileSync('git', args, { cwd: fixtureRepo, windowsHide: true })
     git('config', 'user.email', 'test@example.com')
     git('config', 'user.name', 'Test')
+    // As in gitRepositoryTemplate: no gc or maintenance left running in the
+    // background after the commit, writing in .git/objects while a test copies
+    // the repository (ENOENT on .git/objects in cpSync, twice on macOS).
+    git('config', 'gc.auto', '0')
+    git('config', 'gc.autoDetach', 'false')
+    git('config', 'maintenance.auto', 'false')
     writeFileSync(path.join(fixtureRepo, 'file.txt'), 'original\n')
     git('add', '.')
     git('commit', '-m', 'first')
