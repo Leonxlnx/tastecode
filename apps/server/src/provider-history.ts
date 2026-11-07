@@ -750,6 +750,10 @@ export function importedEvents(
         type: 'item.completed',
         item: {
           ...event.item,
+          // A chat that ran in TasteCode before saved our wrappers around the user's words.
+          ...(event.item.role === 'user' && event.item.text !== undefined
+            ? { text: userWords(event.item.text) }
+            : {}),
           id: `import:${event.item.id}`,
           turnId: `import:${event.item.turnId}`,
           // A saved snapshot has no live session to finish its background work.
@@ -802,8 +806,18 @@ export function userWords(text: string): string {
     const start = words.indexOf(marker)
     if (start !== -1) words = words.slice(start + marker.length)
   }
+  // A Design brief's prompt (designBriefingPrompt) ends with the request as the user wrote it.
+  if (words.startsWith(BRIEFING_START) && words.endsWith(BRIEFING_REQUEST_CLOSE)) {
+    const start = words.lastIndexOf(BRIEFING_REQUEST_OPEN)
+    if (start !== -1)
+      words = words.slice(start + BRIEFING_REQUEST_OPEN.length, -BRIEFING_REQUEST_CLOSE.length)
+  }
   return words
 }
+
+const BRIEFING_START = 'You are running TasteCode Design Briefing mode.\n'
+const BRIEFING_REQUEST_OPEN = '\n<user-design-request>\n'
+const BRIEFING_REQUEST_CLOSE = '\n</user-design-request>'
 
 function sameUserMessage(left: Item, right: Item): boolean {
   const text = right.text === undefined ? undefined : userWords(right.text)
