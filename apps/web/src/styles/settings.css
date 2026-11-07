@@ -264,7 +264,8 @@
   height: 18px;
   margin-top: 7px;
   color: var(--text-3);
-  font-size: clamp(8px, 1.35cqi, var(--t-xs));
+  /* Never under 10px: each label has four week columns, room for a three-letter month. */
+  font-size: clamp(10px, 1.35cqi, var(--t-xs));
 }
 
 .profile-activity__months span {
