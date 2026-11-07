@@ -6112,13 +6112,15 @@ describe('new chats', () => {
     render(<App />)
 
     // A new chat offers both accounts; picking Team's model makes Team the one
-    // new chats start on.
+    // new chats start on, and the composer says so.
+    const running = () => composerProps().modelChoice?.account?.label
     await waitFor(() =>
       expect(offered()).toEqual([
         'Codex (Personal): codex:gpt-6.1',
         'Codex (Team): codex@team-9z8y7x:gpt-6.1-team',
       ]),
     )
+    await waitFor(() => expect(running()).toBe('Personal'))
     act(() => composerProps().onModelChange('codex@team-9z8y7x:gpt-6.1-team'))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('accounts.setActive', {
@@ -6127,6 +6129,7 @@ describe('new chats', () => {
       }),
     )
     await waitFor(() => expect(composerProps().modelId).toBe('codex:gpt-6.1-team'))
+    await waitFor(() => expect(running()).toBe('Team'))
 
     // An open chat on Personal lists its own account first; Team moves it.
     fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
@@ -6143,6 +6146,9 @@ describe('new chats', () => {
       ),
     )
     expect(note()?.action?.label).toBe('Stay on Codex (Personal)')
+    // A pick that moves the chat already names its account, and only once.
+    expect(composerProps().modelChoice?.sourceName).toBe('Codex (Team)')
+    expect(running()).toBe('Team')
     await waitFor(() => expect(composerProps().sendAvailability).toBe('ready'))
     await act(async () => composerProps().onSend('Keep going', []))
 
@@ -6170,6 +6176,7 @@ describe('new chats', () => {
     )
     expect(composerProps().modelId).toBe('codex:gpt-6.1-team')
     expect(note()).toBeUndefined()
+    expect(running()).toBe('Team')
   })
 
   it("checks the sign-in of the chat's own account, not the default one", async () => {
