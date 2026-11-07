@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { setImmediate as nextTurn } from 'node:timers/promises'
 import type {
@@ -87,7 +88,8 @@ export class ChatImportService {
         ? history.savedSessions(provider)
         : undefined
       if (!sessions) {
-        sources.push({ id: provider, name, provider, state: history ? 'scanning' : 'failed' })
+        const unavailable = !history || history.listFailed(provider)
+        sources.push({ id: provider, name, provider, state: unavailable ? 'failed' : 'scanning' })
         continue
       }
       if (sessions.length) sources.push({ id: provider, name, provider, state: 'ready' })
@@ -314,11 +316,18 @@ function folderList(store: Store, chats: ChatImportChat[]): ChatImportFolder[] {
     folders.set(folder, {
       path: folder,
       name: path.basename(folder) || folder,
+      label: folderLabel(folder),
       isProject: projects.project(folder) !== undefined,
       missing: !existsSync(folder),
     })
   }
   return [...folders.values()]
+}
+
+function folderLabel(folder: string, home = os.homedir()): string {
+  const relative = path.relative(home, folder)
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return folder
+  return path.join('~', relative)
 }
 
 function samePath(left: string, right: string): boolean {

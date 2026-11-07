@@ -236,7 +236,9 @@ describe('chat import scan', () => {
         imported: false,
       }),
     ])
-    expect(scan.folders).toEqual([{ path: site, name: 'site', isProject: false, missing: false }])
+    expect(scan.folders).toEqual([
+      { path: site, name: 'site', label: site, isProject: false, missing: false },
+    ])
   })
 
   it('leaves out helper sessions and sessions a chat left', async () => {
@@ -295,6 +297,16 @@ describe('chat import scan', () => {
       { id: 't3-code', name: 'T3 Code', state: 'failed' },
     ])
     release([])
+  })
+})
+
+describe('chat import scan of a failing source', () => {
+  it('stops saying scanning once a first listing has failed', async () => {
+    const { service: scanner } = await service({
+      source: codexSource([], { list: () => Promise.reject(new Error('corrupt index')) }),
+    })
+    const { sources } = await scanner.scan()
+    expect(sources).toEqual([{ id: 'codex', name: 'Codex', provider: 'codex', state: 'failed' }])
   })
 })
 

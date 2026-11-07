@@ -42,6 +42,8 @@ export class ProviderHistory {
   #accountSources = new Map<string, Promise<ProviderHistorySource>>()
   /** What each source listed at its last scan, project or not, for the import list. */
   #listed = new Map<ProviderId, ProviderHistorySession[]>()
+  /** Sources whose latest scan failed, so nobody waits on a listing that is not coming. */
+  #listFailed = new Set<ProviderId>()
 
   constructor(
     private store: Store,
@@ -77,6 +79,11 @@ export class ProviderHistory {
   hasCopy(threadId: string): boolean {
     const entry = this.#byThread.get(threadId)
     return entry !== undefined && !entry.session.internal
+  }
+
+  /** A source that has no listing to offer because its scan failed. */
+  listFailed(provider: ProviderId): boolean {
+    return this.#listFailed.has(provider) && !this.#listed.has(provider)
   }
 
   /** The providers that have a saved-session source. */
@@ -291,6 +298,7 @@ export class ProviderHistory {
             },
           )
           this.#listed.set(provider, sessions)
+          this.#listFailed.delete(provider)
           if (this.#closed || this.hooks.canImport?.() === false) return
           // Temporary sessions can close between scans, or disappear on restart.
           // Their durable marker must win even before discovery has seen a row.
@@ -438,6 +446,7 @@ export class ProviderHistory {
           }
           for (const threadId of repair) await this.load(threadId)
         } catch {
+          this.#listFailed.add(provider)
           // Never log source content or paths from a malformed provider record.
           this.hooks.log(`${provider} history could not be refreshed; will retry`)
         } finally {
