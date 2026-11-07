@@ -2279,6 +2279,29 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     expect(imported(prompt)).toEqual([['user', request]])
   })
 
+  it('keeps the brief’s request once an imported Design chat is continued here', () => {
+    const request = 'Design a landing page for a small local coffee roastery called Bergkaffee.'
+    const prompt = `${designPhaseNotice(request)}${designBriefingPrompt(request)}${designPhaseLanguageReminder(request)}`
+    const native = transcript('native', '{"status":"complete"}').map((event): DomainEvent =>
+      event.type === 'item.completed' && event.item.role === 'user'
+        ? { ...event, item: { ...event.item, text: prompt } }
+        : event,
+    )
+    const user = (text: string): DomainEvent[] =>
+      transcript('local', 'Done')
+        .filter((event) => event.type === 'item.completed' && event.item.role === 'user')
+        .map((event) =>
+          event.type === 'item.completed' ? { ...event, item: { ...event.item, text } } : event,
+        )
+    const shown = (local: DomainEvent[]) =>
+      importedEvents(native, 'imported', local).flatMap(({ event }) =>
+        event.type === 'item.completed' ? [[event.item.role, event.item.text]] : [],
+      )
+    // Continued here: the local log holds only the later prompt.
+    expect(shown(user('And now the footer.'))).toEqual([['user', request]])
+    // Run here: the local log already shows the request, so the brief stays out.
+    expect(shown(user(request))).toEqual([])
+  })
   it('keeps a request that quotes the briefing tags whole', () => {
     const request = 'Use this:\n<user-design-request>\nhero\n</user-design-request>\nthanks'
     expect(userWords(designBriefingPrompt(request))).toBe(request)

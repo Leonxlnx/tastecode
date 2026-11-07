@@ -698,8 +698,14 @@ export function importedEvents(
       event.item.role === 'user' &&
       withoutRestoreNotice(event.item.text)?.startsWith(DESIGN_PHASE_MARKER)
     ) {
-      // Without a local log (an imported chat) nothing else shows what was asked.
-      if (!local.length && designBriefRequest(withoutRestoreNotice(event.item.text)!) !== undefined)
+      // A Design chat run here shows its request in the local log. One that ran
+      // elsewhere (imported, then perhaps continued here) has nothing else that does.
+      const request = designBriefRequest(withoutRestoreNotice(event.item.text)!)
+      if (
+        request !== undefined &&
+        !localTurns.has(id) &&
+        !users.some((item) => item.text === request)
+      )
         briefs.add(id)
       else echoed.add(id)
     }
