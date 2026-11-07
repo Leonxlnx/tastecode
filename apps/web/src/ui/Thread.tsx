@@ -3749,8 +3749,10 @@ function powerShellCommand(text: string): string | undefined {
   const wrapped = POWERSHELL_WRAPPER.exec(text)
   if (!wrapped) return undefined
   const [, quote, payload = ''] = wrapped
-  // A double-quoted payload escapes `"`, `\`, `$` and backticks with a backslash.
-  const inner = quote === '"' ? payload.replace(/\\(["\\$`])/g, '$1') : payload
+  // A double-quoted payload escapes `"`, `\`, `$` and backticks with a backslash;
+  // a single-quoted one closes, quotes and reopens around each `'` it contains.
+  const inner =
+    quote === '"' ? payload.replace(/\\(["\\$`])/g, '$1') : payload.replace(/'"'"'|'\\''/g, "'")
   return inner.trim() || undefined
 }
 
