@@ -116,17 +116,6 @@ const loadAccountLimits = (): Promise<LazyAccountLimitsModule> =>
   }))
 const AccountLimits = lazy(loadAccountLimits)
 
-type UsagePopoverComponent = (typeof import('./UsagePopover.js'))['UsagePopover']
-let usagePopoverPromise: Promise<{ default: UsagePopoverComponent }> | undefined
-let resolvedUsagePopover: UsagePopoverComponent | undefined
-const loadUsagePopover = (): Promise<{ default: UsagePopoverComponent }> =>
-  (usagePopoverPromise ??= import('./UsagePopover.js').then((module) => {
-    resolvedUsagePopover = module.UsagePopover
-    return { default: module.UsagePopover }
-  }))
-const UsagePopover = lazy(loadUsagePopover)
-const NO_USAGE_STATES: AccountLimitsState[] = []
-
 function AccountLimitsLoading(props: { states: AccountLimitsState[] }) {
   const panel = useRef<HTMLElement>(null)
   const visible = props.states.some((state) =>
@@ -314,6 +303,8 @@ function SidebarComponent(props: {
   pullRequestsActive?: boolean | undefined
   onOpenPullRequests?: (() => void) | undefined
   onOpenSettings: (section?: 'profile' | 'usage') => void
+  /** Opens usage over the whole window; without it the button opens the Usage page. */
+  onOpenUsage?: (() => void) | undefined
   /** Present only when this build can send feedback. */
   onSendFeedback?: (() => void) | undefined
 }) {
@@ -1070,43 +1061,21 @@ function SidebarComponent(props: {
                 )
               }}
             </Menu>
-            {/* Usage sits beside the gear as its twin: one press opens the plan
-                limits as large bars, without going through the account popup. */}
-            <div className="account-card__usage">
-              <Menu
-                drop="up"
-                gap={8}
-                align="right"
-                label="Usage"
-                triggerTitle="Usage"
-                triggerClassName="account-card__icon"
-                panelClassName="menu--usage"
-                panelRole="dialog"
-                panelLabel="Usage"
-                onTriggerIntent={() => void loadUsagePopover()}
-                trigger={() => <MaterialIcon name="data_usage" size={18} />}
-              >
-                {(close) => {
-                  const RenderedUsagePopover = resolvedUsagePopover ?? UsagePopover
-                  return (
-                    <Suspense fallback={null}>
-                      <RenderedUsagePopover
-                        states={props.usageStates ?? NO_USAGE_STATES}
-                        accountLabel={props.accountLabel}
-                        onShow={props.onShowUsage}
-                        onRetry={props.onRetryUsage ?? noop}
-                        onRefresh={props.onRefreshUsage}
-                        onOpenHistory={() => {
-                          props.onOpenSettings('usage')
-                          closeOnNarrowViewport()
-                          close()
-                        }}
-                      />
-                    </Suspense>
-                  )
-                }}
-              </Menu>
-            </div>
+            {/* Usage sits beside the gear as its twin: one press opens usage
+                over the whole window, without going through the account popup. */}
+            <button
+              type="button"
+              className="account-card__usage account-card__icon"
+              aria-label="Usage"
+              title="Usage"
+              onClick={() => {
+                if (props.onOpenUsage) props.onOpenUsage()
+                else props.onOpenSettings('usage')
+                closeOnNarrowViewport()
+              }}
+            >
+              <MaterialIcon name="bar_chart" size={18} />
+            </button>
             <button
               type="button"
               className="account-card__settings account-card__icon"

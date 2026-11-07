@@ -449,6 +449,9 @@ const CheckoutDiscardDialog = lazy(() =>
 const RollbackDialog = lazy(() =>
   import('./ui/RollbackDialog.js').then((module) => ({ default: module.RollbackDialog })),
 )
+const UsageDialog = lazy(() =>
+  import('./ui/UsageDialog.js').then((module) => ({ default: module.UsageDialog })),
+)
 const FeedbackDialog = lazy(() =>
   import('./ui/FeedbackDialog.js').then((module) => ({ default: module.FeedbackDialog })),
 )
@@ -1194,6 +1197,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const feedback = useFeedbackStatus(transport)
   const refreshFeedback = feedback.refresh
   const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>()
+  const [usageOpen, setUsageOpen] = useState(false)
+  const openUsage = useCallback(() => setUsageOpen(true), [])
+  const closeUsage = useCallback(() => setUsageOpen(false), [])
   /** The chat the dialog describes, read when it opens. Kept in a ref so openers stay stable. */
   const feedbackContext = useRef<FeedbackRequest['context']>({})
   const feedbackOpens = useRef(0)
@@ -6724,6 +6730,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         setPaletteScope('all')
         return
       }
+      // /usage opens the same usage dialog as the rail's usage button.
+      if (screen === 'usage') {
+        setUsageOpen(true)
+        return
+      }
       openSettings(screen === 'settings' ? undefined : screen === 'login' ? 'providers' : screen)
     },
     [openSettings],
@@ -7865,6 +7876,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           onOpenSearch={openSidebarSearch}
           onOpenPullRequests={openPullRequests}
           onOpenSettings={openSettings}
+          onOpenUsage={openUsage}
           onSendFeedback={feedback.status.enabled ? openAccountFeedback : undefined}
         />
 
@@ -8092,7 +8104,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                         paletteScope === null &&
                         !rollbackOpen &&
                         !checkoutDelete &&
-                        !feedbackRequest
+                        !feedbackRequest &&
+                        !usageOpen
                       }
                       onOpen={openBottomPanel}
                       onClose={closeTerminal}
@@ -8128,7 +8141,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                   paletteScope === null &&
                   !rollbackOpen &&
                   !checkoutDelete &&
-                  !feedbackRequest
+                  !feedbackRequest &&
+                  !usageOpen
                 }
                 onOpen={openWorkspacePanel}
                 onClose={closeWorkspacePanel}
@@ -8306,6 +8320,25 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
               setRollbackOpen(false)
               setRollbackInspection(undefined)
             }}
+          />
+        </Suspense>
+      ) : null}
+
+      {usageOpen ? (
+        <Suspense fallback={null}>
+          <UsageDialog
+            transport={transport}
+            states={usageState}
+            accountLabel={accountLabel}
+            pools={accountPools}
+            onShow={showUsage}
+            onRetry={retryUsage}
+            onRefresh={refreshAllUsage}
+            onOpenHistory={() => {
+              setUsageOpen(false)
+              openSettings('usage')
+            }}
+            onClose={closeUsage}
           />
         </Suspense>
       ) : null}

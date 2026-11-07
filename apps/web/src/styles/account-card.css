@@ -54,7 +54,7 @@
   background: none;
 }
 
-.account-card__usage .account-card__icon:focus-visible,
+.account-card__usage:focus-visible,
 .account-card__trigger:focus-visible,
 .account-card__settings:focus-visible {
   outline: var(--focus-ring);
@@ -185,8 +185,7 @@
 
 /* Both carry Material icons at 18px, whose 24px grid leaves the glyph about
    the size of the rail's 16px outline icons. */
-.account-card__icon,
-.account-card__icon.menutrigger {
+.account-card__icon {
   display: grid;
   place-items: center;
   width: 28px;
@@ -202,9 +201,7 @@
     color var(--dur-fast) var(--ease-out);
 }
 
-.account-card__icon:hover,
-.account-card__icon.menutrigger:hover:not(:disabled),
-.account-card__icon[aria-expanded='true'] {
+.account-card__icon:hover {
   background: var(--menu-hover);
   color: var(--text);
 }

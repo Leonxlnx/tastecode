@@ -643,8 +643,6 @@
 .shell__body[data-covered] .composer__design:focus-visible > span,
 .shell__body[data-covered] .brief-input__spinner,
 .shell__body[data-covered] .account-menu__refresh.is-busy svg,
-.shell__body[data-covered] .usage-pop__icon-button.is-busy svg,
-.shell__body[data-covered] .usage-pop__bar.is-checking,
 .shell__body[data-covered] .workspace-browser__progress::before {
   animation-play-state: paused !important;
 }

@@ -201,7 +201,7 @@ describe('sidebar theme CSS', () => {
       /\.account__meter > span \{[^}]*transform-origin: left center;[^}]*transition: transform/s,
     )
     expect(accountCardCss).toMatch(
-      /\.account-card__icon,\s*\.account-card__icon\.menutrigger \{[^}]*width: 28px;[^}]*height: 28px;[^}]*border-radius: var\(--r-circle\);/s,
+      /\.account-card__icon \{[^}]*width: 28px;[^}]*height: 28px;[^}]*border-radius: var\(--r-circle\);/s,
     )
     expect(accountCardCss).toMatch(
       /\.menu\.menu--account \{[^}]*width: min\(var\(--menu-trigger-w, 224px\), calc\(100vw - 16px\)\);/s,

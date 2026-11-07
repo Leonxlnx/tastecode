@@ -340,16 +340,23 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Usage button and popup beside the settings gear
+                >Usage button beside the settings gear, opening usage over the whole window
                 <span class="d"
                   >the account card's foot carries two Material Icons buttons (Outlined), usage
-                  (data_usage) to the left of the settings gear; usage opens a popup that rises over
-                  the rail, wider than it, set in Public Sans: every provider account with plan
-                  limits, one 14px bar per window with what is left as the largest figure, the even
-                  pace as a tick, the reset time under the bar, and the figure and bar red at 15%
-                  left or less; providers are split by a rule, a source being read shows an empty
-                  track, a failed one Unavailable with Retry, a refresh icon re-reads every source;
-                  Usage history at its foot opens the Usage page in Settings</span
+                  (bar_chart) to the left of the settings gear; usage, and the /usage command, open
+                  a dialog over the whole window in the shared modal frame, set in Public Sans, with
+                  Limits and Tokens views; Limits names the window with the least left under the
+                  title and gives each provider one panel: a single account shows one long bar per
+                  window with what is left as the largest figure, the even-pace tick and the reset
+                  time; a provider with several accounts shows its pool of all accounts as the long
+                  bars (sized in its cheapest plan) over a table with a line per account, its plan,
+                  the account the pool recommends, and a short bar, figure and reset per window, a
+                  dash where a plan lacks a window; figures and bars turn red at 15% left or less;
+                  Tokens shows the period's tokens, value at API prices and caching savings for 7,
+                  30 or 90 days, then each provider and its top models as bars against the largest;
+                  refresh, close, Escape and the scrim work as in other dialogs, and Full history in
+                  Settings opens the Usage page; the sandbox lists N accounts per provider with
+                  ?accounts=N</span
                 ></span
               ></label
             >
