@@ -263,31 +263,7 @@ export class ProviderHistory {
             }
           }
           this.store.batchLifecycleUpdates(() => {
-            // Saved sessions share a few folders, and the store does not cache a
-            // folder that is not a project.
-            const projectFolders = new Map<string, string | undefined>()
-            let aliases: Map<string, string[]> | undefined
-            const projectFor = (folder: string) => {
-              if (projectFolders.has(folder)) return projectFolders.get(folder)
-              let project = this.store.project(folder)?.path
-              if (project === undefined) {
-                // Providers may save the same folder with another case or separator.
-                // Only the file system can say whether such a spelling is the same folder.
-                if (!aliases) {
-                  aliases = new Map()
-                  for (const { path: stored } of this.store.projects()) {
-                    const spelling = folderSpelling(stored)
-                    aliases.set(spelling, [...(aliases.get(spelling) ?? []), stored])
-                  }
-                }
-                const candidates = aliases.get(folderSpelling(folder))
-                const identity = candidates && folderIdentity(folder)
-                if (identity)
-                  project = candidates.find((candidate) => folderIdentity(candidate) === identity)
-              }
-              projectFolders.set(folder, project)
-              return project
-            }
+            const folders = new ProjectFolders(this.store)
             for (const session of sessions) {
               if (session.internal || !session.id || left.has(session.id)) continue
               if (!path.isAbsolute(session.workspacePath) || !Number.isFinite(session.createdAt))
@@ -295,7 +271,7 @@ export class ProviderHistory {
               const native = nativeThreads.get(session.id)
               // An isolated chat runs its provider in a private worktree, but
               // belongs to the project it was started from.
-              const projectPath = projectFor(native?.projectPath ?? session.workspacePath)
+              const projectPath = folders.project(native?.projectPath ?? session.workspacePath)
               if (projectPath === undefined) continue
               const key = `${provider}:${session.id}`
               const previous = this.#entries.get(key)
@@ -509,6 +485,39 @@ export class ProviderHistory {
       ),
     ])
     this.#accountSources.clear()
+  }
+}
+
+/**
+ * Which project saved folders belong to. Saved sessions share a few folders, and
+ * the store does not cache a folder that is not a project.
+ */
+export class ProjectFolders {
+  #known = new Map<string, string | undefined>()
+  #aliases: Map<string, string[]> | undefined
+
+  constructor(private store: Store) {}
+
+  project(folder: string): string | undefined {
+    if (this.#known.has(folder)) return this.#known.get(folder)
+    let project = this.store.project(folder)?.path
+    if (project === undefined) {
+      // Providers may save the same folder with another case or separator.
+      // Only the file system can say whether such a spelling is the same folder.
+      if (!this.#aliases) {
+        this.#aliases = new Map()
+        for (const { path: stored } of this.store.projects()) {
+          const spelling = folderSpelling(stored)
+          this.#aliases.set(spelling, [...(this.#aliases.get(spelling) ?? []), stored])
+        }
+      }
+      const candidates = this.#aliases.get(folderSpelling(folder))
+      const identity = candidates && folderIdentity(folder)
+      if (identity)
+        project = candidates.find((candidate) => folderIdentity(candidate) === identity)
+    }
+    this.#known.set(folder, project)
+    return project
   }
 }
 
