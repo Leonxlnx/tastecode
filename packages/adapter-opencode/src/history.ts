@@ -46,7 +46,12 @@ export function createOpenCodeHistorySource(
     present: () => existsSync(file),
     async list() {
       if (!existsSync(file)) return []
-      return withDatabase((db) => (hasTable(db, 'session_v2') ? listV2(db) : listLegacy(db)))
+      // A database whose 2.x table is still empty keeps its chats in the older ones,
+      // as read() does for each session.
+      return withDatabase((db) => {
+        const v2 = hasTable(db, 'session_v2') && hasTable(db, 'session_message') ? listV2(db) : []
+        return v2.length || !hasTable(db, 'session') ? v2 : listLegacy(db)
+      })
     },
     async read(session) {
       if (!existsSync(file)) return []

@@ -217,6 +217,30 @@ describe('OpenCode history', () => {
     ])
   })
 
+  it('lists the older tables of a database whose session_v2 is still empty', async () => {
+    const db = legacyDatabase()
+    db.exec(`
+      CREATE TABLE session_v2 (
+        id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT NOT NULL, title TEXT,
+        time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, time_archived INTEGER);
+    `)
+    db.prepare('INSERT INTO session VALUES (?, NULL, ?, ?, 1000, 2000, NULL)').run(
+      'ses_a',
+      '/work/site',
+      'Fix the footer',
+    )
+    db.prepare('INSERT INTO message VALUES (?, ?, ?, ?)').run(
+      'm1',
+      'ses_a',
+      1000,
+      '{"role":"user"}',
+    )
+    db.close()
+
+    const sessions = await createOpenCodeHistorySource({ root }).list()
+    expect(sessions.map(({ id }) => id)).toEqual(['ses_a'])
+  })
+
   it('returns nothing for a session that is gone', async () => {
     database().close()
     const source = createOpenCodeHistorySource({ root })
