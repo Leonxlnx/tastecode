@@ -170,7 +170,9 @@ describe('Side chat recovery', () => {
     await waitFor(() =>
       expect(app.request).toHaveBeenCalledWith('thread.sendTurn', expect.anything()),
     )
-    app.rerender({ parentThreadId: 'b' })
+    // Chat b's side chat starts once its tab is opened there.
+    app.rerender({ parentThreadId: 'b', active: false })
+    app.rerender({ active: true })
     await waitFor(() =>
       expect(app.request).toHaveBeenCalledWith('thread.history', { threadId: 'side-b' }),
     )
