@@ -2,6 +2,8 @@ import type { ProviderAccount, ResultOf } from '@harness/contracts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ACCOUNT_CHOSEN_KEY,
+  ACCOUNT_TONES,
+  accountIdentityOf,
   accountLabelOf,
   accountsOf,
   activeAccountOf,
@@ -210,6 +212,60 @@ describe('ProviderAccountsStore', () => {
     expect(activeAccountOf({ ...snapshot, active: { codex: 'work-1a2b3c' } }, 'codex')).toBe(
       'work-1a2b3c',
     )
+  })
+})
+
+describe('accountIdentityOf', () => {
+  const ready = { phase: 'ready' as const, ...listing() }
+
+  it("gives each of a provider's accounts its own tone, its label and its plan", () => {
+    const withPlan = {
+      ...ready,
+      accounts: ready.accounts.map((account) =>
+        account.id === 'default'
+          ? { ...account, plan: 'Max x5', email: 'me@example.test' }
+          : account,
+      ),
+    }
+    expect(accountIdentityOf(withPlan, 'codex', undefined)).toEqual({
+      label: 'Default',
+      plan: 'Max x5',
+      tone: 1,
+    })
+    expect(accountIdentityOf(withPlan, 'codex', 'work-1a2b3c')).toEqual({
+      label: 'Work',
+      plan: undefined,
+      tone: 2,
+    })
+  })
+
+  it('keeps a tone whichever account is active, so the colour means the same tomorrow', () => {
+    const tone = (active: ResultOf<'accounts.list'>['active']) =>
+      accountIdentityOf({ phase: 'ready', ...listing(active) }, 'codex', 'work-1a2b3c').tone
+    expect(tone({ codex: 'work-1a2b3c' })).toBe(tone({}))
+  })
+
+  it('counts tones per provider and starts over past the last one', () => {
+    const accounts: ProviderAccount[] = Array.from({ length: ACCOUNT_TONES + 1 }, (_, place) => ({
+      ...work,
+      id: place === 0 ? 'default' : `extra-${place}`,
+    })).map(({ home, ...account }, place) => ({
+      ...account,
+      ...(place === 0 ? {} : { home }),
+      managed: place !== 0,
+    }))
+    const many = { phase: 'ready' as const, accounts, active: {} }
+    expect(accountIdentityOf(many, 'codex', `extra-${ACCOUNT_TONES - 1}`).tone).toBe(ACCOUNT_TONES)
+    expect(accountIdentityOf(many, 'codex', `extra-${ACCOUNT_TONES}`).tone).toBe(1)
+    expect(accountIdentityOf(many, 'claude-code', 'default').tone).toBe(0)
+  })
+
+  it('gives an account the list does not hold no colour', () => {
+    expect(accountIdentityOf(ready, 'codex', 'gone-9f9f9f')).toEqual({
+      label: 'Removed account',
+      plan: undefined,
+      tone: 0,
+    })
   })
 })
 

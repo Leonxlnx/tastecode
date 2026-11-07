@@ -170,7 +170,8 @@ export const DEMO_PROVIDERS: ReadonlyArray<DemoProvider> = [
       model('claude-haiku-5-5', 'Haiku 5.5', 'Fastest and cheapest', ['low', 'medium', 'high']),
     ],
     email: 'designer@example.com',
-    plan: 'max',
+    // As the adapter labels it (claudePlanLabel), not the vendor's plan id.
+    plan: 'Max x5',
     limits: (now) => [
       {
         id: 'five_hour',

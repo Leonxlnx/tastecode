@@ -1,5 +1,6 @@
 import {
   PROTOCOL_VERSION,
+  type AccountId,
   type ApprovalMode,
   type BackgroundModelPreference,
   type ChannelName,
@@ -8,6 +9,7 @@ import {
   type Item,
   type MethodName,
   type ParamsOf,
+  type ProviderAccount,
   type ProviderContextSettingsMap,
   type ProviderId,
   type QueuedTurn,
@@ -63,6 +65,8 @@ export type DemoServerOptions = {
   now?: () => number
   /** Opt-in usage-limit scenario for exercising the real recovery UI. */
   usageResetMs?: number
+  /** Opt-in second Claude Code account, for what tells a provider's accounts apart. */
+  severalAccounts?: boolean
 }
 
 type Handler<M extends MethodName> = (params: ParamsOf<M>) => ResultOf<M> | Promise<ResultOf<M>>
@@ -75,6 +79,8 @@ type DemoThread = {
   projectPath: string
   title: string
   provider: ProviderId
+  /** The account the chat is pinned to; absent for the default one. */
+  accountId?: AccountId
   createdAt: number
   lastActiveAt: number
   pinned: boolean
@@ -140,6 +146,8 @@ export class DemoServer {
   #contextSettings: ProviderContextSettingsMap = {}
   #backgroundModel: BackgroundModelPreference = { mode: 'automatic' }
   #skillOverrides = new Map<string, boolean>()
+  readonly #severalAccounts: boolean
+  #activeAccounts: Partial<Record<ProviderId, AccountId>> = {}
   readonly #handlers: Handlers
 
   constructor(options: DemoServerOptions) {
@@ -150,6 +158,7 @@ export class DemoServer {
     this.#timing = { ...DEMO_TIMING, ...options.timing }
     this.platform = options.platform ?? detectDemoPlatform()
     this.home = demoHome(this.platform)
+    this.#severalAccounts = options.severalAccounts === true
     this.#seed()
     if (this.#usageResetAt !== undefined) {
       const thread = this.#thread('demo-focus-ring')
@@ -306,6 +315,21 @@ export class DemoServer {
 
   // -------------------------------------------------------------------------
   // Event log and pushes
+
+  #furtherAccounts(provider: ProviderId): ProviderAccount[] {
+    if (!this.#severalAccounts || provider !== 'claude-code') return []
+    return [
+      {
+        id: 'work-1a2b3c',
+        provider,
+        label: 'Work',
+        home: `${this.home}/.tastecode/accounts/claude-code/work-1a2b3c`,
+        managed: true,
+        email: 'designer@work.example.com',
+        plan: 'Pro',
+      },
+    ]
+  }
 
   #append(thread: DemoThread, event: DomainEvent): number {
     const seq = thread.log.length + 1
@@ -838,16 +862,24 @@ export class DemoServer {
           (entry) =>
             entry.status.capabilities?.multipleAccounts &&
             (params.provider === undefined || params.provider === entry.status.id),
-        ).map((entry) => ({
-          id: 'default',
-          provider: entry.status.id,
-          label: 'Default',
-          managed: false,
-          email: entry.email,
-          plan: entry.plan,
-        })),
-        active: {},
+        ).flatMap((entry) => [
+          {
+            id: 'default',
+            provider: entry.status.id,
+            label: 'Default',
+            managed: false,
+            email: entry.email,
+            plan: entry.plan,
+          },
+          ...this.#furtherAccounts(entry.status.id),
+        ]),
+        active: this.#activeAccounts,
       }),
+      'accounts.setActive': ({ provider: id, accountId }) => {
+        this.#activeAccounts = { ...this.#activeAccounts, [id]: accountId }
+        this.#push('accounts.changed', { provider: id })
+        return {}
+      },
       'accounts.detect': () => ({ found: [] }),
 
       'models.list': (params) => {
@@ -979,6 +1011,7 @@ export class DemoServer {
               id: thread.id,
               title: thread.title,
               provider: thread.provider,
+              ...(thread.accountId ? { accountId: thread.accountId } : {}),
               createdAt: thread.createdAt,
               running: this.#runs.has(thread.id),
               pinned: thread.pinned,
@@ -1083,11 +1116,13 @@ export class DemoServer {
         provider(params.provider)
         const id = `chat-${randomId()}`
         const approval = params.approval ?? 'auto'
+        const accountId = params.accountId ?? this.#activeAccounts[params.provider]
         this.#threads.set(id, {
           id,
           projectPath: project.path,
           title: 'New session',
           provider: params.provider,
+          ...(accountId ? { accountId } : {}),
           createdAt: now(),
           lastActiveAt: now(),
           pinned: false,
