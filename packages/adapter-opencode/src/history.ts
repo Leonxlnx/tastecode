@@ -50,9 +50,11 @@ export function createOpenCodeHistorySource(
     },
     async read(session) {
       if (!existsSync(file)) return []
-      const turns = withDatabase((db) =>
-        hasTable(db, 'session_message') ? readV2(db, session.id) : readLegacy(db, session.id),
-      )
+      // 1.x builds already create an empty `session_message` and keep writing the older tables.
+      const turns = withDatabase((db) => {
+        const v2 = hasTable(db, 'session_message') ? readV2(db, session.id) : []
+        return v2.length || !hasTable(db, 'message') ? v2 : readLegacy(db, session.id)
+      })
       return transcriptEvents(session, turns)
     },
   }
