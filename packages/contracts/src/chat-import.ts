@@ -32,7 +32,7 @@ export const ChatImportChatSchema = z.object({
   /** Stable across scans; `chatImport.start` takes these. */
   id: z.string(),
   source: z.string(),
-  /** Other sources that saved this same conversation. It is listed and imported once. */
+  /** Other sources that saved this same conversation. It is listed and counted once. */
   alsoIn: z.array(z.string()).optional(),
   title: z.string(),
   /** The folder it belongs to, which becomes a project when it is not one yet. */
@@ -69,6 +69,8 @@ export const ChatImportJobSchema = z.object({
   failed: z.number(),
   /** Folders that became projects. */
   projects: z.array(z.string()),
+  /** The most recently used chat it imported, for the way there. */
+  thread: z.string().optional(),
 })
 export type ChatImportJob = z.infer<typeof ChatImportJobSchema>
 
