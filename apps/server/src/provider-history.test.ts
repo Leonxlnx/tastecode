@@ -2285,6 +2285,34 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     ).toEqual(['user', words])
   })
 
+  it('keeps the user’s words above the reply when a chat imported with wrappers is read again', () => {
+    store.addThread({
+      id: 'imported',
+      provider: 'codex',
+      projectPath: process.cwd(),
+      title: 'Imported',
+    })
+    const native = transcript('native', 'pineapple').map((event): DomainEvent =>
+      event.type === 'item.completed' && event.item.role === 'user'
+        ? { ...event, item: { ...event.item, text: `${designFollowUp}${words}` } }
+        : event,
+    )
+    const now = importedEvents(native, 'imported', [])
+    // What a build before this change saved: the same entries, the wrapper kept.
+    const before = now.map(({ key, event }) => ({
+      key,
+      event:
+        event.type === 'item.completed' && event.item.role === 'user'
+          ? { ...event, item: { ...event.item, text: `${designFollowUp}${words}` } }
+          : event,
+    }))
+    store.mergeProviderHistory('imported', '1', before)
+    store.mergeProviderHistory('imported', '2', now)
+    expect(messages('imported').map(({ role, text }) => [role, text])).toEqual([
+      ['user', words],
+      ['assistant', 'pineapple'],
+    ])
+  })
   it('keeps prose that only resembles a wrapper', () => {
     const prose = 'Here is my plan.\n\nUser request:\nmake the header sticky'
     expect(imported(prose)[0]).toEqual(['user', prose])

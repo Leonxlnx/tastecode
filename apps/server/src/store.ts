@@ -2162,16 +2162,22 @@ export class Store {
         threadId,
       )?.restored_at
       let turnAt = this.thread(threadId)?.createdAt ?? 0
+      // Replay reads a turn in log order. Once one of its entries goes to the end of
+      // the log, its later entries follow, so a changed item keeps its place.
+      let movedTurn: string | undefined
       for (const { key, event } of entries) {
         const payload = JSON.stringify(event)
         const existing = previous.get(key)
         if (event.type === 'turn.started') turnAt = event.turn.createdAt
+        const turn = eventTurnId(event)
+        const follows = turn !== undefined && turn === movedTurn
         if (
           !(retired && event.type === 'thread.started') &&
-          ((existing?.active && existing.payload === payload) ||
+          ((existing?.active && existing.payload === payload && !follows) ||
             (restoredAt != null && turnAt <= Number(restoredAt)))
         )
           continue
+        if (turn !== undefined) movedTurn = turn
         if (existing)
           this.#db
             .prepare(
@@ -5759,4 +5765,11 @@ function serializeJson(value: unknown): string {
 function parseJsonValue(serialized: string): JsonValue {
   // SAFETY: JSON.parse can return only JSON primitives, arrays, and objects.
   return JSON.parse(serialized) as JsonValue
+}
+
+/** The turn an event belongs to; a thread event belongs to none. */
+function eventTurnId(event: DomainEvent): string | undefined {
+  if (event.type === 'turn.started') return event.turn.id
+  if (event.type === 'item.started' || event.type === 'item.completed') return event.item.turnId
+  return 'turnId' in event && typeof event.turnId === 'string' ? event.turnId : undefined
 }
