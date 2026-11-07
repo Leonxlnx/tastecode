@@ -327,13 +327,24 @@ export function WorkspaceSideChat(props: {
     return pending
   }, [props.parentThreadId, props.startOptions, props.transport, finishHistory])
 
+  // Opening the tab starts its chat at once. Switching the main chat under an
+  // open tab does not: each side chat is a provider process of its own (about
+  // 300 MB for Claude Code), most of them never used, so one there starts with
+  // its first message instead.
+  const startedOnOpenRef = useRef(false)
+  useEffect(() => {
+    if (!props.active) startedOnOpenRef.current = false
+  }, [props.active])
+
   useEffect(() => {
     if (!props.active || !props.parentThreadId || props.parentThreadId.startsWith('pending:'))
       return
+    if (startedOnOpenRef.current) return
     // One frame avoids starting a provider during React Strict Mode's
     // mount-cleanup-mount probe; the probe cancels this frame before it runs.
     const generation = generationRef.current
     const frame = requestAnimationFrame(() => {
+      startedOnOpenRef.current = true
       void ensureSideThread().catch((reason) => {
         if (generationRef.current === generation)
           setError(reason instanceof Error ? reason.message : String(reason))

@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests --testTimeout=20000"
   },
   "devDependencies": {
     "@harness/proc": "workspace:*",

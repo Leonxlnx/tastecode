@@ -3523,15 +3523,16 @@ export class Store {
    *
    * `launchedSubagents: false` leaves out sub-agents whose launching call
    * already completed: they run in the background, past the turn that started
-   * them, while their runtime lives.
+   * them, while their runtime lives. `stoppedByUser` settles work the user
+   * stopped as interrupted rather than failed.
    */
   interruptedLifecycleEvents(
     threadId: string,
-    { launchedSubagents = true }: { launchedSubagents?: boolean } = {},
+    options: { launchedSubagents?: boolean; stoppedByUser?: boolean } = {},
   ): DomainEvent[] {
     const rows = sqliteRows<InterruptedThreadRow>(this.#readInterruptedThread, threadId)
     const state = this.#interruptedThreadStates(rows).get(threadId)
-    return state ? interruptedLifecycleEvents(state, Date.now(), launchedSubagents) : []
+    return state ? interruptedLifecycleEvents(state, Date.now(), options) : []
   }
 
   /** Returns the sequence number, which is what a client resumes from. */
@@ -5086,11 +5087,16 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
   }
 }
 
-/** The terminal events that settle every lifecycle a dead runtime left open. */
+/**
+ * The terminal events that settle every lifecycle a dead runtime left open.
+ *
+ * Work a dead runtime left running failed. Work the user stopped did not: it
+ * ends still `started`, which the transcript shows as interrupted.
+ */
 function interruptedLifecycleEvents(
   state: InterruptedThreadState,
   at: number,
-  launchedSubagents = true,
+  { launchedSubagents = true, stoppedByUser = false } = {},
 ): DomainEvent[] {
   const events: DomainEvent[] = []
   for (const item of state.activeItems.values()) {
@@ -5102,7 +5108,11 @@ function interruptedLifecycleEvents(
     events.push({
       type: 'item.completed',
       item: {
-        ...(item.status === 'started' ? { ...started, status: 'failed' as const } : item),
+        ...(item.status === 'started'
+          ? stoppedByUser
+            ? started
+            : { ...started, status: 'failed' as const }
+          : item),
         ...(item.subagent?.state === 'running'
           ? { subagent: { ...item.subagent, state: 'interrupted' as const } }
           : {}),

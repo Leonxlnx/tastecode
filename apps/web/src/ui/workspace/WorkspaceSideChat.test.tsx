@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DomainEvent } from '@harness/contracts'
 import { memo, useSyncExternalStore } from 'react'
@@ -112,6 +112,70 @@ describe('WorkspaceSideChat', () => {
     view.unmount()
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith('sideChat.close', { threadId: 'side-1' }),
+    )
+  })
+
+  it('starts a side chat when the tab opens, not when the main chat changes under it', async () => {
+    let started = 0
+    const request = vi.fn(async (method: string) => {
+      if (method === 'sideChat.start') return { threadId: `side-${++started}` }
+      if (method === 'thread.history') return { events: [], running: false }
+      if (method === 'thread.sendTurn') return { queued: false, turnId: 'turn-1' }
+      return {}
+    })
+    const transport = {
+      request,
+      on: vi.fn(() => () => {}),
+      onState: vi.fn(() => () => {}),
+      onSequenceGap: vi.fn(() => () => {}),
+    } as unknown as Transport
+    const view = (parentThreadId: string, active = true) => (
+      <WorkspaceSideChat
+        active={active}
+        parentThreadId={parentThreadId}
+        parentStatus="idle"
+        transport={transport}
+        startOptions={{}}
+      />
+    )
+    const starts = () => request.mock.calls.filter(([method]) => method === 'sideChat.start')
+
+    const rendered = render(view('main-1'))
+    await waitFor(() => expect(starts()).toHaveLength(1))
+
+    // Another main chat under the open tab: no provider until it is used there.
+    rendered.rerender(view('main-2'))
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('sideChat.close', { threadId: 'side-1' }),
+    )
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+    })
+    expect(starts()).toHaveLength(1)
+    expect(screen.getByText('Start a temporary chat')).toBeTruthy()
+    expect(screen.queryByText('Starting temporary chat…')).toBeNull()
+
+    // Its first message starts it.
+    const field = screen.getByLabelText('Message temporary chat')
+    act(() => {
+      fireEvent.change(field, { target: { value: 'Explain this' } })
+    })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        'sideChat.start',
+        expect.objectContaining({ parentThreadId: 'main-2' }),
+      ),
+    )
+
+    // Opening the tab again starts it at once.
+    rendered.rerender(view('main-3', false))
+    rendered.rerender(view('main-3'))
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        'sideChat.start',
+        expect.objectContaining({ parentThreadId: 'main-3' }),
+      ),
     )
   })
 

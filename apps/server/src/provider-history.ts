@@ -13,6 +13,7 @@ import type {
 import { Store, type ProviderHistoryListing } from './store.js'
 import { projectHistoryItems, withoutContinuationContext } from './side-chat.js'
 import { DESIGN_PHASE_MARKER, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
+import { withoutUnreadSubagentResults } from './subagent-broker.js'
 
 type Source = {
   provider: ProviderId
@@ -788,6 +789,8 @@ function sameUserMessage(left: Item, right: Item): boolean {
   // A continued chat's first prompt carries the earlier conversation before the
   // user's words; local history keeps only the words.
   if (text !== undefined) text = withoutContinuationContext(text)
+  // Sub-agent results the agent had not read go in front of the user's words.
+  if (text !== undefined) text = withoutUnreadSubagentResults(text)
   // Native logs contain our Design follow-up envelope; local history keeps only
   // the user's submission. Unwrap solely for echo matching, never arbitrary prose.
   if (text?.startsWith('This is an ordinary user turn, not an active TasteCode Design phase. ')) {

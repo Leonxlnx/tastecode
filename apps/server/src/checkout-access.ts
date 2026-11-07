@@ -21,14 +21,26 @@ export function canonicalCheckoutRoot(directory: string): string {
 export class CheckoutAccess {
   #writers = new Map<string, Set<string>>()
   #exclusive = new Set<string>()
+  /** For each owner's current or last turn: the other writers that shared its checkout. */
+  #coWriters = new Map<string, Set<string>>()
 
   beginTurn(directory: string, owner: string): void {
     const root = canonicalCheckoutRoot(directory)
     if (this.#exclusive.has(root))
       throw new Error('cannot start a turn while this checkout is being restored or switched')
     const owners = this.#writers.get(root) ?? new Set<string>()
+    this.#coWriters.set(owner, new Set())
     owners.add(owner)
+    this.#meet(owners, owner)
     this.#writers.set(root, owners)
+  }
+
+  /**
+   * The other writers that worked in this owner's checkout at any point since
+   * its turn began. Its files may then hold their changes too.
+   */
+  coWritersSinceBegin(owner: string): ReadonlySet<string> {
+    return this.#coWriters.get(owner) ?? new Set()
   }
 
   /** Transfer an in-flight start's guard to the process that still must stop. */
@@ -36,7 +48,26 @@ export class CheckoutAccess {
     const root = canonicalCheckoutRoot(directory)
     const owners = this.#writers.get(root) ?? new Set<string>()
     owners.add(owner)
+    this.#meet(owners, owner)
     this.#writers.set(root, owners)
+  }
+
+  /** `owner` and every other writer in `owners` now share a checkout. */
+  #meet(owners: ReadonlySet<string>, owner: string): void {
+    for (const other of owners) {
+      if (other === owner) continue
+      this.#coWriterSet(owner).add(other)
+      this.#coWriterSet(other).add(owner)
+    }
+  }
+
+  #coWriterSet(owner: string): Set<string> {
+    let set = this.#coWriters.get(owner)
+    if (!set) {
+      set = new Set()
+      this.#coWriters.set(owner, set)
+    }
+    return set
   }
 
   endTurn(owner: string): void {

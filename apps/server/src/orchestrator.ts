@@ -37,6 +37,7 @@ import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import {
   changedSince,
+  patchSince,
   restoreSnapshot,
   takeSnapshot,
   retainCheckpoint,
@@ -229,6 +230,14 @@ const MAX_CONTINUED_CHATS = 8
  * rather than holding the turn.
  */
 const MODEL_WINDOW_WAIT_MS = 2_000
+/**
+ * A turn diff built from a checkpoint is kept in the chat's log like an
+ * agent's own. One that grew past this (generated files, a vendored folder)
+ * is left out rather than stored with every replay of the chat.
+ */
+const MAX_CHECKPOINT_TURN_DIFF_CHARS = 4 * 1024 * 1024
+/** Each file is one pathspec on the git command line, which Windows caps at 32k characters. */
+const MAX_CHECKPOINT_TURN_DIFF_FILES = 200
 
 type DesignAgentModule = typeof import('@harness/design-agent')
 let loadedDesignAgent: DesignAgentModule | undefined
@@ -476,6 +485,12 @@ export function resolveWorkspacePath(workspacePath: string): string {
  * checkout is gone, the walk up can reach an unrelated repository above the
  * worktree directory.
  */
+/** One key per file whichever way an agent named it; Windows paths ignore case. */
+function checkoutPathKey(folder: string, file: string): string {
+  const resolved = path.resolve(folder, file)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
+
 function privateCheckoutPath(worktreePath: string): string {
   const root = canonicalCheckoutRoot(worktreePath)
   const marker = statSync(path.join(root, '.git'), { throwIfNoEntry: false })
@@ -796,8 +811,20 @@ export class Orchestrator {
   /** Prompts on their way to each thread that have not started or queued yet. */
   #incomingSubmissions = new Map<string, Set<Promise<unknown>>>()
   #startingTurns = new Set<string>()
+  /** Each chat's last turn the user stopped, until its next turn starts. */
+  #userStoppedTurns = new Map<string, string>()
+  /** The checkpoint each chat's latest turn started from, for agents that report no turn diff. */
+  #turnStartSnapshots = new Map<string, { repoPath: string; commit: string }>()
+  /** The files each chat's running turn reported changing, as the agent named them. */
+  #turnWrittenPaths = new Map<string, Set<string>>()
+  /** The files each chat's last finished turn reported changing. */
+  #lastTurnWrittenPaths = new Map<string, Set<string>>()
+  /** Turn diffs being built from a checkpoint, per chat. */
+  #turnDiffBuilds = new Map<string, Promise<void>>()
   /** Chats resuming their provider session for a prompt the user just sent. */
   #resumingForPrompt = new Set<string>()
+  /** When a prompt that had to wait for its chat's resume was sent, until its turn starts. */
+  #resumedPromptSentAt = new Map<string, number>()
   #turnStartBarriers = new Map<string, TurnStartBarrier>()
   #pendingTurnStarts = new Map<string, PendingTurnStart>()
   #acceptedTurnStarts = new Map<string, Map<string, PendingTurnStart>>()
@@ -2838,14 +2865,15 @@ export class Orchestrator {
       )
         throw new Error('Side chat start cancelled by shutdown or panic stop')
     }
-    await this.#ensureThread(parentThreadId)
+    // The main chat's own process is not needed: a Side chat reads its saved
+    // history. Resuming it cost a second agent process (about 300 MB for
+    // Claude Code) and, for Codex, 10-15 s before the Side chat could start.
     const storedParent = this.#store.thread(parentThreadId)
     if (!storedParent) throw new Error(`no such thread: ${parentThreadId}`)
     if (storedParent.ephemeral) throw new Error('Side chat cannot be opened inside Side chat.')
     const parentHistory = await this.history(parentThreadId)
 
-    const parent = this.#get(parentThreadId).thread
-    const provider = parent.provider
+    const provider = storedParent.provider
     const workspacePath =
       storedParent.worktreePath ?? resolveWorkspacePath(storedParent.projectPath)
     const approval =
@@ -3353,7 +3381,7 @@ export class Orchestrator {
     // The user prompted a sub-agent's chat from the Agents tab: its run may reopen.
     // Read from the store, since a released child is not attached until it resumes.
     if (this.#store.thread(threadId)?.ownerThreadId !== undefined) {
-      this.#subagents.userPrompted(threadId)
+      this.#subagents.userPrompted(threadId, text)
     }
     return this.trackSubmission(threadId, () =>
       this.#submitTurn(threadId, text, attachments, options, clientSubmissionId),
@@ -3405,6 +3433,7 @@ export class Orchestrator {
     // the moment it was sent, not only once the provider session is back.
     // From there, the turn start (or the queue) that follows sets its status.
     const resuming = !this.#threads.has(threadId)
+    const sentAt = Date.now()
     if (resuming) this.#addSidebarStatus(this.#resumingForPrompt, threadId)
     try {
       await this.#ensureThread(threadId, options)
@@ -3455,7 +3484,15 @@ export class Orchestrator {
       return { queued: true, queuedTurn: this.#publicQueuedTurn(queuedTurn) }
     }
 
-    const turnId = await this.sendTurn(threadId, text, attachments, options, submission)
+    // Its turn started when it was sent: the chat counted the working time
+    // from there, and must not jump back by the resume once the turn starts.
+    if (resuming) this.#resumedPromptSentAt.set(threadId, sentAt)
+    let turnId: string
+    try {
+      turnId = await this.sendTurn(threadId, text, attachments, options, submission)
+    } finally {
+      this.#resumedPromptSentAt.delete(threadId)
+    }
     if (this.#activeTurnIds.get(threadId) === turnId) {
       this.#addSidebarStatus(this.#activeTurns, threadId)
     }
@@ -3694,6 +3731,16 @@ export class Orchestrator {
     ) {
       return
     }
+    if (event.type === 'turn.started') this.#userStoppedTurns.delete(threadId)
+    // An agent reports the work the user stopped as failed once it has killed
+    // it, often after the turn ended ("runner pipe closed"). It was stopped.
+    if (
+      event.type === 'item.completed' &&
+      event.item.status === 'failed' &&
+      event.item.turnId === this.#userStoppedTurns.get(threadId)
+    ) {
+      event = { ...event, item: { ...event.item, status: 'started' } }
+    }
     let matchedStart: PendingTurnStart | undefined
     if (event.type === 'turn.started') {
       const acceptedStarts = this.#acceptedTurnStarts.get(threadId)
@@ -3709,6 +3756,7 @@ export class Orchestrator {
       }
     }
     if (event.type === 'turn.completed') {
+      this.#noteTurnDiffFromCheckpoint(threadId, event.turnId)
       this.#deleteAcceptedTurnStart(threadId, event.turnId)
       const draining = this.#drainingQueues.get(threadId)
       if (draining) draining.completedTurnId = event.turnId
@@ -3724,6 +3772,16 @@ export class Orchestrator {
       this.#touchThreadRuntime(threadId)
       this.#addSidebarStatus(this.#activeTurns, threadId)
       this.#activeTurnIds.set(threadId, event.turn.id)
+      this.#turnWrittenPaths.delete(threadId)
+    }
+    if (
+      (event.type === 'item.started' || event.type === 'item.completed') &&
+      event.item.type === 'file_change' &&
+      event.item.path
+    ) {
+      const paths = this.#turnWrittenPaths.get(threadId) ?? new Set<string>()
+      paths.add(event.item.path)
+      this.#turnWrittenPaths.set(threadId, paths)
     }
     if (event.type === 'turn.completed' || event.type === 'thread.error') {
       this.#markIdleRuntimeEligible(threadId)
@@ -4599,6 +4657,8 @@ export class Orchestrator {
     const stored = this.#store.thread(threadId)
     if (!stored) return
     const repoPath = this.#repoPath(threadId)
+    // Its snapshot and the last turn's diff would race for the same refs.
+    await this.#turnDiffBuilds.get(threadId)
 
     try {
       const snapshot = await takeSnapshot(repoPath, {
@@ -4611,9 +4671,90 @@ export class Orchestrator {
         commit: snapshot.commit,
         label: checkpointLabel(label),
       })
+      this.#turnStartSnapshots.set(threadId, { repoPath, commit: snapshot.commit })
     } catch {
+      this.#turnStartSnapshots.delete(threadId)
       // A folder that is not a repository is a normal case. Failing the turn
       // over a backup the user never asked for would be the wrong trade.
+    }
+  }
+
+  /**
+   * The edits card and its Undo read a turn's diff, which only some agents
+   * report. For the others it is what changed in the checkout since the
+   * checkpoint the turn started from, unless another chat wrote in the same
+   * checkout meanwhile: its changes would then count as this turn's.
+   */
+  #noteTurnDiffFromCheckpoint(threadId: string, turnId: string): void {
+    const start = this.#turnStartSnapshots.get(threadId)
+    this.#turnStartSnapshots.delete(threadId)
+    const written = this.#turnWrittenPaths.get(threadId)
+    this.#turnWrittenPaths.delete(threadId)
+    // A chat that shared this checkout and ends later compares its files with these.
+    if (written) this.#lastTurnWrittenPaths.set(threadId, written)
+    else this.#lastTurnWrittenPaths.delete(threadId)
+    if (!start || !written) return
+    const provider = this.#store.thread(threadId)?.provider
+    if (!provider || PROVIDER_CAPABILITIES[provider].turnDiffs) return
+    if (this.#recordedTurnDiffs.get(threadId)?.turnId === turnId) return
+    // Only the files the agent said it changed: the user may have edited
+    // others meanwhile, and Undo must never revert those. A file changed only
+    // by a command (a formatter, a generator) is therefore not on the card.
+    const folder = path.resolve(start.repoPath)
+    if (!this.#checkoutWasOwn(threadId, folder, written)) return
+    const files = [...written].flatMap((file) => {
+      const relative = path.relative(folder, path.resolve(folder, file))
+      return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? [relative] : []
+    })
+    if (files.length === 0 || files.length > MAX_CHECKPOINT_TURN_DIFF_FILES) return
+    const build = this.#recordTurnDiffFromCheckpoint(threadId, turnId, start, files).finally(() => {
+      if (this.#turnDiffBuilds.get(threadId) === build) this.#turnDiffBuilds.delete(threadId)
+    })
+    this.#turnDiffBuilds.set(threadId, build)
+  }
+
+  /**
+   * Whether the files this turn wrote hold its changes only. Another chat that
+   * worked in the same checkout meanwhile may have changed them too. The
+   * exception is the chat's own sub-agent, or the chat that started this one,
+   * when the two wrote different files.
+   */
+  #checkoutWasOwn(threadId: string, folder: string, written: ReadonlySet<string>): boolean {
+    const others = this.#checkoutAccess.coWritersSinceBegin(threadId)
+    if (others.size === 0) return true
+    const own = new Set([...written].map((file) => checkoutPathKey(folder, file)))
+    const parent = this.#store.thread(threadId)?.ownerThreadId
+    for (const other of others) {
+      if (other !== parent && this.#store.thread(other)?.ownerThreadId !== threadId) return false
+      const theirs = [
+        ...(this.#turnWrittenPaths.get(other) ?? []),
+        ...(this.#lastTurnWrittenPaths.get(other) ?? []),
+      ]
+      const otherFolder = path.resolve(this.#repoPath(other))
+      if (theirs.some((file) => own.has(checkoutPathKey(otherFolder, file)))) return false
+    }
+    return true
+  }
+
+  async #recordTurnDiffFromCheckpoint(
+    threadId: string,
+    turnId: string,
+    start: { repoPath: string; commit: string },
+    files: string[],
+  ): Promise<void> {
+    try {
+      const diff = await patchSince(start.repoPath, start.commit, files)
+      if (!diff) return
+      if (diff.length > MAX_CHECKPOINT_TURN_DIFF_CHARS) {
+        this.#onLog(`Turn diff from checkpoint left out: ${diff.length} characters`)
+        return
+      }
+      // A newer turn has started meanwhile; the card is its own now.
+      if (this.#activeTurnIds.has(threadId) || this.#startingTurns.has(threadId)) return
+      if (!this.#store.thread(threadId)) return
+      this.#record(threadId, { type: 'diff.updated', turnId, diff })
+    } catch (error) {
+      this.#onLog(`Turn diff from checkpoint failed: ${errorMessage(error)}`)
     }
   }
 
@@ -5033,6 +5174,7 @@ export class Orchestrator {
   #settleStoppedTurn(threadId: string, entry: AttachedThreadRuntime): SettlingStop | undefined {
     const turnId = this.#activeTurnIds.get(threadId)
     if (!turnId || this.#settlingStops.has(threadId)) return undefined
+    this.#userStoppedTurns.set(threadId, turnId)
     const stop: SettlingStop = {
       turnId,
       entry,
@@ -5053,7 +5195,10 @@ export class Orchestrator {
     try {
       // Stop ends the running turn only. A background sub-agent whose launching call already
       // completed keeps running in the live session, which reports how it ends.
-      open = this.#store.interruptedLifecycleEvents(threadId, { launchedSubagents: false })
+      open = this.#store.interruptedLifecycleEvents(threadId, {
+        launchedSubagents: false,
+        stoppedByUser: true,
+      })
     } catch (error) {
       this.#onLog(`Could not settle the stopped turn's open work: ${errorMessage(error)}`)
     }
@@ -5551,6 +5696,8 @@ export class Orchestrator {
 
   async disposeAll(): Promise<void> {
     this.#disposeGeneration += 1
+    // Their git runs work in the checkouts.
+    await Promise.allSettled(this.#turnDiffBuilds.values())
     this.#subagents.dispose()
     const agentToolsClosed = this.#agentTools?.close()
     this.#agentToolGrants.clear()
@@ -6519,8 +6666,10 @@ ${JSON.stringify(deck, null, 2)}
   }
 
   #beginTurnStart(threadId: string, submission?: UserSubmission): PendingTurnStart {
+    const sentAt = this.#resumedPromptSentAt.get(threadId)
+    this.#resumedPromptSentAt.delete(threadId)
     const pending = {
-      acceptedAt: Date.now(),
+      acceptedAt: sentAt ?? Date.now(),
       ...(submission ? { submission } : {}),
     }
     this.#pendingTurnStarts.set(threadId, pending)
