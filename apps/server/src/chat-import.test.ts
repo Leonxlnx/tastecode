@@ -9,14 +9,9 @@ import type {
   ProviderHistorySource,
 } from '@harness/contracts'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import {
-  ChatImportService,
-  importedThreadId,
-  openCodeChatReader,
-  savedFolder,
-} from './chat-import.js'
+import { ChatImportService, importedThreadId, openCodeChatReader } from './chat-import.js'
 import { createT3CodeReader } from './chat-import-t3.js'
-import { ProviderHistory } from './provider-history.js'
+import { ProviderHistory, savedFolder } from './provider-history.js'
 import { Store } from './store.js'
 
 let root: string

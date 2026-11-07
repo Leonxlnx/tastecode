@@ -13,7 +13,12 @@ import type {
   ProviderId,
 } from '@harness/contracts'
 import { createOpenCodeHistorySource } from '@harness/adapter-opencode/history'
-import { importedEvents, ProjectFolders, type ProviderHistory } from './provider-history.js'
+import {
+  importedEvents,
+  ProjectFolders,
+  savedFolder,
+  type ProviderHistory,
+} from './provider-history.js'
 import type { Store } from './store.js'
 
 /** A chat another app saved, in the shape provider history already uses. */
@@ -342,21 +347,6 @@ function folderLabel(folder: string, home = os.homedir()): string {
 
 function samePath(left: string, right: string): boolean {
   return path.resolve(savedFolder(left)) === path.resolve(savedFolder(right))
-}
-
-/**
- * One spelling per folder, so it is one group and at most one new project. On
- * Windows, OpenCode saves `E:/work/site` and Codex sometimes `\\?\E:\work\site`,
- * where everything else says `E:\work\site`.
- */
-export function savedFolder(folder: string, platform = process.platform): string {
-  if (platform !== 'win32') return folder
-  const plain = folder.startsWith('\\\\?\\UNC\\')
-    ? `\\\\${folder.slice(8)}`
-    : folder.startsWith('\\\\?\\')
-      ? folder.slice(4)
-      : folder
-  return path.win32.normalize(plain)
 }
 
 function describe(error: unknown): string {

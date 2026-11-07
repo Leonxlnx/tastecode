@@ -612,6 +612,21 @@ function folderSpelling(folder: string): string {
   return path.resolve(folder).toLowerCase()
 }
 
+/**
+ * One spelling per folder, so it is one group and at most one new project. On
+ * Windows, OpenCode saves `E:/work/site` and Codex sometimes `\\?\E:\work\site`,
+ * where everything else says `E:\work\site`.
+ */
+export function savedFolder(folder: string, platform = process.platform): string {
+  if (platform !== 'win32') return folder
+  const plain = folder.startsWith('\\\\?\\UNC\\')
+    ? `\\\\${folder.slice(8)}`
+    : folder.startsWith('\\\\?\\')
+      ? folder.slice(4)
+      : folder
+  return path.win32.normalize(plain)
+}
+
 /** Same device and file id; a missing folder has none. */
 function folderIdentity(folder: string): string | undefined {
   try {
