@@ -14,7 +14,12 @@ import {
 } from '@tabler/icons-react'
 import { performAppHaptic, prepareAppHaptics } from '../haptics.js'
 import { readModelPickerLayout, subscribeModelPickerLayout } from '../model-picker-layout.js'
-import { filterModelChoicesByQuery, type ModelChoice } from '../model-catalog.js'
+import {
+  filterModelChoicesByQuery,
+  providerDisplayName,
+  type ModelChoice,
+} from '../model-catalog.js'
+import { AccountBadge, AccountDot } from './AccountBadge.js'
 import { ModelSearchField } from './ModelSearchField.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { SourceIdentity } from './SourceIdentity.js'
@@ -29,9 +34,30 @@ import {
   groupModelsBySource,
   isFastModeEnabled,
   modelSourceKey,
+  type ModelGroup,
   type ModelSelectorProps,
 } from './model-selector-utils.js'
 import '../styles/model-selector-menu.css'
+
+/** A group's heading: its source, and whose models they are when that can differ. */
+function GroupTitle(props: { group: ModelGroup; density?: 'compact' | undefined }) {
+  const { group } = props
+  const { account } = group
+  const provider = group.entries[0]?.provider
+  return (
+    <p className="model-selector__group-title">
+      <SourceIdentity
+        presentation={{
+          label: account && provider ? providerDisplayName(provider) : group.name,
+          mark: group.mark,
+        }}
+        density={props.density}
+      />
+      {account ? <AccountBadge account={account} /> : null}
+      {account?.plan ? <span className="model-selector__group-plan">{account.plan}</span> : null}
+    </p>
+  )
+}
 
 function ProviderModelList(props: {
   models: ModelChoice[]
@@ -82,6 +108,12 @@ function ProviderModelList(props: {
               }}
             >
               <ProviderIcon mark={group.mark} size={18} />
+              {group.account ? (
+                <AccountDot
+                  tone={group.account.tone}
+                  className="model-selector__provider-account"
+                />
+              ) : null}
             </button>
           )
         })}
@@ -95,11 +127,7 @@ function ProviderModelList(props: {
         {visibleGroup ? (
           <section className="model-selector__group">
             <div className="model-selector__group-head">
-              <p className="model-selector__group-title">
-                <SourceIdentity
-                  presentation={{ label: visibleGroup.name, mark: visibleGroup.mark }}
-                />
-              </p>
+              <GroupTitle group={visibleGroup} />
               <ModelSearchField
                 className="model-selector__search"
                 value={query}
@@ -171,12 +199,7 @@ function FlatModelList(props: {
       </div>
       {groups.map((group) => (
         <section className="model-selector__group" key={group.key}>
-          <p className="model-selector__group-title">
-            <SourceIdentity
-              presentation={{ label: group.name, mark: group.mark }}
-              density="compact"
-            />
-          </p>
+          <GroupTitle group={group} density="compact" />
           {group.entries.map((entry) => {
             const selected = entry.key === props.selectedChoice?.key
             return (
@@ -188,6 +211,7 @@ function FlatModelList(props: {
                 aria-label={`Use ${formatModelName(entry.model.displayName)} through ${entry.sourceName}`}
                 onClick={() => props.onModelSelect(entry)}
               >
+                {entry.account ? <AccountDot tone={entry.account.tone} /> : null}
                 <span className="model-selector__model-name">
                   {formatModelName(entry.model.displayName)}
                 </span>
