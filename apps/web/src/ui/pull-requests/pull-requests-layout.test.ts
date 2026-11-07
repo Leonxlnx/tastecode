@@ -86,3 +86,17 @@ describe('pull request layout CSS', () => {
     )
   })
 })
+
+describe('pull request detail layout on a narrow stage', () => {
+  it('keeps the detail and its facts to one column no wider than the pane', () => {
+    // An implicit auto column takes its widest item's minimum: the toolbar, or a branch name.
+    expect(css).toMatch(/\.pr-detail \{[^}]*grid-template-columns: minmax\(0, 1fr\);/s)
+    expect(css).toMatch(/\.pr-facts \{[^}]*grid-template-columns: minmax\(0, 1fr\);/s)
+  })
+
+  it('wraps the toolbar actions and long fact values instead of overflowing', () => {
+    expect(css).toMatch(/\.pr-detail-toolbar \{[^}]*flex-wrap: wrap;/s)
+    expect(css).toMatch(/\.pr-detail-actions \{[^}]*flex-wrap: wrap;/s)
+    expect(css).toMatch(/\.pr-fact-content \{[^}]*overflow-wrap: anywhere;/s)
+  })
+})
