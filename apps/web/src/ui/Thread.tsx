@@ -2625,9 +2625,8 @@ function AuxDisclosure({
         {item.durationMs !== undefined && item.durationMs >= 1000 ? (
           <span className="aux__time">{duration(item.durationMs)}</span>
         ) : null}
-        {!live && item.status === 'started' && !isImageView(item) ? (
-          <LoaderCircle className="spinner" aria-hidden />
-        ) : null}
+        {/* A row that is not live and still started was interrupted: its label
+            says so, and a spinner beside it would claim the work still runs. */}
         {expandable ? (
           <ChevronRight className="aux__chevron" size={14} strokeWidth={1.8} aria-hidden />
         ) : null}

@@ -1823,6 +1823,8 @@ describe('completed activity disclosure', () => {
     expect(screen.queryByText('Could not generate an image')).toBeNull()
     expect(screen.queryByText(/Command failed/)).toBeNull()
     expect(container.querySelectorAll('.aux--live')).toHaveLength(0)
+    // Nothing still spins next to "interrupted".
+    expect(container.querySelectorAll('.aux__row .spinner')).toHaveLength(0)
   })
 
   it('keeps image inspection status honest live and after replay', () => {
