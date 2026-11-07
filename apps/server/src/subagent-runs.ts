@@ -51,6 +51,8 @@ export type StoredSubagentRun = {
   finishedAt?: number
   /** When its result went to the parent in front of a later prompt. */
   deliveredAt?: number
+  /** The user's own prompt from the Agents tab that reopened it, shortened. */
+  followUp?: string
 }
 
 type RunRow = {
@@ -70,6 +72,7 @@ type RunRow = {
   created_at: number | bigint
   finished_at: number | bigint | null
   delivered_at: number | bigint | null
+  follow_up: string | null
 }
 
 const SCHEMA = `
@@ -90,6 +93,7 @@ CREATE TABLE IF NOT EXISTS subagent_runs (
   created_at       INTEGER NOT NULL,
   finished_at      INTEGER,
   delivered_at     INTEGER,
+  follow_up        TEXT,
   UNIQUE (parent_thread_id, short_id)
 );
 CREATE INDEX IF NOT EXISTS subagent_runs_by_parent
@@ -119,11 +123,15 @@ export class SubagentRunTable {
   constructor(db: DatabaseSync) {
     this.#db = db
     db.exec(SCHEMA)
+    // A table from before follow-ups lacks their column.
+    const columns = db.prepare(`PRAGMA table_info(subagent_runs)`).all() as Array<{ name: string }>
+    if (!columns.some((column) => column.name === 'follow_up'))
+      db.exec(`ALTER TABLE subagent_runs ADD COLUMN follow_up TEXT`)
     this.#insert = db.prepare(
       `INSERT INTO subagent_runs
         (item_id, parent_thread_id, short_id, turn_id, thread_id, provider, agent, model, name,
-         task, state, snapshot_json, result_text, created_at, finished_at, delivered_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         task, state, snapshot_json, result_text, created_at, finished_at, delivered_at, follow_up)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     this.#byParent = db.prepare(
       `SELECT * FROM subagent_runs WHERE parent_thread_id = ? ORDER BY created_at DESC, rowid DESC`,
@@ -150,6 +158,7 @@ export class SubagentRunTable {
       run.createdAt,
       run.finishedAt ?? null,
       run.deliveredAt ?? null,
+      run.followUp ?? null,
     )
   }
 
@@ -193,14 +202,15 @@ export class SubagentRunTable {
   }
 
   /** The user prompted a finished run's chat: it runs again and has no result yet. */
-  reopen(itemId: string): void {
+  reopen(itemId: string, followUp: string | undefined): void {
     this.#db
       .prepare(
         `UPDATE subagent_runs
-         SET state = 'running', result_text = NULL, finished_at = NULL, delivered_at = NULL
+         SET state = 'running', result_text = NULL, finished_at = NULL, delivered_at = NULL,
+             follow_up = ?
          WHERE item_id = ?`,
       )
-      .run(itemId)
+      .run(followUp ?? null, itemId)
   }
 
   /** A chat's runs, newest first. */
@@ -298,5 +308,6 @@ function toRun(row: RunRow): StoredSubagentRun | undefined {
     createdAt: Number(row.created_at),
     ...(row.finished_at === null ? {} : { finishedAt: Number(row.finished_at) }),
     ...(row.delivered_at === null ? {} : { deliveredAt: Number(row.delivered_at) }),
+    ...(row.follow_up === null ? {} : { followUp: row.follow_up }),
   }
 }

@@ -3373,7 +3373,7 @@ export class Orchestrator {
     // The user prompted a sub-agent's chat from the Agents tab: its run may reopen.
     // Read from the store, since a released child is not attached until it resumes.
     if (this.#store.thread(threadId)?.ownerThreadId !== undefined) {
-      this.#subagents.userPrompted(threadId)
+      this.#subagents.userPrompted(threadId, text)
     }
     return this.trackSubmission(threadId, () =>
       this.#submitTurn(threadId, text, attachments, options, clientSubmissionId),

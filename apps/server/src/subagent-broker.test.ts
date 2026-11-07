@@ -517,7 +517,7 @@ describe('a sub-agent the user prompts from its own chat', () => {
       agents: [{ status: 'completed', result: 'All done.' }],
     })
 
-    f.broker.userPrompted('child-1')
+    f.broker.userPrompted('child-1', 'Also fix b.ts.')
     startChildTurn(f)
     expect(f.lastRow().subagent).toMatchObject({ state: 'running', background: true })
     expect(f.lastRow().subagent.summary).toBeUndefined()
@@ -551,7 +551,7 @@ describe('a sub-agent the user prompts from its own chat', () => {
 
     // The user follows up a minute later; that turn works for three seconds.
     f.tick(60_000)
-    f.broker.userPrompted('child-1')
+    f.broker.userPrompted('child-1', 'Times ten.')
     startChildTurn(f)
     f.tick(3_000)
     completeChild(f, 'child-turn-2')
@@ -561,7 +561,7 @@ describe('a sub-agent the user prompts from its own chat', () => {
     // A follow-up after a restart starts from the time the row kept.
     let clock = 200_000
     const restarted = new SubagentBroker(f.store.subagents, f.host, { now: () => clock })
-    restarted.userPrompted('child-1')
+    restarted.userPrompted('child-1', 'Minus eight.')
     startChildTurn({ ...f, broker: restarted })
     clock += 2_000
     restarted.childEvent('child-1', {
@@ -570,6 +570,27 @@ describe('a sub-agent the user prompts from its own chat', () => {
       status: 'completed',
     })
     expect(f.lastRow().subagent.durationMs).toBe(9_000)
+  })
+
+  it('tells the parent the new result answers the user’s own follow-up, also after a restart', async () => {
+    const f = fixture()
+    await start(f.broker)
+    await settle()
+    completeChild(f)
+    await waitOnce(f)
+    f.broker.userPrompted('child-1', 'Also fix b.ts.')
+    startChildTurn(f)
+    f.state.outcome = { answer: 'Fixed b.ts too.', changedPaths: [] }
+    completeChild(f, 'child-turn-2')
+
+    const restarted = new SubagentBroker(f.store.subagents, f.host, { now: () => 9_000 })
+    const unread = restarted.unreadResults('parent')!.text
+    expect(unread).toContain(
+      'The user sent this sub-agent a follow-up of their own: "Also fix b.ts.". Its answer to that follow-up:\nFixed b.ts too.',
+    )
+    await expect(waitOnce(f)).resolves.toMatchObject({
+      agents: [{ result: 'Fixed b.ts too.', user_follow_up: 'Also fix b.ts.' }],
+    })
   })
 
   it('does not reopen for a turn the user did not send, such as one that starts late after a Stop', async () => {
@@ -588,7 +609,7 @@ describe('a sub-agent the user prompts from its own chat', () => {
     await start(f.broker)
     await settle()
     await f.broker.stop(caller, { agent_id: 'a1' })
-    f.broker.userPrompted('child-1')
+    f.broker.userPrompted('child-1', 'Also fix b.ts.')
     startChildTurn(f)
     expect(f.lastRow().subagent.state).toBe('running')
   })
@@ -598,7 +619,7 @@ describe('a sub-agent the user prompts from its own chat', () => {
     await start(f.broker)
     await settle()
     // Sent while the task ran: it queues, and its turn starts after the task's ends.
-    f.broker.userPrompted('child-1')
+    f.broker.userPrompted('child-1', 'Also fix b.ts.')
     completeChild(f)
     expect(f.lastRow().subagent.state).toBe('completed')
     startChildTurn(f)
@@ -612,7 +633,7 @@ describe('a sub-agent the user prompts from its own chat', () => {
     f.broker.childEvent('child-1', toolCompleted('c1'))
     completeChild(f)
     const restarted = new SubagentBroker(f.store.subagents, f.host, { now: () => 9_000 })
-    restarted.userPrompted('child-1')
+    restarted.userPrompted('child-1', 'Also fix b.ts.')
     restarted.childEvent('child-1', {
       type: 'turn.started',
       turn: { id: 'child-turn-2', threadId: 'child-1', status: 'running', createdAt: 0 },
@@ -622,7 +643,7 @@ describe('a sub-agent the user prompts from its own chat', () => {
 
   it('ignores a prompt to a chat that is not a sub-agent', () => {
     const f = fixture()
-    f.broker.userPrompted('some-chat')
+    f.broker.userPrompted('some-chat', 'Hello')
     f.broker.childEvent('some-chat', {
       type: 'turn.started',
       turn: { id: 't', threadId: 'some-chat', status: 'running', createdAt: 0 },

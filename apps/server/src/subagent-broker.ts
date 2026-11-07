@@ -119,6 +119,8 @@ const APPROVAL_TASK_CHARACTERS = 1_000
 const START_APPROVAL_PREFIX = 'subagent-start-'
 /** One unread result in front of a prompt; the whole one is a wait away. */
 const UNREAD_RESULT_CHARACTERS = 6_000
+/** The user's follow-up as the parent reads it beside the answer. */
+const FOLLOW_UP_CHARACTERS = 1_000
 const TOOL_ITEM_TYPES = new Set<Item['type']>(['tool_call', 'command', 'file_change'])
 
 /** What a wait reports per sub-agent, as the calling agent reads it. */
@@ -138,6 +140,8 @@ export type AgentReport = {
   result?: string
   error?: string
   changed_paths?: string[]
+  /** The user's own follow-up from the Agents tab that this result answers. */
+  user_follow_up?: string
   duration_seconds?: number
   tokens?: number
 }
@@ -173,8 +177,8 @@ export class SubagentBroker implements AgentToolsBroker {
   /** Runs this process started and has not let go of, by parent item id. */
   #live = new Map<string, LiveRun>()
   #byChild = new Map<string, LiveRun>()
-  /** Sub-agent chats the user sent a prompt whose turn has not started yet. */
-  #prompted = new Set<string>()
+  /** Sub-agent chats the user sent a prompt whose turn has not started yet, with that prompt. */
+  #prompted = new Map<string, string>()
   /** Waits to wake when one of a parent's runs changes state. */
   #waiters = new Map<string, Set<() => void>>()
   /** Starts waiting for the user's answer, by the approval id the parent shows. */
@@ -368,11 +372,11 @@ export class SubagentBroker implements AgentToolsBroker {
   /**
    * The user sent a sub-agent's chat a prompt of their own, from the Agents tab. The
    * turn it starts reopens the run if it has finished by then, so its row runs again
-   * and the parent hears the new result once. Only such a turn reopens a run: a turn
-   * that starts late after a Stop must not.
+   * and the parent hears the new result once, as the answer to `text`. Only such a turn
+   * reopens a run: a turn that starts late after a Stop must not.
    */
-  userPrompted(threadId: string): void {
-    if (!this.#disposed && this.#runs.forThread(threadId)) this.#prompted.add(threadId)
+  userPrompted(threadId: string, text: string): void {
+    if (!this.#disposed && this.#runs.forThread(threadId)) this.#prompted.set(threadId, text)
   }
 
   childEvent(threadId: string, event: DomainEvent): void {
@@ -477,7 +481,11 @@ export class SubagentBroker implements AgentToolsBroker {
       const changed = report.changed_paths?.length
         ? `\nChanged files: ${report.changed_paths.join(', ')}`
         : ''
-      return `<subagent ${attributes}>\n${shorten(body, UNREAD_RESULT_CHARACTERS)}${changed}\n</subagent>`
+      // The user prompted it from the Agents tab: this report answers them, not your task.
+      const followUp = run.followUp
+        ? `The user sent this sub-agent a follow-up of their own: "${run.followUp}". Its answer to that follow-up:\n`
+        : ''
+      return `<subagent ${attributes}>\n${followUp}${shorten(body, UNREAD_RESULT_CHARACTERS)}${changed}\n</subagent>`
     })
     return {
       text: [
@@ -602,7 +610,8 @@ export class SubagentBroker implements AgentToolsBroker {
   }
 
   #reopen(threadId: string): LiveRun | undefined {
-    if (this.#disposed || !this.#prompted.delete(threadId)) return undefined
+    const prompt = this.#prompted.get(threadId)
+    if (this.#disposed || !this.#prompted.delete(threadId) || prompt === undefined) return undefined
     const stored = this.#runs.forThread(threadId)
     if (!stored) return undefined
     let live = this.#live.get(stored.itemId)
@@ -628,7 +637,8 @@ export class SubagentBroker implements AgentToolsBroker {
     live.stopRequested = false
     // The parent did not start this turn; it carries on beside the parent's work.
     live.background = true
-    this.#runs.reopen(run.itemId)
+    run.followUp = shorten(prompt, FOLLOW_UP_CHARACTERS)
+    this.#runs.reopen(run.itemId, run.followUp)
     this.#byChild.set(threadId, live)
     this.#flush(live)
     return live
@@ -868,6 +878,7 @@ export class SubagentBroker implements AgentToolsBroker {
       ...(finished && live && live.changedPaths.length > 0
         ? { changed_paths: live.changedPaths }
         : {}),
+      ...(run.followUp ? { user_follow_up: run.followUp } : {}),
       ...(finished && run.finishedAt !== undefined
         ? { duration_seconds: Math.round((this.#workedMs(run) ?? 0) / 1_000) }
         : {}),
