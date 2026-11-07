@@ -609,7 +609,7 @@ export class ProjectFolders {
 }
 
 function folderSpelling(folder: string): string {
-  return path.resolve(folder).toLowerCase()
+  return path.resolve(savedFolder(folder)).toLowerCase()
 }
 
 /**

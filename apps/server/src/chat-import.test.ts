@@ -717,13 +717,16 @@ describe('saved folder spelling', () => {
     'lists a Codex session saved under the long-path prefix in its folder',
     async () => {
       const site = folder('site')
-      const { service: scanner, run } = await service({
-        sessions: [session('one', site), session('two', `\\\\?\\${site}`)],
-      })
+      const sessions = [session('one', site), session('two', `\\\\?\\${site}`)]
+      const { service: scanner, run } = await service({ sessions })
       const scan = await scanner.scan()
       expect(scan.folders.map(({ path: saved }) => saved)).toEqual([site])
       const job = await run(['codex:one', 'codex:two'])
       expect(job.projects).toEqual([site])
+      // Later work in Codex reaches the chat: its scan finds the project under that spelling.
+      sessions[1] = { ...sessions[1]!, title: 'Renamed in Codex', revision: '2' }
+      await history.refresh()
+      expect(store.thread('external:codex:two')?.title).toBe('Renamed in Codex')
     },
   )
 
