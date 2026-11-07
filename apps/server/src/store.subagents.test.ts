@@ -225,6 +225,27 @@ describe('sub-agent chats in the store', () => {
       reopened.close()
     }
   })
+
+  it('adds the follow-up column to a run table written before it existed', () => {
+    const seeded = new Store(file)
+    seed(seeded)
+    seeded.subagents.add(run({ state: 'completed', finishedAt: 20 }))
+    seeded.close()
+    const old = new DatabaseSync(file)
+    old.exec('ALTER TABLE subagent_runs DROP COLUMN follow_up')
+    old.close()
+    const reopened = new Store(file)
+    try {
+      expect(reopened.subagents.get('subagent-1')).not.toHaveProperty('followUp')
+      reopened.subagents.reopen('subagent-1', 'Also fix b.ts.')
+      expect(reopened.subagents.get('subagent-1')).toMatchObject({
+        state: 'running',
+        followUp: 'Also fix b.ts.',
+      })
+    } finally {
+      reopened.close()
+    }
+  })
 })
 
 describe('sub-agent settings', () => {
