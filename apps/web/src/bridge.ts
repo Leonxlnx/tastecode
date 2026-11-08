@@ -101,7 +101,8 @@ declare global {
 
 export type ZoomAction = 'in' | 'out' | 'reset'
 /** A Browser key pressed inside a Browser tab's page. Mirrors apps/desktop/src/browser-shortcuts.ts. */
-export type BrowserShortcutAction = 'back' | 'forward' | 'reload' | 'address' | 'close'
+export type BrowserShortcutAction =
+  'back' | 'forward' | 'reload' | 'hardReload' | 'address' | 'close'
 type AppTheme = 'light' | 'dark'
 export type AppThemePreference = AppTheme | 'system'
 export type NativeHapticPattern = 'alignment' | 'generic'

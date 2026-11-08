@@ -75,6 +75,32 @@ describe('change summary', () => {
     expect(screen.getByLabelText('Edited files')).toBeTruthy()
   })
 
+  it('keeps the changes and returns to Undo when the question is answered with Escape', () => {
+    const onUndo = vi.fn().mockResolvedValue(undefined)
+    const outside = vi.fn()
+    render(
+      <div onKeyDown={outside}>
+        <Diff diff={DIFF} onUndo={onUndo} />
+      </div>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Keep' }), { key: 'Escape' })
+
+    expect(onUndo).not.toHaveBeenCalled()
+    expect(screen.queryByRole('group', { name: 'Confirm undo' })).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Undo' }))
+    // The question took the Escape; a chat-wide Escape handler does not see it.
+    expect(outside).not.toHaveBeenCalled()
+
+    // From Undo itself, too, and an Escape with nothing open still goes on.
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Undo' }), { key: 'Escape' })
+    expect(screen.queryByRole('group', { name: 'Confirm undo' })).toBeNull()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Undo' }), { key: 'Escape' })
+    expect(outside).toHaveBeenCalledOnce()
+  })
+
   it('counts the files Undo deletes apart from the ones it restores', () => {
     const created = `diff --git a/src/new.ts b/src/new.ts
 new file mode 100644

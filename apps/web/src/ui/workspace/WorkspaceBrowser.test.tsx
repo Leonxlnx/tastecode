@@ -47,6 +47,7 @@ type FakeBrowserGuest = HTMLElement & {
   isLoading: ReturnType<typeof vi.fn>
   loadURL: ReturnType<typeof vi.fn>
   reload: ReturnType<typeof vi.fn>
+  reloadIgnoringCache: ReturnType<typeof vi.fn>
   stop: ReturnType<typeof vi.fn>
 }
 
@@ -95,6 +96,7 @@ beforeEach(() => {
       isLoading: vi.fn(() => loading),
       loadURL,
       reload: vi.fn(),
+      reloadIgnoringCache: vi.fn(),
       stop: vi.fn(),
     })
     guests.push(view)
@@ -602,6 +604,11 @@ describe('WorkspaceBrowser keys', () => {
     expect(view.goForward).toHaveBeenCalledOnce()
     fireEvent.keyDown(back, { key: 'r', ctrlKey: true })
     fireEvent.keyDown(back, { key: 'F5' })
+    expect(view.reload).toHaveBeenCalledTimes(2)
+    // Past the cache, as in browsers: a stylesheet a dev server cached shows its change.
+    fireEvent.keyDown(back, { key: 'R', ctrlKey: true, shiftKey: true })
+    fireEvent.keyDown(back, { key: 'F5', ctrlKey: true })
+    expect(view.reloadIgnoringCache).toHaveBeenCalledTimes(2)
     expect(view.reload).toHaveBeenCalledTimes(2)
 
     back.focus()

@@ -81,6 +81,13 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
 
 import { Orchestrator, providerTerminalSource } from './orchestrator.js'
 
+/**
+ * The first start imports the adapter module and the orchestrator; with the
+ * full suite running beside it that took over vi.waitFor's 1 s default, and the
+ * late start then landed in the next test.
+ */
+const STARTUP = { timeout: 10_000 }
+
 beforeEach(() => {
   control.constructed = 0
   control.started = 0
@@ -104,7 +111,7 @@ describe('control adapter startup', () => {
     })
 
     const started = orchestrator.listModels('codex')
-    await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+    await vi.waitFor(() => expect(control.releases).toHaveLength(1), STARTUP)
     control.releases[0]?.()
     await started
     control.usageChanged?.()
@@ -122,7 +129,7 @@ describe('control adapter startup', () => {
       onUsageChanged: changed,
     })
     const started = orchestrator.listModels('codex')
-    await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+    await vi.waitFor(() => expect(control.releases).toHaveLength(1), STARTUP)
     control.releases[0]?.()
     await started
 
@@ -141,7 +148,7 @@ describe('control adapter startup', () => {
 
     const first = orchestrator.listModels('codex')
     const second = orchestrator.listModels('codex')
-    await vi.waitFor(() => expect(control.started).toBe(1))
+    await vi.waitFor(() => expect(control.started).toBe(1), STARTUP)
 
     expect(control.constructed).toBe(1)
     control.releases[0]?.()
@@ -158,17 +165,17 @@ describe('control adapter startup', () => {
     })
 
     const first = orchestrator.listModels('codex')
-    await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+    await vi.waitFor(() => expect(control.releases).toHaveLength(1), STARTUP)
     control.releases[0]?.()
     await first
-    await vi.waitFor(() => expect(control.disposed).toBe(1))
+    await vi.waitFor(() => expect(control.disposed).toBe(1), STARTUP)
 
     // The model list itself is shared now, so a second control read starts the process.
     const second = orchestrator.account('codex')
-    await vi.waitFor(() => expect(control.releases).toHaveLength(2))
+    await vi.waitFor(() => expect(control.releases).toHaveLength(2), STARTUP)
     control.releases[1]?.()
     await second
-    await vi.waitFor(() => expect(control.disposed).toBe(2))
+    await vi.waitFor(() => expect(control.disposed).toBe(2), STARTUP)
 
     expect(control.constructed).toBe(2)
     await orchestrator.disposeAll()
@@ -183,7 +190,7 @@ describe('control adapter startup', () => {
     })
 
     const login = orchestrator.startLogin('codex')
-    await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+    await vi.waitFor(() => expect(control.releases).toHaveLength(1), STARTUP)
     control.releases[0]?.()
     await expect(login).resolves.toEqual({
       loginId: 'login-1',
@@ -193,7 +200,7 @@ describe('control adapter startup', () => {
     expect(control.disposed).toBe(0)
 
     control.login?.({ loginId: 'login-1', success: true, error: null })
-    await vi.waitFor(() => expect(control.disposed).toBe(1))
+    await vi.waitFor(() => expect(control.disposed).toBe(1), STARTUP)
     await orchestrator.disposeAll()
   })
 
@@ -214,7 +221,7 @@ describe('control adapter startup', () => {
     })
     try {
       const listing = orchestrator.listSkills('codex', project)
-      await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+      await vi.waitFor(() => expect(control.releases).toHaveLength(1), STARTUP)
       control.releases[0]?.()
       const inventory = await listing
       expect(inventory.skills.map((skill) => [skill.name, skill.scope])).toEqual([
@@ -247,7 +254,7 @@ describe('shared model lists', () => {
       onModelsChanged,
     })
     const first = orchestrator.listModels('codex')
-    await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+    await vi.waitFor(() => expect(control.releases).toHaveLength(1), STARTUP)
     control.releases[0]?.()
     return { orchestrator, first, onModelsChanged }
   }
@@ -270,7 +277,10 @@ describe('shared model lists', () => {
     control.login?.({ loginId: null, success: true, error: null })
     // The known list answers at once while the new account's list is read.
     await expect(orchestrator.listModels('codex')).resolves.toEqual([row('gpt-6-astra')])
-    await vi.waitFor(() => expect(onModelsChanged).toHaveBeenCalledWith('codex', undefined))
+    await vi.waitFor(
+      () => expect(onModelsChanged).toHaveBeenCalledWith('codex', undefined),
+      STARTUP,
+    )
     expect(control.listed).toBe(2)
     await expect(orchestrator.listModels('codex')).resolves.toEqual([
       row('gpt-6-astra'),
@@ -295,7 +305,7 @@ describe('shared model lists', () => {
     try {
       await orchestrator.account('codex')
       await orchestrator.listModels('codex')
-      await vi.waitFor(() => expect(onModelsChanged).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(onModelsChanged).toHaveBeenCalledOnce(), STARTUP)
     } finally {
       clock.mockRestore()
     }
