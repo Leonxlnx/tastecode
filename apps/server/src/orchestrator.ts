@@ -3619,6 +3619,9 @@ export class Orchestrator {
       !this.#activeTurns.has(threadId) &&
       !this.isTurnRunning(threadId)
     ) {
+      // An access mode change resumes the chat itself, in its new mode.
+      const approvalChange = this.#approvalChanges.get(threadId)
+      if (approvalChange) await approvalChange.catch(() => undefined)
       await this.#ensureThread(threadId)
       return this.#sendHeldQueuedTurn(threadId, queuedTurnId)
     }

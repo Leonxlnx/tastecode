@@ -8825,6 +8825,29 @@ describe('several sessions at once', () => {
       expect(orchestrator.queue(thread.id).items).toEqual([])
       await orchestrator.disposeAll()
     })
+
+    it('go out in the access mode the user changed while the old session stops', async () => {
+      const { orchestrator, thread, session, queuedId, sessions, resumedOptions } =
+        await stoppedWithQueue()
+      // An agent that takes a new access mode only by starting again.
+      Object.defineProperty(session, 'setApproval', { value: undefined })
+      let release: () => void = () => {}
+      session.disposeBarrier = new Promise<void>((resolve) => (release = resolve))
+      try {
+        const changing = orchestrator.setThreadApproval(thread.id, 'ask')
+        await vi.waitFor(() => expect(session.disposed).toBe(true))
+        const steering = orchestrator.steerQueuedTurn(thread.id, queuedId)
+        release()
+        await expect(changing).resolves.toBeUndefined()
+        await steering
+        expect(resumedOptions.at(-1)?.approval).toBe('ask')
+        await vi.waitFor(() => expect(sessions.at(-1)!.sent).toEqual(['sent by accident']))
+      } finally {
+        release()
+        await orchestrator.disposeAll()
+      }
+    })
+
     it('send the one the user picks first once the agent has ended the stopped turn', async () => {
       const { sessions, orchestrator } = harness()
       const thread = await orchestrator.startThread('codex', '/repo')
