@@ -9413,6 +9413,88 @@ describe('several sessions at once', () => {
         store.close()
       }
     })
+
+    it('gives the session of a prompt sent again the access mode changed meanwhile', async () => {
+      const { orchestrator, store, sessions, resumedOptions, open } = resumingChat(2)
+      store.setThreadApproval('persisted-thread', 'full')
+      try {
+        const first = send(orchestrator, 'A')
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        // B waits out the stopped resume first, so it starts the next one.
+        const second = send(orchestrator, 'B')
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        open[0]!()
+        open[1]!()
+        await expect(changing).resolves.toBeUndefined()
+        await expect(second).resolves.toMatchObject({ queued: false })
+        const live = sessions.at(-1)!
+        expect(live.sent).toEqual(['B'])
+        expect(live.approvalModes.at(-1) ?? resumedOptions.at(-1)?.approval).toBe('ask')
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('applies an access mode change during whose wait the chat was stopped', async () => {
+      const { orchestrator, store, resumedOptions, open } = resumingChat(2)
+      store.setThreadApproval('persisted-thread', 'full')
+      try {
+        const first = send(orchestrator, 'A')
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        // The change already waits on the resume when the Stop comes.
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        open[0]!()
+        open[1]!()
+        await expect(changing).resolves.toBeUndefined()
+        expect(store.threadApproval('persisted-thread')).toBe('ask')
+        expect(resumedOptions.at(-1)?.approval).toBe('ask')
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('starts no resume for an access mode change once the app shuts down', async () => {
+      const { orchestrator, store, sessions, open } = resumingChat(2)
+      try {
+        const first = send(orchestrator, 'A')
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        const stopping = orchestrator.disposeAll()
+        open[0]!()
+        open[1]!()
+        await expect(changing).rejects.toThrow(/cancelled/)
+        await stopping
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(sessions).toHaveLength(1)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('starts no resume for a prompt whose chat moves to another provider meanwhile', async () => {
+      const { orchestrator, store, open } = resumingChat(2)
+      try {
+        const first = send(orchestrator, 'A')
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        const second = send(orchestrator, 'B')
+        const moving = orchestrator.changeProvider('persisted-thread', { provider: 'grok' })
+        open[0]!()
+        open[1]!()
+        await expect(second).rejects.toThrow('moving to another provider')
+        await moving.catch(() => undefined)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
   })
 
   it('cancels a cold resume on Stop and allows a later submission', async () => {

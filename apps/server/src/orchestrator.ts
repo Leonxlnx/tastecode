@@ -5093,9 +5093,11 @@ export class Orchestrator {
    */
   async setThreadApproval(threadId: string, approval: ApprovalMode): Promise<void> {
     const previous = this.#approvalChanges.get(threadId)
+    // A Stop all or shutdown after this request cancels a resume it would start.
+    const asked = { panic: this.#panicGeneration, dispose: this.#disposeGeneration }
     const changing = (async () => {
       await previous?.catch(() => undefined)
-      await this.#applyThreadApproval(threadId, approval)
+      await this.#applyThreadApproval(threadId, approval, asked)
     })()
     this.#approvalChanges.set(threadId, changing)
     try {
@@ -5105,14 +5107,27 @@ export class Orchestrator {
     }
   }
 
-  async #applyThreadApproval(threadId: string, approval: ApprovalMode): Promise<void> {
-    const resuming = this.#resumingThreads.get(threadId)
-    if (resuming) {
-      // A resume a Stop already cancelled ends on its own; the change then resumes afresh.
-      // A resume that fails for a real reason still fails this change.
-      const cancelled =
-        this.#resumeGenerations.get(threadId) !== (this.#runtimeGenerations.get(threadId) ?? 0)
-      await (cancelled ? resuming.catch(() => undefined) : resuming)
+  async #applyThreadApproval(
+    threadId: string,
+    approval: ApprovalMode,
+    asked: { panic: number; dispose: number },
+  ): Promise<void> {
+    // Wait out every resume, a prompt's own after a Stop included: one that started from
+    // the old mode attaches first and then gets this one, like any attached session.
+    for (
+      let resuming = this.#resumingThreads.get(threadId);
+      resuming;
+      resuming = this.#resumingThreads.get(threadId)
+    ) {
+      // Its own cleanup forgets its generation before the wait below ends.
+      const resumeGeneration = this.#resumeGenerations.get(threadId)
+      try {
+        await resuming
+      } catch (error) {
+        // A resume a Stop cancelled, before or during this wait, ends on its own; the
+        // change then resumes afresh. A resume that fails for a real reason still fails it.
+        if (resumeGeneration === (this.#runtimeGenerations.get(threadId) ?? 0)) throw error
+      }
     }
     const previous = this.#threadApprovals.get(threadId)
     const hadPrevious = this.#threadApprovals.has(threadId)
@@ -5133,6 +5148,8 @@ export class Orchestrator {
           attached.session.setApproval!(approval),
         )
       } else {
+        if (asked.panic !== this.#panicGeneration || asked.dispose !== this.#disposeGeneration)
+          throw new Error('access mode change cancelled by panic stop or shutdown')
         await this.#ensureThread(threadId)
       }
       this.#store.setThreadApproval(threadId, approval)
@@ -5923,8 +5940,25 @@ export class Orchestrator {
     const disposeGeneration = this.#disposeGeneration
     // One frame for every wait, so callers that waited out a cancelled resume take
     // the next one in the order they came.
+    let waited = false
     for (;;) {
-      if (this.#stoppingSessions.has(threadId)) await this.#stopThreadProvider(threadId)
+      if (this.#stoppingSessions.has(threadId)) {
+        await this.#stopThreadProvider(threadId)
+        waited = true
+      }
+      // Whatever happened during a wait decides before anything resumes.
+      if (waited) {
+        if (
+          panicGeneration !== this.#panicGeneration ||
+          disposeGeneration !== this.#disposeGeneration
+        )
+          throw new Error('turn cancelled by panic stop or shutdown')
+        if ((this.#runtimeGenerations.get(threadId) ?? 0) !== callerGeneration)
+          throw new Error('turn cancelled while resuming')
+        // A resume now would attach the session the chat leaves.
+        if (this.#changingProvider.has(threadId))
+          throw new Error('This chat is moving to another provider. Send again once it has moved.')
+      }
       if (this.#threads.has(threadId)) return
       const generation = this.#runtimeGenerations.get(threadId) ?? 0
       const existing = this.#resumingThreads.get(threadId)
@@ -5943,13 +5977,7 @@ export class Orchestrator {
       if (this.#resumeGenerations.get(threadId) === generation) return existing
       // A Stop cancelled that resume. It winds down on its own; this one follows it.
       await existing.catch(() => undefined)
-      if (
-        panicGeneration !== this.#panicGeneration ||
-        disposeGeneration !== this.#disposeGeneration
-      )
-        throw new Error('turn cancelled by panic stop or shutdown')
-      if ((this.#runtimeGenerations.get(threadId) ?? 0) !== callerGeneration)
-        throw new Error('turn cancelled while resuming')
+      waited = true
     }
   }
   async #resumeThread(threadId: string, turnOptions: TurnOptions): Promise<void> {
