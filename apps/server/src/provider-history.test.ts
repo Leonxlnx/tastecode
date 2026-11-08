@@ -5,7 +5,7 @@ import path from 'node:path'
 import type { DomainEvent, ProviderHistorySession, ProviderHistorySource } from '@harness/contracts'
 import { createClaudeHistorySource } from '@harness/adapter-claude-code'
 import { createGrokHistorySource } from '@harness/adapter-grok'
-import { importedEvents, ProviderHistory, userWords } from './provider-history.js'
+import { importedEvents, ProviderHistory } from './provider-history.js'
 import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
@@ -2254,8 +2254,8 @@ describe('a chat that ran in TasteCode before it was imported', () => {
   const imported = (prompt: string) =>
     shown('imported:codex:native', turn('native', prompt, 'pineapple'))
   /** A local prompt of the chat, at `at`. */
-  const typed = (text: string, at = 1000): DomainEvent[] =>
-    turn('local', text, 'Done', at).filter(
+  const typed = (text: string, at = 1000, id = 'local'): DomainEvent[] =>
+    turn(id, text, 'Done', at).filter(
       (event) => event.type === 'item.completed' && event.item.role === 'user',
     )
 
@@ -2272,30 +2272,35 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     ).toEqual(['user', words])
   })
 
-  it('shows only the request of a Design brief, bare as before 2026-09-16 or as a phase', () => {
-    // The brief's answer is phase JSON, which an imported chat leaves out.
-    expect(imported(designBriefingPrompt(`${request}\n\nKeep it warm.`))).toEqual([
-      ['user', `${request}\n\nKeep it warm.`],
-    ])
-    expect(imported(`${phaseBrief(request)}\n\nPictures attached before: brand/logo.png`)).toEqual([
-      ['user', request],
-    ])
+  it('takes off the earlier conversation a continued chat’s first prompt carried', () => {
+    const earlier: DomainEvent = {
+      type: 'item.completed',
+      item: {
+        id: 'earlier',
+        turnId: 'earlier-turn',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Earlier request',
+        createdAt: 1,
+      },
+    }
+    const prompt = continuationPromptFromReplay([{ event: earlier }], words)
+    expect(prompt).not.toBe(words)
+    expect(imported(prompt!)[0]).toEqual(['user', words])
   })
 
-  it('keeps a request that quotes the briefing tags whole', () => {
-    const quoting = 'Use this:\n<user-design-request>\nhero\n</user-design-request>\nthanks'
-    expect(imported(phaseBrief(quoting))[0]).toEqual(['user', quoting])
+  it('hides a Design brief turn, bare as before 2026-09-16 or as a phase', () => {
+    // Its answer is phase JSON, which a local log shows as Design activity.
+    expect(imported(designBriefingPrompt(request))).toEqual([])
+    expect(imported(`${phaseBrief(request)}\n\nPictures attached before: brand/logo.png`)).toEqual(
+      [],
+    )
+    expect(shown('local-thread', turn('native', designBriefingPrompt(request), '{}'))).toEqual([])
+    expect(shown('local-thread', turn('native', phaseBrief(request), '{}'))).toEqual([])
   })
 
-  it('shows a brief that was sent again once', () => {
-    const native = [
-      ...turn('first', phaseBrief(request), '{}'),
-      ...turn('again', phaseBrief(request), '{}', 5000),
-    ]
-    expect(shown('external:claude-code:native', native)).toEqual([['user', request]])
-  })
-
-  it('shows a not_design request once, as the ordinary turn that carried it on', () => {
+  it('shows a not_design request as the ordinary turn that carried it on', () => {
     const native = [
       ...turn('brief', phaseBrief('How do I rename a git branch?'), '{"status":"not_design"}'),
       ...turn(
@@ -2311,32 +2316,38 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     ])
   })
 
-  it('keeps the brief’s request once an imported Design chat is continued here', () => {
-    const native = turn('native', phaseBrief(request), '{"status":"complete"}')
-    const thread = 'external:claude-code:native'
-    // Continued here: the local log holds only later prompts, even the same words an hour on.
-    expect(shown(thread, native, typed('And now the footer.', 60_000))).toEqual([['user', request]])
-    expect(shown(thread, native, typed(request, 3_600_000))).toEqual([['user', request]])
-    // Run here: the local log already shows the request at the brief's own time.
-    expect(shown(thread, native, typed(request, 1000))).toEqual([])
+  it('adds no row for briefs queued and sent again once an adopted chat is continued here', () => {
+    const native = [
+      ...turn('before', 'Make the header sticky.', 'Done.'),
+      // Queued here at 100 s; Claude saved the brief when its turn started, 100 s later.
+      ...turn('brief', phaseBrief(request), '{"status":"failed"}', 200_000),
+      // The user typed "continue": the brief was sent again, then the follow-up.
+      ...turn('again', phaseBrief(request), '{"status":"complete"}', 400_000),
+      ...turn('more', `${DESIGN_FOLLOW_UP_NOTICE}continue`, 'Continuing.', 500_000),
+    ]
+    const local = [...typed(request, 100_000, 'l1'), ...typed('continue', 500_000, 'l2')]
+    expect(shown('external:claude-code:native', native, local)).toEqual([
+      ['user', 'Make the header sticky.'],
+      ['assistant', 'Done.'],
+    ])
   })
 
   it('leaves the provider rows of a chat run here as they were saved', () => {
-    // A brief sent again after a restore, in a Claude chat run here: its turn ids never
-    // match the local ones, so it is hidden as a Design phase, not shown as a request.
-    const native = [
-      ...turn('brief', phaseBrief(request), '{}'),
-      ...turn('outside', `${DESIGN_FOLLOW_UP_NOTICE}${words}`, 'pineapple', 900_000),
-    ]
+    const native = turn('outside', `${DESIGN_FOLLOW_UP_NOTICE}${words}`, 'pineapple', 900_000)
     expect(shown('local-thread', native, typed('Something else', 500_000))).toEqual([
       ['user', `${DESIGN_FOLLOW_UP_NOTICE}${words}`],
       ['assistant', 'pineapple'],
     ])
   })
 
-  it('still matches a pasted briefing prompt sent with the follow-up notice', () => {
+  it('keeps a pasted briefing prompt and its answer', () => {
     // The user pasted a briefing prompt; the provider got it behind the follow-up notice.
     const pasted = designBriefingPrompt('a pasted request')
+    expect(imported(`${DESIGN_FOLLOW_UP_NOTICE}${pasted}`)).toEqual([
+      ['user', pasted],
+      ['assistant', 'pineapple'],
+    ])
+    // Run here, the local log shows it already.
     const native = turn('native', `${DESIGN_FOLLOW_UP_NOTICE}${pasted}`, 'Done')
     expect(shown('local-thread', native, typed(pasted))).toEqual([])
   })
@@ -2348,7 +2359,7 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     expect(imported(quoted)[0]).toEqual(['user', quoted])
     // Only the whole follow-up notice is ours; its first sentence alone is the user's.
     const opening = 'This is an ordinary user turn, not an active TasteCode Design phase. Right?'
-    expect(userWords(opening)).toBe(opening)
+    expect(imported(opening)[0]).toEqual(['user', opening])
   })
 
   it('reads an imported chat again without changing what it saved', () => {

@@ -720,47 +720,23 @@ export function importedEvents(
       : [],
   )
   const echoed = new Set<string>()
-  // A chat brought in from another app has no local log to show what TasteCode's own
-  // prompts carried, so only there the request inside them is the user's message.
-  // A chat run here keeps its provider rows exactly as they were saved.
+  // A chat brought in from another app shows its saved prompts as rows of their own, so
+  // there TasteCode's wrappers come off them. A chat run here keeps its provider rows
+  // exactly as they were saved.
   const importedChat = threadId.startsWith('external:') || threadId.startsWith('imported:')
-  const briefTurns: Array<{ id: string; request: string; at: number }> = []
-  const continued = new Set<string>()
   for (const event of events) {
     const id = turnId(event)
     if (!id) continue
     if (localTurns.has(id)) echoed.add(id)
-    if (
-      (event.type !== 'item.completed' && event.type !== 'item.started') ||
-      event.item.role !== 'user'
-    )
-      continue
-    const text = withoutRestoreNotice(event.item.text)
-    const words = importedChat && text !== undefined ? userWords(text) : undefined
-    const request = words === undefined ? undefined : designBriefRequest(words)
-    if (request !== undefined) briefTurns.push({ id, request, at: event.item.createdAt })
     // A Design phase prompt is the app's own instruction, and the local log already
     // shows that phase as Design activity. A provider such as Claude saves each phase
     // as a turn whose id matches no local turn.
-    else if (text?.startsWith(DESIGN_PHASE_MARKER)) echoed.add(id)
-    const after = words === undefined ? undefined : designContinuationRequest(words)
-    if (after !== undefined) continued.add(after)
-  }
-  // Design brief turns whose request is the user's message: the first brief of each
-  // request, unless the chat carries the request on as an ordinary turn (the brief
-  // answered not_design) or the local log shows it (the brief ran here).
-  const briefs = new Set<string>()
-  const briefed = new Set<string>()
-  for (const brief of briefTurns) {
-    const shownHere = users.some(
-      (item) => item.text === brief.request && Math.abs(item.createdAt - brief.at) < 60_000,
+    if (
+      (event.type === 'item.completed' || event.type === 'item.started') &&
+      event.item.role === 'user' &&
+      isDesignPhasePrompt(withoutRestoreNotice(event.item.text))
     )
-    if (continued.has(brief.request) || briefed.has(brief.request) || shownHere) {
-      echoed.add(brief.id)
-      continue
-    }
-    briefs.add(brief.id)
-    briefed.add(brief.request)
+      echoed.add(id)
   }
   const candidates = events
     .flatMap((event) => {
@@ -797,13 +773,6 @@ export function importedEvents(
     const id = turnId(event)
     if (id) currentTurn = id
     if (echoed.has(id ?? currentTurn) && event.type !== 'thread.started') continue
-    // The brief's own answer is phase JSON, which the Design activity shows in a local log.
-    if (
-      briefs.has(id ?? currentTurn) &&
-      (event.type === 'item.completed' || event.type === 'item.started') &&
-      event.item.role !== 'user'
-    )
-      continue
     // Historical permission requests must never become actionable approvals.
     if (
       event.type.startsWith('approval.') ||
@@ -860,29 +829,31 @@ function withoutRestoreNotice(text: string | undefined): string | undefined {
 }
 
 /**
- * The user's own words of a prompt TasteCode wrapped before sending it. Only
- * exact prefixes and markers TasteCode writes are taken off, never user prose.
+ * A Design phase prompt: one with the phase notice, or a Design brief sent bare
+ * (designBriefingPrompt alone) as before 2026-09-16.
  */
-export function userWords(text: string): string {
+function isDesignPhasePrompt(text: string | undefined): boolean {
+  return text?.startsWith(DESIGN_PHASE_MARKER) === true || text?.startsWith(BRIEFING_START) === true
+}
+
+/** The first line of designBriefingPrompt, in every version so far. */
+const BRIEFING_START = 'You are running TasteCode Design Briefing mode.\n'
+
+/**
+ * What an imported chat shows of a prompt TasteCode wrapped before sending it: the
+ * user's words, or the request a not_design continuation carried. Only exact
+ * prefixes and markers TasteCode writes are taken off, never user prose.
+ */
+function shownWords(text: string): string {
   let words = withoutRestoreNotice(text) ?? text
   // A continued chat's first prompt carries the earlier conversation before the
-  // user's words; local history keeps only the words.
+  // user's words.
   words = withoutContinuationContext(words)
   // Sub-agent results the agent had not read go in front of the user's words.
   words = withoutUnreadSubagentResults(words)
-  // Native logs contain our Design follow-up envelope, matched by its whole text;
-  // local history keeps only the user's submission.
+  // The Design follow-up envelope, matched by its whole text.
   if (words.startsWith(DESIGN_FOLLOW_UP_NOTICE)) words = words.slice(DESIGN_FOLLOW_UP_NOTICE.length)
-  return words
-}
-
-/**
- * What an imported chat shows of a prompt TasteCode sent: the user's words, or the
- * request a Design brief or its not_design continuation carried.
- */
-function shownWords(text: string): string {
-  const words = userWords(text)
-  return designBriefRequest(words) ?? designContinuationRequest(words) ?? words
+  return designContinuationRequest(words) ?? words
 }
 
 /** designTaskContinuation's opening; the user's original request follows in its block. */
@@ -901,33 +872,20 @@ function designContinuationRequest(text: string): string | undefined {
     : undefined
 }
 
-/**
- * The request a Design brief prompt (designBriefingPrompt) carries as the user wrote
- * it. Sent bare until 2026-09-16, since then between a phase notice and a language
- * reminder, sometimes with a note on pictures attached before.
- */
-function designBriefRequest(text: string): string | undefined {
-  let start = -1
-  if (text.startsWith(BRIEFING_START)) start = 0
-  else if (text.startsWith(DESIGN_PHASE_MARKER)) {
-    const at = text.indexOf(`\n\n${BRIEFING_START}`)
-    if (at !== -1) start = at + 2
-  }
-  if (start === -1) return undefined
-  // The template opens the request block once; the request may quote either tag itself.
-  const open = text.indexOf(BRIEFING_REQUEST_OPEN, start)
-  const close = text.lastIndexOf(BRIEFING_REQUEST_CLOSE)
-  return open !== -1 && close > open
-    ? text.slice(open + BRIEFING_REQUEST_OPEN.length, close)
-    : undefined
-}
-
-const BRIEFING_START = 'You are running TasteCode Design Briefing mode.\n'
-const BRIEFING_REQUEST_OPEN = '\n<user-design-request>\n'
-const BRIEFING_REQUEST_CLOSE = '\n</user-design-request>'
-
 function sameUserMessage(left: Item, right: Item): boolean {
-  const text = right.text === undefined ? undefined : userWords(right.text)
+  let text = withoutRestoreNotice(right.text)
+  // A continued chat's first prompt carries the earlier conversation before the
+  // user's words; local history keeps only the words.
+  if (text !== undefined) text = withoutContinuationContext(text)
+  // Sub-agent results the agent had not read go in front of the user's words.
+  if (text !== undefined) text = withoutUnreadSubagentResults(text)
+  // Native logs contain our Design follow-up envelope; local history keeps only
+  // the user's submission. Unwrap solely for echo matching, never arbitrary prose.
+  if (text?.startsWith('This is an ordinary user turn, not an active TasteCode Design phase. ')) {
+    const marker = '\n\nUser request:\n'
+    const start = text.indexOf(marker)
+    if (start !== -1) text = text.slice(start + marker.length)
+  }
   return (
     (left.text === right.text || left.text === text) &&
     sameAttachments(left.attachments ?? [], right.attachments ?? [])
