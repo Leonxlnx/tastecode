@@ -58,6 +58,13 @@ const OPENCODE_DEFAULT_VARIANT = 'default'
  * failed three of four such starts, each of which then had to be killed.
  */
 export const OPENCODE_SERVER_START_TIMEOUT_MS = 30_000
+/**
+ * `opencode serve` answers v1's `/session/status` only once its first instance
+ * has loaded: 3.1 and 5.7 s after it printed its URL with the CPU at 100%
+ * (1.18.13), while v2's health check answered within 0.1 s. The old 1.5 s
+ * limit then chose v2, which that version refuses for every prompt.
+ */
+const OPENCODE_PROTOCOL_PROBE_TIMEOUT_MS = 30_000
 
 function applyOpenCodeTurnOptions(
   current: OpenCodeTurnOptions,
@@ -868,19 +875,21 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
    * clients drive. opencode 1.18.31 also answers v2's health check, but its v2
    * session engine admits a prompt without ever running it ("Session wait is
    * not available yet") and its v2 catalog lists no models, so v2 is only for
-   * a server that has dropped v1.
+   * a server that has dropped v1: one that answers v1's probe with a refusal.
    */
   async #detectProtocol(): Promise<OpenCodeProtocol> {
     const headers = this.#authorization ? { authorization: this.#authorization } : {}
     try {
       const v1 = await fetch(new URL('/session/status', this.#baseUrl), {
         headers,
-        signal: AbortSignal.timeout(1500),
+        signal: AbortSignal.timeout(OPENCODE_PROTOCOL_PROBE_TIMEOUT_MS),
       })
       await v1.body?.cancel()
       if (v1.ok) return 'v1'
     } catch {
-      // A server that does not answer at all is asked about v2 next.
+      // No answer says nothing about v1: a server still loading answers v2's
+      // health check long before it, so that check cannot decide here.
+      return 'v1'
     }
     try {
       const response = await fetch(new URL('/api/health', this.#baseUrl), {
