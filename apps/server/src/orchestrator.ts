@@ -866,6 +866,10 @@ export class Orchestrator {
   #stoppingPreviewHandles = new WeakSet<RunningPreview>()
   #unstoppedDesignPreviews = new Map<string, RunningPreview[]>()
   #resumingThreads = new Map<string, Promise<void>>()
+  /** The runtime generation each resume started in; a Stop moves the thread past it. */
+  #resumeGenerations = new Map<string, number>()
+  /** Prompts waiting on a resume, rejected at once by a Stop. */
+  #resumeCancels = new Map<string, Array<(error: Error) => void>>()
   /** Chats whose provider session is being replaced; nothing may start a turn meanwhile. */
   #changingProvider = new Set<string>()
   /**
@@ -3435,10 +3439,26 @@ export class Orchestrator {
     const resuming = !this.#threads.has(threadId)
     const sentAt = Date.now()
     if (resuming) this.#addSidebarStatus(this.#resumingForPrompt, threadId)
+    // A Stop while the session resumes cancels this prompt at once; the resume
+    // itself can take 10-15 s more to wind down, and the chat must not wait for it.
+    let cancel: ((error: Error) => void) | undefined
+    const cancelled = resuming
+      ? new Promise<never>((_resolve, reject) => {
+          cancel = reject
+        })
+      : undefined
+    if (cancel)
+      this.#resumeCancels.set(threadId, [...(this.#resumeCancels.get(threadId) ?? []), cancel])
     try {
-      await this.#ensureThread(threadId, options)
+      const ensured = this.#ensureThread(threadId, options)
+      await (cancelled ? Promise.race([ensured, cancelled]) : ensured)
     } finally {
       if (resuming) this.#deleteSidebarStatus(this.#resumingForPrompt, threadId)
+      if (cancel) {
+        const rest = (this.#resumeCancels.get(threadId) ?? []).filter((item) => item !== cancel)
+        if (rest.length) this.#resumeCancels.set(threadId, rest)
+        else this.#resumeCancels.delete(threadId)
+      }
     }
     if (panicGeneration !== this.#panicGeneration || disposeGeneration !== this.#disposeGeneration)
       throw new Error('turn cancelled by panic stop or shutdown')
@@ -5115,6 +5135,9 @@ export class Orchestrator {
           this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
           // The prompt is cancelled now; the resume it waits on may take seconds to end.
           this.#deleteSidebarStatus(this.#resumingForPrompt, threadId)
+          const cancels = this.#resumeCancels.get(threadId) ?? []
+          this.#resumeCancels.delete(threadId)
+          for (const cancel of cancels) cancel(new Error('turn cancelled while resuming'))
           return
         }
         if (incoming.length === 0) return
@@ -5777,6 +5800,8 @@ export class Orchestrator {
     this.#designOutputErrors.clear()
     this.#designActivityItems.clear()
     this.#resumingThreads.clear()
+    this.#resumeGenerations.clear()
+    this.#resumeCancels.clear()
     this.#inboxProjections.clear()
     this.#inboxProjectionsLoaded = false
     this.#staleInboxProjectionThreads.clear()
@@ -5854,14 +5879,24 @@ export class Orchestrator {
   async #ensureThread(threadId: string, turnOptions: TurnOptions = {}): Promise<void> {
     if (this.#stoppingSessions.has(threadId)) await this.#stopThreadProvider(threadId)
     if (this.#threads.has(threadId)) return
+    const generation = this.#runtimeGenerations.get(threadId) ?? 0
     const existing = this.#resumingThreads.get(threadId)
-    if (existing) return existing
+    if (existing) {
+      if (this.#resumeGenerations.get(threadId) === generation) return existing
+      // A Stop cancelled that resume. It winds down on its own; this one follows it.
+      await existing.catch(() => undefined)
+      return this.#ensureThread(threadId, turnOptions)
+    }
 
     const pending = this.#resumeThread(threadId, turnOptions).finally(() => {
-      if (this.#resumingThreads.get(threadId) === pending) this.#resumingThreads.delete(threadId)
+      if (this.#resumingThreads.get(threadId) === pending) {
+        this.#resumingThreads.delete(threadId)
+        this.#resumeGenerations.delete(threadId)
+      }
       this.#pruneIdleThreadRuntimes()
     })
     this.#resumingThreads.set(threadId, pending)
+    this.#resumeGenerations.set(threadId, generation)
     return pending
   }
 

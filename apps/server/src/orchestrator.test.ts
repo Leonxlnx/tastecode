@@ -9263,6 +9263,40 @@ describe('several sessions at once', () => {
     }
   })
 
+  it('cancels a prompt at Stop while its slow resume is still under way', async () => {
+    const { sessions, orchestrator, store, resumeBarriers } = harness()
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    let finishResume!: () => void
+    resumeBarriers.push(new Promise<void>((resolve) => (finishResume = resolve)))
+    try {
+      const sending = orchestrator.submitTurn('persisted-thread', 'stop this', [], {}, 'stopped')
+      await orchestrator.interrupt('persisted-thread')
+      // The prompt is back with the user now, not when Codex has finished resuming.
+      // (Without the fix this waits for finishResume below and the test times out.)
+      await expect(sending).rejects.toThrow('turn cancelled while resuming')
+      expect(sessions).toHaveLength(0)
+
+      // Sent again before the cancelled resume ended: it waits for that one, then resumes.
+      const again = orchestrator.submitTurn('persisted-thread', 'send this', [], {}, 'next')
+      finishResume()
+      await expect(again).resolves.toMatchObject({ queued: false })
+      expect(sessions).toHaveLength(2)
+      expect(sessions[0]!.disposed).toBe(true)
+      expect(sessions[0]!.sent).toEqual([])
+      expect(sessions[1]!.sent).toEqual(['send this'])
+      expect(store.hasUserSubmission('persisted-thread', 'stopped')).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
   it('cancels a cold resume on Stop and allows a later submission', async () => {
     const { sessions, orchestrator, store } = harness()
     store.addProject('/repo')
@@ -9279,7 +9313,8 @@ describe('several sessions at once', () => {
       await orchestrator.interrupt('persisted-thread')
       await stopped
 
-      expect(sessions[0]!.disposed).toBe(true)
+      // The prompt is cancelled at the Stop; the resumed session ends right after.
+      await vi.waitFor(() => expect(sessions[0]!.disposed).toBe(true))
       expect(sessions[0]!.sent).toEqual([])
       expect(store.thread('persisted-thread')?.closedAt).toBeUndefined()
       expect(store.hasUserSubmission('persisted-thread', 'stopped')).toBe(false)
