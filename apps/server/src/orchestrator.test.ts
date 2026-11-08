@@ -9297,6 +9297,124 @@ describe('several sessions at once', () => {
     }
   })
 
+  describe('a Stop while the chat is still resuming', () => {
+    // A persisted Codex chat whose resumes wait for the returned openers, in order.
+    const resumingChat = (resumes: number) => {
+      const made = harness()
+      made.store.addProject('/repo')
+      made.store.addThread({
+        id: 'persisted-thread',
+        projectPath: '/repo',
+        provider: 'codex',
+        title: 'Persisted',
+      })
+      const open: Array<() => void> = []
+      for (let index = 0; index < resumes; index += 1)
+        made.resumeBarriers.push(new Promise<void>((resolve) => open.push(resolve)))
+      return { ...made, open }
+    }
+    const send = (orchestrator: Orchestrator, text: string) =>
+      orchestrator.submitTurn('persisted-thread', text, [], {}, text)
+
+    it('starts the prompt sent first after a Stop before one sent later', async () => {
+      const { orchestrator, store, sessions, open, resumedIds } = resumingChat(2)
+      try {
+        const first = send(orchestrator, 'A')
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        const second = send(orchestrator, 'B')
+        open[0]!()
+        // C comes once B has started the next resume, and joins it.
+        await vi.waitFor(() => expect(resumedIds).toHaveLength(2))
+        const third = send(orchestrator, 'C')
+        open[1]!()
+        await expect(second).resolves.toMatchObject({ queued: false })
+        await expect(third).resolves.toMatchObject({ queued: true })
+        expect(sessions.at(-1)!.sent).toEqual(['B'])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('starts no new resume for a prompt stopped again while it waits', async () => {
+      const { orchestrator, store, sessions, open, resumedIds } = resumingChat(2)
+      try {
+        const first = send(orchestrator, 'A')
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        const second = send(orchestrator, 'B')
+        await orchestrator.interrupt('persisted-thread')
+        await expect(second).rejects.toThrow('turn cancelled while resuming')
+        open[0]!()
+        await vi.waitFor(() => expect(sessions[0]?.disposed).toBe(true))
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(resumedIds).toHaveLength(1)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('rejects a waiting prompt at Stop all and starts no resume after it', async () => {
+      const { orchestrator, store, open, resumedIds } = resumingChat(2)
+      try {
+        const first = send(orchestrator, 'A')
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        const second = send(orchestrator, 'B')
+        const stopping = orchestrator.panicStop()
+        await expect(second).rejects.toThrow('turn cancelled by panic stop')
+        open[0]!()
+        await stopping
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(resumedIds).toHaveLength(1)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('stops a prompt that was still on its way when the Stop came', async () => {
+      const { orchestrator, store, sessions, open, resumedIds } = resumingChat(2)
+      try {
+        const first = send(orchestrator, 'A')
+        let arrive!: () => void
+        const onItsWay = orchestrator.trackSubmission('persisted-thread', async () => {
+          await new Promise<void>((resolve) => (arrive = resolve))
+          return send(orchestrator, 'B')
+        })
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        arrive()
+        await expect(onItsWay).rejects.toThrow('turn cancelled while resuming')
+        open[0]!()
+        await vi.waitFor(() => expect(sessions[0]?.disposed).toBe(true))
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(resumedIds).toHaveLength(1)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('changes the access mode during the wind-down without the stopped resume’s error', async () => {
+      const { orchestrator, store, open } = resumingChat(2)
+      try {
+        const first = send(orchestrator, 'A')
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'full')
+        open[0]!()
+        open[1]!()
+        await expect(changing).resolves.toBeUndefined()
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+  })
+
   it('cancels a cold resume on Stop and allows a later submission', async () => {
     const { sessions, orchestrator, store } = harness()
     store.addProject('/repo')
