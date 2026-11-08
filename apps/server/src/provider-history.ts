@@ -12,7 +12,11 @@ import type {
 } from '@harness/contracts'
 import { Store, type ProviderHistoryListing } from './store.js'
 import { projectHistoryItems, withoutContinuationContext } from './side-chat.js'
-import { DESIGN_PHASE_MARKER, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
+import {
+  DESIGN_FOLLOW_UP_NOTICE,
+  DESIGN_PHASE_MARKER,
+  RESTORE_CONTEXT_NOTICE,
+} from './provider-session.js'
 import { withoutUnreadSubagentResults } from './subagent-broker.js'
 
 type Source = {
@@ -716,31 +720,47 @@ export function importedEvents(
       : [],
   )
   const echoed = new Set<string>()
-  // Design brief turns of a chat with no local log: only the request is the user's.
-  const briefs = new Set<string>()
+  // A chat brought in from another app has no local log to show what TasteCode's own
+  // prompts carried, so only there the request inside them is the user's message.
+  // A chat run here keeps its provider rows exactly as they were saved.
+  const importedChat = threadId.startsWith('external:') || threadId.startsWith('imported:')
+  const briefTurns: Array<{ id: string; request: string; at: number }> = []
+  const continued = new Set<string>()
   for (const event of events) {
     const id = turnId(event)
     if (!id) continue
     if (localTurns.has(id)) echoed.add(id)
+    if (
+      (event.type !== 'item.completed' && event.type !== 'item.started') ||
+      event.item.role !== 'user'
+    )
+      continue
+    const text = withoutRestoreNotice(event.item.text)
+    const words = importedChat && text !== undefined ? userWords(text) : undefined
+    const request = words === undefined ? undefined : designBriefRequest(words)
+    if (request !== undefined) briefTurns.push({ id, request, at: event.item.createdAt })
     // A Design phase prompt is the app's own instruction, and the local log already
     // shows that phase as Design activity. A provider such as Claude saves each phase
     // as a turn whose id matches no local turn.
-    if (
-      (event.type === 'item.completed' || event.type === 'item.started') &&
-      event.item.role === 'user' &&
-      withoutRestoreNotice(event.item.text)?.startsWith(DESIGN_PHASE_MARKER)
-    ) {
-      // A Design chat run here shows its request in the local log. One that ran
-      // elsewhere (imported, then perhaps continued here) has nothing else that does.
-      const request = designBriefRequest(withoutRestoreNotice(event.item.text)!)
-      if (
-        request !== undefined &&
-        !localTurns.has(id) &&
-        !users.some((item) => item.text === request)
-      )
-        briefs.add(id)
-      else echoed.add(id)
+    else if (text?.startsWith(DESIGN_PHASE_MARKER)) echoed.add(id)
+    const after = words === undefined ? undefined : designContinuationRequest(words)
+    if (after !== undefined) continued.add(after)
+  }
+  // Design brief turns whose request is the user's message: the first brief of each
+  // request, unless the chat carries the request on as an ordinary turn (the brief
+  // answered not_design) or the local log shows it (the brief ran here).
+  const briefs = new Set<string>()
+  const briefed = new Set<string>()
+  for (const brief of briefTurns) {
+    const shownHere = users.some(
+      (item) => item.text === brief.request && Math.abs(item.createdAt - brief.at) < 60_000,
+    )
+    if (continued.has(brief.request) || briefed.has(brief.request) || shownHere) {
+      echoed.add(brief.id)
+      continue
     }
+    briefs.add(brief.id)
+    briefed.add(brief.request)
   }
   const candidates = events
     .flatMap((event) => {
@@ -802,8 +822,8 @@ export function importedEvents(
         item: {
           ...event.item,
           // A chat that ran in TasteCode before saved our wrappers around the user's words.
-          ...(event.item.role === 'user' && event.item.text !== undefined
-            ? { text: userWords(event.item.text) }
+          ...(importedChat && event.item.role === 'user' && event.item.text !== undefined
+            ? { text: shownWords(event.item.text) }
             : {}),
           id: `import:${event.item.id}`,
           turnId: `import:${event.item.turnId}`,
@@ -850,14 +870,35 @@ export function userWords(text: string): string {
   words = withoutContinuationContext(words)
   // Sub-agent results the agent had not read go in front of the user's words.
   words = withoutUnreadSubagentResults(words)
-  // Native logs contain our Design follow-up envelope; local history keeps only
-  // the user's submission.
-  if (words.startsWith('This is an ordinary user turn, not an active TasteCode Design phase. ')) {
-    const marker = '\n\nUser request:\n'
-    const start = words.indexOf(marker)
-    if (start !== -1) words = words.slice(start + marker.length)
-  }
-  return designBriefRequest(words) ?? words
+  // Native logs contain our Design follow-up envelope, matched by its whole text;
+  // local history keeps only the user's submission.
+  if (words.startsWith(DESIGN_FOLLOW_UP_NOTICE)) words = words.slice(DESIGN_FOLLOW_UP_NOTICE.length)
+  return words
+}
+
+/**
+ * What an imported chat shows of a prompt TasteCode sent: the user's words, or the
+ * request a Design brief or its not_design continuation carried.
+ */
+function shownWords(text: string): string {
+  const words = userWords(text)
+  return designBriefRequest(words) ?? designContinuationRequest(words) ?? words
+}
+
+/** designTaskContinuation's opening; the user's original request follows in its block. */
+const CONTINUATION_START =
+  'Design mode is now off. The preceding Design Briefing protocol, JSON-only format, and tool-free restrictions have ended.\n\n'
+const CONTINUATION_REQUEST_OPEN = '\n<original-user-request>\n'
+const CONTINUATION_REQUEST_CLOSE = '\n</original-user-request>'
+
+/** The request a Design brief that answered not_design carries on as an ordinary turn. */
+function designContinuationRequest(text: string): string | undefined {
+  if (!text.startsWith(CONTINUATION_START)) return undefined
+  const open = text.indexOf(CONTINUATION_REQUEST_OPEN)
+  const close = text.lastIndexOf(CONTINUATION_REQUEST_CLOSE)
+  return open !== -1 && close > open
+    ? text.slice(open + CONTINUATION_REQUEST_OPEN.length, close)
+    : undefined
 }
 
 /**
