@@ -183,6 +183,64 @@ describe('OpenCode history', () => {
     ])
   })
 
+  it('reads the older tables of a 1.x build that already has an empty session_message', async () => {
+    const db = legacyDatabase()
+    // OpenCode 1.14.19 on Windows: the 2.x table exists, but every message is in the old ones.
+    db.exec(`
+      CREATE TABLE session_message (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL,
+        time_created INTEGER NOT NULL, data TEXT NOT NULL);
+    `)
+    db.prepare('INSERT INTO session VALUES (?, NULL, ?, ?, 1000, 2000, NULL)').run(
+      'ses_a',
+      '/work/site',
+      'Fix the footer',
+    )
+    db.prepare('INSERT INTO message VALUES (?, ?, ?, ?)').run(
+      'm1',
+      'ses_a',
+      1000,
+      '{"role":"user"}',
+    )
+    db.prepare('INSERT INTO part VALUES (?, ?, ?, ?)').run(
+      'p1',
+      'm1',
+      'ses_a',
+      '{"type":"text","text":"Fix the footer"}',
+    )
+    db.close()
+
+    const source = createOpenCodeHistorySource({ root })
+    const [session] = await source.list()
+    expect(items(await source.read(session!))).toMatchObject([
+      { type: 'message', role: 'user', text: 'Fix the footer' },
+    ])
+  })
+
+  it('lists the older tables of a database whose session_v2 is still empty', async () => {
+    const db = legacyDatabase()
+    db.exec(`
+      CREATE TABLE session_v2 (
+        id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT NOT NULL, title TEXT,
+        time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, time_archived INTEGER);
+    `)
+    db.prepare('INSERT INTO session VALUES (?, NULL, ?, ?, 1000, 2000, NULL)').run(
+      'ses_a',
+      '/work/site',
+      'Fix the footer',
+    )
+    db.prepare('INSERT INTO message VALUES (?, ?, ?, ?)').run(
+      'm1',
+      'ses_a',
+      1000,
+      '{"role":"user"}',
+    )
+    db.close()
+
+    const sessions = await createOpenCodeHistorySource({ root }).list()
+    expect(sessions.map(({ id }) => id)).toEqual(['ses_a'])
+  })
+
   it('returns nothing for a session that is gone', async () => {
     database().close()
     const source = createOpenCodeHistorySource({ root })
