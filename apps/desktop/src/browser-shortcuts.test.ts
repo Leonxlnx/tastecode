@@ -44,14 +44,22 @@ describe('browser shortcuts in a guest page', () => {
     expect(browserShortcut(key('F5'), 'darwin')).toBeUndefined()
   })
 
+  it('reloads past the cache with Ctrl+Shift+R or Ctrl+F5, and Cmd+Shift+R on macOS', () => {
+    expect(browserShortcut(key('R', { control: true, shift: true }), 'win32')).toBe('hardReload')
+    expect(browserShortcut(key('F5', { control: true }), 'win32')).toBe('hardReload')
+    expect(browserShortcut(key('R', { meta: true, shift: true }), 'darwin')).toBe('hardReload')
+    expect(browserShortcut(key('R', { control: true, shift: true }), 'darwin')).toBeUndefined()
+    expect(browserShortcut(key('L', { control: true, shift: true }), 'win32')).toBeUndefined()
+  })
+
   it('leaves every other key to the page', () => {
     for (const input of [
       key('l'),
       key('ArrowLeft'),
-      key('r', { control: true, shift: true }),
       key('w', { control: true, alt: true }),
       key('ArrowLeft', { alt: true, control: true }),
-      key('F5', { control: true }),
+      key('F5', { control: true, alt: true }),
+      key('r', { control: true, shift: true, alt: true }),
       key('t', { control: true }),
       key('[', { control: true }),
     ]) {

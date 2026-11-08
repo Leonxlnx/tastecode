@@ -8,7 +8,8 @@ type BrowserKeyEvent = Pick<
 /**
  * The browser keys a Browser tab answers while focus is in its toolbar or
  * address field: back Alt+Left, forward Alt+Right, reload Ctrl+R or F5,
- * address Ctrl+L and close tab Ctrl+W, with Cmd on macOS and Cmd+[ / Cmd+]
+ * reload past the cache Ctrl+Shift+R or Ctrl+F5, address Ctrl+L and close tab
+ * Ctrl+W, with Cmd on macOS and Cmd+[ / Cmd+]
  * for history there. Mirrors browserShortcut in
  * apps/desktop/src/browser-shortcuts.ts, which forwards the same keys from
  * inside the page.
@@ -18,8 +19,11 @@ export function browserShortcut(
   macOS: boolean,
 ): BrowserShortcutAction | undefined {
   const key = event.key.toLowerCase()
-  if (event.shiftKey) return undefined
   const primary = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+  // As in browsers: a reload that bypasses the cache, for a stylesheet a server cached.
+  if (event.shiftKey) return primary && !event.altKey && key === 'r' ? 'hardReload' : undefined
+  if (!macOS && event.ctrlKey && !event.metaKey && !event.altKey && event.key === 'F5')
+    return 'hardReload'
   if (primary && !event.altKey) {
     if (key === 'r') return 'reload'
     if (key === 'l') return 'address'
