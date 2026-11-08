@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { IconChevronDown as ChevronDown, IconFilePencil as FilePenLine } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
 import { DiffReview } from './DiffReview.js'
@@ -44,6 +44,15 @@ export function Diff({
   const [undone, setUndone] = useState(false)
   // Undo deletes the files the turn created, so it asks once inside the card first.
   const [confirmingUndo, setConfirmingUndo] = useState(false)
+  const undoButton = useRef<HTMLButtonElement>(null)
+  // Escape answers the question with Keep, from the question or from Undo itself.
+  const keepOnEscape = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Escape' || event.nativeEvent.isComposing || !confirmingUndo) return
+    event.preventDefault()
+    event.stopPropagation()
+    setConfirmingUndo(false)
+    undoButton.current?.focus()
+  }
 
   useEffect(() => {
     setReviewing(false)
@@ -101,10 +110,12 @@ export function Diff({
         <div className="diff__actions">
           {onUndo ? (
             <button
+              ref={undoButton}
               type="button"
               className="diff__review"
               aria-expanded={confirmingUndo}
               disabled={undoing}
+              onKeyDown={keepOnEscape}
               onClick={() => {
                 setUndoError(undefined)
                 setConfirmingUndo((current) => !current)
@@ -126,7 +137,12 @@ export function Diff({
       </div>
 
       {confirmingUndo ? (
-        <div className="diff__undo-confirm" role="group" aria-label="Confirm undo">
+        <div
+          className="diff__undo-confirm"
+          role="group"
+          aria-label="Confirm undo"
+          onKeyDown={keepOnEscape}
+        >
           <p className="diff__undo-question">{undoQuestion(parsed.fileEntries)}</p>
           <button type="button" className="diff__review" onClick={() => void undo()}>
             Undo changes

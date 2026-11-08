@@ -42,11 +42,18 @@ describe('Browser tab keys', () => {
     expect(browserShortcut(key('l', { ctrlKey: true }), true)).toBeUndefined()
   })
 
+  it('reloads past the cache with Ctrl+Shift+R or Ctrl+F5, and Cmd+Shift+R on macOS', () => {
+    expect(browserShortcut(key('R', { ctrlKey: true, shiftKey: true }), false)).toBe('hardReload')
+    expect(browserShortcut(key('F5', { ctrlKey: true }), false)).toBe('hardReload')
+    expect(browserShortcut(key('R', { metaKey: true, shiftKey: true }), true)).toBe('hardReload')
+    expect(browserShortcut(key('L', { ctrlKey: true, shiftKey: true }), false)).toBeUndefined()
+  })
+
   it('ignores everything else', () => {
     for (const event of [
       key('l'),
       key('Escape'),
-      key('r', { ctrlKey: true, shiftKey: true }),
+      key('r', { ctrlKey: true, shiftKey: true, altKey: true }),
       key('w', { ctrlKey: true, altKey: true }),
       key('ArrowLeft', { altKey: true, ctrlKey: true }),
       key('ArrowUp', { altKey: true }),

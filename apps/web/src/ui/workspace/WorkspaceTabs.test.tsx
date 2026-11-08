@@ -350,24 +350,28 @@ it('decides from the labelled layout in either mode, so it cannot flip at a boun
   for (let pass = 0; pass < 3; pass += 1) expect(fitWorkspaceTabs(strip)).toBe('labels')
 })
 
-it('writes data-fit only when the mode changes', async () => {
+it('writes data-fit only when the mode changes', () => {
   const widths = { client: 400, labels: 380, compact: 200 }
   const strip = fitStrip(widths)
   fitWorkspaceTabs(strip)
-  const changes: Array<string | null> = []
-  const observer = new MutationObserver((records) => {
-    for (const record of records) changes.push(strip.getAttribute(record.attributeName!))
+  // Writes are counted where they happen. A MutationObserver lost them: happy-dom
+  // holds its listener only through a WeakRef, so a garbage collection between
+  // two writes dropped the second record (a macOS CI run failed that way).
+  const changes: string[] = []
+  const dataset = strip.dataset
+  const counted = new Proxy(dataset, {
+    set(target, key, value: string) {
+      if (key === 'fit') changes.push(value)
+      return Reflect.set(target, key, value)
+    },
   })
-  observer.observe(strip, { attributes: true, attributeFilter: ['data-fit'] })
+  Object.defineProperty(strip, 'dataset', { get: () => counted })
   fitWorkspaceTabs(strip)
   fitWorkspaceTabs(strip)
-  await new Promise((resolve) => setTimeout(resolve))
   expect(changes).toEqual([])
   widths.client = 300
   fitWorkspaceTabs(strip)
-  await new Promise((resolve) => setTimeout(resolve))
   expect(changes).toEqual(['compact'])
-  observer.disconnect()
 })
 
 it('refits the strip from one observer as it resizes and as its tabs change', () => {

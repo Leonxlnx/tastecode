@@ -7,7 +7,14 @@
  * sees them. The guest's before-input-event takes them first, keeps them from
  * the page and from the window menu, and tells the window which guest asked.
  */
-export const BROWSER_SHORTCUT_ACTIONS = ['back', 'forward', 'reload', 'address', 'close'] as const
+export const BROWSER_SHORTCUT_ACTIONS = [
+  'back',
+  'forward',
+  'reload',
+  'hardReload',
+  'address',
+  'close',
+] as const
 
 export type BrowserShortcutAction = (typeof BROWSER_SHORTCUT_ACTIONS)[number]
 
@@ -25,8 +32,8 @@ export type BrowserShortcutInput = {
 }
 
 /**
- * Back Alt+Left, forward Alt+Right, reload Ctrl+R or F5, address Ctrl+L and
- * close tab Ctrl+W. macOS uses Cmd: Cmd+[ and Cmd+] for history, because
+ * Back Alt+Left, forward Alt+Right, reload Ctrl+R or F5, reload past the cache
+ * Ctrl+Shift+R or Ctrl+F5, address Ctrl+L and close tab Ctrl+W. macOS uses Cmd: Cmd+[ and Cmd+] for history, because
  * Option+Left and Cmd+Left move the caret in a text field there.
  */
 export function browserShortcut(
@@ -35,8 +42,10 @@ export function browserShortcut(
 ): BrowserShortcutAction | undefined {
   const mac = platform === 'darwin'
   const key = input.key.toLowerCase()
-  if (input.shift) return undefined
   const primary = mac ? input.meta && !input.control : input.control && !input.meta
+  // As in browsers: a reload that bypasses the cache, for a stylesheet a server cached.
+  if (input.shift) return primary && !input.alt && key === 'r' ? 'hardReload' : undefined
+  if (!mac && input.control && !input.meta && !input.alt && input.key === 'F5') return 'hardReload'
   if (primary && !input.alt) {
     if (key === 'r') return 'reload'
     if (key === 'l') return 'address'
