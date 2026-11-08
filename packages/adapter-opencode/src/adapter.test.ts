@@ -109,6 +109,41 @@ describe('OpenCode adapter', () => {
     }
   }, 10_000)
 
+  it('speaks v1 when the probe gets no answer, though the v2 health check does', async () => {
+    const mock = await serveOpenCode(undefined, [], async (request) => {
+      request.socket.destroy()
+    })
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      await adapter.startThread('C:\\repo')
+      expect(mock.requests.some((request) => request.url.startsWith('/api/session'))).toBe(false)
+      expect(
+        mock.requests.some(
+          (request) =>
+            request.method === 'POST' &&
+            new URL(request.url, 'http://mock').pathname === '/session',
+        ),
+      ).toBe(true)
+    } finally {
+      adapter.dispose()
+    }
+  })
+
+  it('speaks v2 to a server that refuses v1 only once it has loaded', async () => {
+    const mock = await serveOpenCodeV2(0, false, false, 2_000)
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      await adapter.startThread('C:\\repo')
+      expect(
+        mock.requests.some(
+          (request) => request.method === 'POST' && request.url === '/api/session',
+        ),
+      ).toBe(true)
+    } finally {
+      adapter.dispose()
+    }
+  }, 10_000)
+
   it("names OpenCode's reason when it refuses a v2 prompt", async () => {
     // How 1.18.13 refused the prompt this adapter sends over v2 (fixtures/).
     const mock = await serveOpenCodeV2(0, false, true)
@@ -1338,7 +1373,7 @@ function serverPort(server: Server): number {
 async function serveOpenCode(
   beforeSessionResponse?: () => Promise<void>,
   messages: unknown[] = [],
-  beforeStatusResponse?: () => Promise<void>,
+  beforeStatusResponse?: (request: IncomingMessage) => Promise<void>,
 ): Promise<{
   baseUrl: string
   requests: RequestRecord[]
@@ -1382,7 +1417,10 @@ async function serveOpenCode(
     }
     // opencode 1.18.31 answers v2's health check beside v1.
     if (request.url === '/api/health') return json(response, { healthy: true })
-    if (request.url?.startsWith('/session/status')) await beforeStatusResponse?.()
+    if (request.url?.startsWith('/session/status')) {
+      await beforeStatusResponse?.(request)
+      if (request.socket.destroyed) return
+    }
     if (request.url?.startsWith('/config/providers')) {
       return json(response, {
         providers: [
@@ -1457,6 +1495,7 @@ async function serveOpenCodeV2(
   failedPermissionReplies = 0,
   holdFirstPermissionReply = false,
   refusePrompts = false,
+  statusRefusalDelayMs = 0,
 ): Promise<{
   baseUrl: string
   requests: RequestRecord[]
@@ -1499,6 +1538,8 @@ async function serveOpenCodeV2(
     }
     // A server that has dropped v1, so the adapter speaks v2 to it.
     if (request.url?.startsWith('/session/status')) {
+      if (statusRefusalDelayMs)
+        await new Promise((resolve) => setTimeout(resolve, statusRefusalDelayMs))
       response.writeHead(404)
       return response.end()
     }
