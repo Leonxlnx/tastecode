@@ -106,6 +106,8 @@ export interface Transport {
   ensureHealthy(timeoutMs?: number): Promise<void>
   onState(listener: (state: ConnectionState) => void): () => void
   onSequenceGap(listener: (expected: number, received: number) => void): () => void
+  /** Whether the server on the port is another TasteCode's, which this window refuses. */
+  onServerRefused?(listener: (refused: boolean) => void): () => void
   on<C extends ChannelName>(channel: C, listener: (data: DataOf<C>) => void): () => void
   request<M extends MethodName>(method: M, params: ParamsOf<M>): Promise<ResultOf<M>>
 }
@@ -146,6 +148,15 @@ export const HEALTHY_TRAFFIC_MS = 5_000
  */
 export const HEALTH_CHECK_TIMEOUT_MS = 10_000
 
+/**
+ * Offered before this window's own protocol, `tastecode.<token>`: a server that
+ * does not check windows, such as an older build holding the port, answers with
+ * this one. Mirrors instanceProtocol in apps/server/src/server.ts.
+ */
+const UNCHECKED_PROTOCOL = 'tastecode'
+/** How often a window refused by another TasteCode's server looks for its own again. */
+export const REFUSED_SERVER_RETRY_MS = 5_000
+
 /** The server may have accepted a transmitted mutation before its reply was lost. */
 export class IndeterminateRequestError extends Error {
   override name = 'IndeterminateRequestError'
@@ -153,6 +164,10 @@ export class IndeterminateRequestError extends Error {
 
 class WebSocketTransport implements Transport {
   #url: string
+  /** Set when the desktop started this window's server; no other server is used. */
+  #ownProtocol: string | undefined
+  #serverRefused = false
+  #refusedListeners = new Set<(refused: boolean) => void>()
   #socket: WebSocket | undefined
   #pending = new Map<string, Pending>()
   /** Ids actually transmitted on the current socket — lost if it drops. */
@@ -182,8 +197,39 @@ class WebSocketTransport implements Transport {
   #sequenceGapListeners = new Set<(expected: number, received: number) => void>()
   #channelListeners = new Map<string, Set<(data: unknown) => void>>()
 
-  constructor(url: string) {
+  constructor(url: string, options: { ownServerToken?: string | undefined } = {}) {
     this.#url = url
+    this.#ownProtocol = options.ownServerToken ? `tastecode.${options.ownServerToken}` : undefined
+  }
+
+  onServerRefused(listener: (refused: boolean) => void): () => void {
+    this.#refusedListeners.add(listener)
+    return () => this.#refusedListeners.delete(listener)
+  }
+
+  #setServerRefused(refused: boolean): void {
+    if (this.#serverRefused === refused) return
+    this.#serverRefused = refused
+    for (const listener of this.#refusedListeners) listener(refused)
+  }
+
+  /**
+   * Another TasteCode's server holds the port, so this window's own could not
+   * start. Nothing is sent to it, and nothing it sends is applied; the window
+   * looks again, slowly, in case its own server comes up after all.
+   */
+  #refuseServer(socket: WebSocket): void {
+    this.#socket = undefined
+    socket.close()
+    this.#rejectInFlight()
+    this.#setServerRefused(true)
+    this.#clearReconnectTimer()
+    const state = this.#hasOpened ? 'reconnecting' : 'connecting'
+    this.#setState(state)
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = undefined
+      this.#open(state)
+    }, REFUSED_SERVER_RETRY_MS)
   }
 
   get state(): ConnectionState {
@@ -416,7 +462,9 @@ class WebSocketTransport implements Transport {
     // to ignore the one warning that actually matters.
     this.#lastSequence = 0
     this.#lastFrameAt = 0
-    const socket = new WebSocket(this.#url)
+    const socket = this.#ownProtocol
+      ? new WebSocket(this.#url, [UNCHECKED_PROTOCOL, this.#ownProtocol])
+      : new WebSocket(this.#url)
     this.#socket = socket
     this.#connectTimer = setTimeout(() => {
       if (this.#socket === socket && socket.readyState === WebSocket.CONNECTING)
@@ -428,6 +476,11 @@ class WebSocketTransport implements Transport {
       // must not flush the queue into a connection whose replies are dropped.
       if (this.#socket !== socket) return
       this.#clearConnectTimer()
+      if (this.#ownProtocol && socket.protocol !== this.#ownProtocol) {
+        this.#refuseServer(socket)
+        return
+      }
+      this.#setServerRefused(false)
       this.#hasOpened = true
       const queued = this.#queue.splice(0)
       this.#queuedBytes = 0

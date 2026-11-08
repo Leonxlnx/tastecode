@@ -74,6 +74,7 @@ type Bridge = {
   onOpenChat?: (listener: (chatId: string) => void) => () => void
   reportStartupMilestone?: (name: RendererStartupMilestone) => void
   edition?: unknown
+  ownServerToken?: unknown
   isDesktop: true
 }
 
@@ -179,6 +180,12 @@ export const canPreviewViewedImages = bridge?.previewViewedImage !== undefined
  */
 const edition = bridge?.edition
 export const buildEdition = edition === 'release' || edition === 'dev' ? edition : undefined
+/**
+ * Set when the desktop started this window's server: the transport accepts no
+ * other server on the port. Undefined in a browser or an unpackaged dev run.
+ */
+const token = bridge?.ownServerToken
+export const ownServerToken = typeof token === 'string' && token ? token : undefined
 
 export function reportStartupMilestone(name: RendererStartupMilestone): void {
   bridge?.reportStartupMilestone?.(name)

@@ -8,6 +8,7 @@ import {
   IndeterminateRequestError,
   parseIncomingFrame,
   parseResponseFrame,
+  REFUSED_SERVER_RETRY_MS,
   Transport,
   TRANSPORT_LIMITS,
 } from './transport.js'
@@ -37,8 +38,13 @@ class FakeSocket {
   onopen: (() => void) | null = null
   onmessage: ((event: { data: string }) => void) | null = null
   onclose: (() => void) | null = null
+  /** The subprotocol the server selected. */
+  protocol = ''
 
-  constructor(public url: string) {
+  constructor(
+    public url: string,
+    public protocols?: string | string[],
+  ) {
     FakeSocket.instances.push(this)
   }
 
@@ -80,6 +86,44 @@ const completedThreadEvent = (turnId: string) => ({
     status: 'completed' as const,
     error: null,
   },
+})
+
+describe('a window whose desktop started its server', () => {
+  it("uses no server that does not answer with this window's protocol", async () => {
+    const transport = new Transport('ws://127.0.0.1:4311', { ownServerToken: 'window-a' })
+    const refused: boolean[] = []
+    transport.onServerRefused?.((value) => refused.push(value))
+    transport.connect()
+    const pushes: unknown[] = []
+    transport.on('projects.changed', (data) => pushes.push(data))
+    const listing = transport.request('projects.list', {})
+    const other = FakeSocket.instances.at(-1)!
+    expect(other.protocols).toEqual(['tastecode', 'tastecode.window-a'])
+    // Another TasteCode's server, which does not check windows, picks the first one.
+    other.protocol = 'tastecode'
+    other.open()
+    other.onmessage?.({
+      data: JSON.stringify({ channel: 'projects.changed', sequence: 1, data: {} }),
+    })
+    expect(other.sent).toEqual([])
+    expect(pushes).toEqual([])
+    expect(refused).toEqual([true])
+    expect(transport.state).toBe('connecting')
+
+    // It looks for its own server again, slowly, and sends its request there.
+    vi.advanceTimersByTime(REFUSED_SERVER_RETRY_MS - 1)
+    expect(FakeSocket.instances).toHaveLength(1)
+    vi.advanceTimersByTime(1)
+    const own = FakeSocket.instances.at(-1)!
+    expect(own).not.toBe(other)
+    own.protocol = 'tastecode.window-a'
+    own.open()
+    expect(refused).toEqual([true, false])
+    const [frame] = userFrames(own).map((sent) => RequestFrameSchema.parse(JSON.parse(sent)))
+    own.onmessage?.({ data: JSON.stringify({ id: frame!.id, result: { projects: [] } }) })
+    await expect(listing).resolves.toEqual({ projects: [] })
+    transport.close()
+  })
 })
 
 describe('Transport', () => {

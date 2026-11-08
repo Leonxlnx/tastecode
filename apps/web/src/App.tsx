@@ -36,6 +36,7 @@ import {
   isDesktop,
   isMacOS,
   onNativeMenuAction,
+  ownServerToken,
   pickFolder,
   reportStartupMilestone,
   setDesktopTheme,
@@ -700,7 +701,9 @@ function replaceSourceRows(
 
 /** `transport` replaces the local server connection; the design sandbox passes one. */
 export function App({ transport: givenTransport }: { transport?: Transport } = {}) {
-  const [transport] = useState<Transport>(() => givenTransport ?? new Transport(SERVER_BASE_URL))
+  const [transport] = useState<Transport>(
+    () => givenTransport ?? new Transport(SERVER_BASE_URL, { ownServerToken }),
+  )
   // StrictMode replays effect cleanup against this same memoized instance.
   const usageController = useMemo(
     () => new UsageLimitsController((params) => transport.request('usage.summary', params)),
@@ -843,6 +846,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const [onboardingMounted, setOnboardingMounted] = useState(onboardingWanted)
   if (onboardingWanted && !onboardingMounted) setOnboardingMounted(true)
   const [offline, setOffline] = useState(false)
+  /** Another TasteCode's server holds the port; this window shows nothing from it. */
+  const [serverRefused, setServerRefused] = useState(false)
+  useEffect(() => transport.onServerRefused?.(setServerRefused), [transport])
   const [threadController] = useState(
     () =>
       new ThreadController(transport, {
@@ -8415,6 +8421,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         visible={offline && (settingsOpen || surface !== 'chat')}
       >
         <NoticeBody tone="progress">Reconnecting to the server…</NoticeBody>
+      </NoticePresence>
+
+      <NoticePresence className="notice" tone="error" role="alert" visible={serverRefused}>
+        <NoticeBody tone="error">
+          Another TasteCode is already running, so this window cannot reach its own server. Quit the
+          other TasteCode, then restart this one.
+        </NoticeBody>
       </NoticePresence>
 
       <NoticePresence
