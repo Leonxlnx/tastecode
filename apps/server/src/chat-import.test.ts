@@ -11,7 +11,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ChatImportService, importedThreadId, openCodeChatReader } from './chat-import.js'
 import { createT3CodeReader } from './chat-import-t3.js'
-import { ProviderHistory } from './provider-history.js'
+import { ProjectFolders, ProviderHistory, savedFolder } from './provider-history.js'
 import { Store } from './store.js'
 
 let root: string
@@ -35,6 +35,14 @@ function folder(name: string): string {
   const created = path.join(root, name)
   mkdirSync(created, { recursive: true })
   return created
+}
+
+/** The temporary folder is inside the home folder on Windows and outside it on macOS. */
+function homeLabel(folderPath: string): string {
+  const relative = path.relative(os.homedir(), folderPath)
+  return relative.startsWith('..') || path.isAbsolute(relative)
+    ? folderPath
+    : path.join('~', relative)
 }
 
 function session(id: string, workspacePath: string, title = id): ProviderHistorySession {
@@ -237,7 +245,7 @@ describe('chat import scan', () => {
       }),
     ])
     expect(scan.folders).toEqual([
-      { path: site, name: 'site', label: site, isProject: false, missing: false },
+      { path: site, name: 'site', label: homeLabel(site), isProject: false, missing: false },
     ])
   })
 
@@ -662,5 +670,132 @@ describe('OpenCode chats', () => {
     const id = importedThreadId('opencode', 'ses_one')
     expect(store.thread(id)).toMatchObject({ provider: 'opencode', providerSessionId: 'ses_one' })
     expect(store.threadNeedsHandover(id)).toBe(false)
+  })
+
+  it('files a folder saved with forward slashes under the spelling the other apps use', async () => {
+    const site = folder('site')
+    const opencode = folder('opencode')
+    const db = new DatabaseSync(path.join(opencode, 'opencode.db'))
+    db.exec(`
+      CREATE TABLE session_v2 (
+        id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT NOT NULL, title TEXT,
+        time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, time_archived INTEGER);
+      CREATE TABLE session_message (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL,
+        time_created INTEGER NOT NULL, data TEXT NOT NULL);
+    `)
+    // What OpenCode writes on Windows; elsewhere this is the folder unchanged.
+    db.prepare('INSERT INTO session_v2 VALUES (?, NULL, ?, ?, 1000, 2000, NULL)').run(
+      'ses_one',
+      site.replaceAll('\\', '/'),
+      'Fix the footer',
+    )
+    db.prepare('INSERT INTO session_message VALUES (?, ?, ?, ?, 1000, ?)').run(
+      'm1',
+      'ses_one',
+      'user',
+      1,
+      JSON.stringify({ text: 'Fix the footer' }),
+    )
+    db.close()
+
+    const { service: scanner, run } = await service({
+      opencode,
+      sessions: [session('one', site, 'Hero spacing')],
+    })
+    const scan = await scanner.scan()
+    expect(scan.chats.map(({ folder: saved }) => saved)).toEqual([site, site])
+    expect(scan.folders.map(({ path: saved }) => saved)).toEqual([site])
+    const job = await run(['opencode:ses_one', 'codex:one'])
+    expect(job.projects).toEqual([site])
+    expect(store.projects().map(({ path: saved }) => saved)).toEqual([site])
+  })
+})
+
+describe('saved folder spelling', () => {
+  it.runIf(process.platform === 'win32')(
+    'lists a Codex session saved under the long-path prefix in its folder',
+    async () => {
+      const site = folder('site')
+      const sessions = [session('one', site), session('two', `\\\\?\\${site}`)]
+      const { service: scanner, run } = await service({ sessions })
+      const scan = await scanner.scan()
+      expect(scan.folders.map(({ path: saved }) => saved)).toEqual([site])
+      const job = await run(['codex:one', 'codex:two'])
+      expect(job.projects).toEqual([site])
+      // Later work in Codex reaches the chat: its scan finds the project under that spelling.
+      sessions[1] = { ...sessions[1]!, title: 'Renamed in Codex', revision: '2' }
+      await history.refresh()
+      expect(store.thread('external:codex:two')?.title).toBe('Renamed in Codex')
+    },
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'keeps reaching a long-path chat whose folder is gone',
+    async () => {
+      // Gone folders have no file identity, so only the spelling can match them.
+      const gone = path.join(root, 'gone')
+      const sessions = [session('two', `\\\\?\\${gone}`)]
+      const { service: scanner, run } = await service({ sessions })
+      await scanner.scan()
+      const job = await run(['codex:two'])
+      expect(job.projects).toEqual([gone])
+      sessions[0] = { ...sessions[0]!, title: 'Renamed in Codex', revision: '2' }
+      await history.refresh()
+      expect(store.thread('external:codex:two')?.title).toBe('Renamed in Codex')
+    },
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'finds a project an earlier build saved with slashes once its folder is gone',
+    () => {
+      const gone = path.join(root, 'gone')
+      store.addProject(gone.replaceAll('\\', '/'))
+      expect(new ProjectFolders(store).project(gone)).toBe(gone.replaceAll('\\', '/'))
+      expect(new ProjectFolders(store).project(path.join(root, 'other'))).toBeUndefined()
+    },
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'files one folder once across drive case and a trailing separator',
+    async () => {
+      const site = folder('site')
+      const lower = `${site[0]!.toLowerCase()}${site.slice(1)}\\`
+      const { service: scanner, run } = await service({
+        sessions: [session('one', site), session('two', lower)],
+      })
+      const scan = await scanner.scan()
+      expect(scan.folders.map(({ path: saved }) => saved)).toEqual([site])
+      expect(new Set(scan.chats.map(({ folder: saved }) => saved))).toEqual(new Set([site]))
+      const job = await run(['codex:one', 'codex:two'])
+      expect(job.projects).toEqual([site])
+    },
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'continues a T3 Code chat on its Codex session when only the drive case differs',
+    async () => {
+      const site = folder('site')
+      const t3 = path.join(root, 't3')
+      t3Database(t3, [{ id: 'thread', folder: site, native: 'native-1' }])
+      const lower = `${site[0]!.toLowerCase()}${site.slice(1)}`
+      const { service: scanner } = await service({ sessions: [session('native-1', lower)], t3 })
+      const { chats } = await scanner.scan()
+      expect(chats).toEqual([
+        expect.objectContaining({ id: 't3-code:thread', continuation: 'session' }),
+      ])
+    },
+  )
+
+  it('gives each folder one spelling on Windows and leaves it alone elsewhere', () => {
+    expect(savedFolder('\\\\?\\E:\\work\\site', 'win32')).toBe('E:\\work\\site')
+    expect(savedFolder('\\\\?\\UNC\\server\\share\\site', 'win32')).toBe('\\\\server\\share\\site')
+    expect(savedFolder('E:/work/site', 'win32')).toBe('E:\\work\\site')
+    expect(savedFolder('E:\\work\\site', 'win32')).toBe('E:\\work\\site')
+    expect(savedFolder('e:\\work\\site\\', 'win32')).toBe('E:\\work\\site')
+    expect(savedFolder('e:\\', 'win32')).toBe('E:\\')
+    expect(savedFolder('\\\\server\\share\\', 'win32')).toBe('\\\\server\\share\\')
+    expect(savedFolder('/work/site', 'darwin')).toBe('/work/site')
+    expect(savedFolder('/work/site/', 'darwin')).toBe('/work/site/')
   })
 })
