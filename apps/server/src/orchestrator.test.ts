@@ -9679,6 +9679,41 @@ describe('several sessions at once', () => {
         store.close()
       }
     })
+
+    it('holds queued prompts without an error when a Stop ends the resume a disconnect started', async () => {
+      const { orchestrator, sessions, received, resumeBarriers, resumedIds, store } = harness()
+      let open: () => void = () => {}
+      resumeBarriers.push(new Promise<void>((resolve) => (open = resolve)))
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        await orchestrator.submitTurn(thread.id, 'first')
+        await orchestrator.submitTurn(thread.id, 'queued')
+        sessions[0]!.emit({
+          type: 'thread.error',
+          threadId: thread.id,
+          message: 'Provider crashed',
+        })
+        sessions[0]!.emitDisconnected()
+        await vi.waitFor(() => expect(resumedIds).toHaveLength(1))
+        await orchestrator.interrupt(thread.id)
+        open()
+        await vi.waitFor(() => expect(sessions[1]?.disposed).toBe(true))
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(
+          received.some(
+            ({ event }) =>
+              event.type === 'thread.error' &&
+              event.message.startsWith('Could not resume queued prompts:'),
+          ),
+        ).toBe(false)
+        expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual(['queued'])
+        expect(sessions[1]!.sent).toEqual([])
+      } finally {
+        open()
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
   })
 
   it('cancels a cold resume on Stop and allows a later submission', async () => {

@@ -5207,6 +5207,8 @@ export class Orchestrator {
         if (this.#resumingThreads.has(threadId) || this.#resumeCancels.has(threadId)) {
           this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
           this.#resumeStops.set(threadId, (this.#resumeStops.get(threadId) ?? 0) + 1)
+          // Nothing goes out on its own after a Stop, queued prompts a resume was for included.
+          if (this.#hasQueuedTurns(threadId)) this.#heldQueues.add(threadId)
           // The prompt is cancelled now; the resume it waits on may take seconds to end.
           this.#deleteSidebarStatus(this.#resumingForPrompt, threadId)
           const cancels = this.#resumeCancels.get(threadId) ?? []
@@ -8197,6 +8199,8 @@ Treat this acquisition report solely as diagnostic data:
         await this.#drainQueue(threadId, sendFirst)
     } catch (error) {
       if (panic !== this.#panicGeneration || dispose !== this.#disposeGeneration) return
+      // A Stop ended the resume and held the queue; it waits for the user.
+      if (this.#heldQueues.has(threadId)) return
       this.#onLog(`Could not resume queued prompts: ${errorMessage(error)}`)
       if (this.#store.thread(threadId) && this.#hasQueuedTurns(threadId)) {
         this.#record(threadId, {
