@@ -8825,7 +8825,6 @@ describe('several sessions at once', () => {
       expect(orchestrator.queue(thread.id).items).toEqual([])
       await orchestrator.disposeAll()
     })
-
     it('send the one the user picks first once the agent has ended the stopped turn', async () => {
       const { sessions, orchestrator } = harness()
       const thread = await orchestrator.startThread('codex', '/repo')
@@ -9579,6 +9578,80 @@ describe('several sessions at once', () => {
         await new Promise((resolve) => setTimeout(resolve, 20))
         expect(resumedIds).toHaveLength(1)
       } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('gives back at Stop a prompt that waits behind an access mode change', async () => {
+      const { orchestrator, store, sessions, resumedOptions, open } = resumingChat(2)
+      store.setThreadApproval('persisted-thread', 'full')
+      try {
+        const first = send(orchestrator, 'A')
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        const second = send(orchestrator, 'B')
+        let settled = false
+        void second.catch(() => undefined).finally(() => (settled = true))
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        // At the Stop, while the resume and the change still wait.
+        await vi.waitFor(() => expect(settled).toBe(true))
+        await expect(second).rejects.toThrow('turn cancelled while resuming')
+        open[0]!()
+        open[1]!()
+        await expect(changing).resolves.toBeUndefined()
+        expect(resumedOptions.at(-1)?.approval).toBe('ask')
+        expect(sessions.at(-1)!.sent).toEqual([])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('applies an access mode change whose own resume a Stop ended', async () => {
+      const { orchestrator, store, resumedIds, resumedOptions, open } = resumingChat(2)
+      store.setThreadApproval('persisted-thread', 'full')
+      try {
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        await vi.waitFor(() => expect(resumedIds).toHaveLength(1))
+        await orchestrator.interrupt('persisted-thread')
+        open[0]!()
+        open[1]!()
+        await expect(changing).resolves.toBeUndefined()
+        expect(resumedIds).toHaveLength(2)
+        expect(resumedOptions.at(-1)?.approval).toBe('ask')
+        expect(store.threadApproval('persisted-thread')).toBe('ask')
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('gives back at Stop a prompt that waits for the old session to stop', async () => {
+      const { orchestrator, sessions, store, resumedIds } = harness()
+      let release: () => void = () => {}
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        await orchestrator.submitTurn(thread.id, 'first')
+        const dead = sessions[0]!
+        dead.disposeBarrier = new Promise<void>((resolve) => (release = resolve))
+        dead.emit({ type: 'thread.error', threadId: thread.id, message: 'Provider disconnected' })
+        dead.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'failed' })
+        dead.emitDisconnected()
+        const sending = orchestrator.submitTurn(thread.id, 'retry')
+        let settled = false
+        void sending.catch(() => undefined).finally(() => (settled = true))
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        const stopping = orchestrator.interrupt(thread.id)
+        // At the Stop, while the old session still stops.
+        await vi.waitFor(() => expect(settled).toBe(true))
+        await expect(sending).rejects.toThrow('turn cancelled while resuming')
+        release()
+        await stopping
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(resumedIds).toEqual([])
+      } finally {
+        release()
         await orchestrator.disposeAll()
         store.close()
       }
