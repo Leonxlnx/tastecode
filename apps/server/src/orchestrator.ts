@@ -8188,6 +8188,7 @@ Treat this acquisition report solely as diagnostic data:
   ): Promise<void> {
     const panic = this.#panicGeneration
     const dispose = this.#disposeGeneration
+    let stops: number | undefined
     try {
       await stopped
       if (
@@ -8201,13 +8202,16 @@ Treat this acquisition report solely as diagnostic data:
         this.#store.thread(threadId)?.closedAt !== undefined
       )
         return
+      stops = this.#resumeStops.get(threadId) ?? 0
       await this.#ensureThread(threadId)
       if (panic === this.#panicGeneration && dispose === this.#disposeGeneration)
         await this.#drainQueue(threadId, sendFirst)
     } catch (error) {
       if (panic !== this.#panicGeneration || dispose !== this.#disposeGeneration) return
-      // A Stop ended the resume and held the queue; it waits for the user.
+      // A Stop ended the resume and held the queue; it waits for the user, or goes
+      // behind the prompt they sent since, which already released the hold.
       if (this.#heldQueues.has(threadId)) return
+      if (stops !== undefined && (this.#resumeStops.get(threadId) ?? 0) !== stops) return
       this.#onLog(`Could not resume queued prompts: ${errorMessage(error)}`)
       if (this.#store.thread(threadId) && this.#hasQueuedTurns(threadId)) {
         this.#record(threadId, {

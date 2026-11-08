@@ -9767,6 +9767,40 @@ describe('several sessions at once', () => {
       }
     })
 
+    it('shows no error when the user sends again before a stopped reconnect resume ends', async () => {
+      const { orchestrator, sessions, received, resumeBarriers, resumedIds, store } = harness()
+      let open: () => void = () => {}
+      resumeBarriers.push(new Promise<void>((resolve) => (open = resolve)))
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        await orchestrator.submitTurn(thread.id, 'first')
+        await orchestrator.submitTurn(thread.id, 'queued')
+        sessions[0]!.emit({
+          type: 'thread.error',
+          threadId: thread.id,
+          message: 'Provider crashed',
+        })
+        sessions[0]!.emitDisconnected()
+        await vi.waitFor(() => expect(resumedIds).toHaveLength(1))
+        await orchestrator.interrupt(thread.id)
+        const sending = orchestrator.submitTurn(thread.id, 'again')
+        open()
+        await expect(sending).resolves.toBeDefined()
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(
+          received.some(
+            ({ event }) =>
+              event.type === 'thread.error' &&
+              event.message.startsWith('Could not resume queued prompts:'),
+          ),
+        ).toBe(false)
+      } finally {
+        open()
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
     it('keeps queued prompts held when a prompt the Stop caught on its way arrives', async () => {
       const { orchestrator, sessions, received, resumeBarriers, resumedIds, store } = harness()
       let open: () => void = () => {}
