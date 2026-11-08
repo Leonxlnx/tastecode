@@ -112,12 +112,16 @@ export function validateTypographySelection(
       ? appDirectionTypefaces(appDirection)
       : Object.values(candidates).map((families) => families[0]),
   )
+  // The agent reads this as its correction, so it names what the agent can do. Only the user
+  // can name another typeface; anything the agent records itself does not count here.
+  const howToFix =
+    'Add its font file to the project and load it from there: a font file in the project is not a package or a build tool. Another typeface is allowed only when the user named it in the request or in the briefing answers.'
   for (const { family } of brand.typefaces) {
     if (allowed.has(family) || explicitlyRequestedTypeface(explicit, family)) continue
     throw new Error(
       appDirection
-        ? `Use the app sheet's typeface (${[...allowed].join(' or ')}) for ${family}, or record the explicit existing-brand requirement.`
-        : `Use a persisted first-draw typeface for ${family}, or record the explicit existing-brand requirement. Do not replace the random draw with a habitual font.`,
+        ? `Use the app sheet's typeface (${[...allowed].join(' or ')}) for ${family}. ${howToFix}`
+        : `"${family}" is not this run's first-draw typeface. Use the first drawn family of its category instead: sans "${candidates.sans[0]}", serif "${candidates.serif[0]}", display "${candidates.display[0]}" or mono "${candidates.mono[0]}". ${howToFix}`,
     )
   }
 }

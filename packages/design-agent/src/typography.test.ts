@@ -86,4 +86,36 @@ describe('typography draw', () => {
     brand.foundation.strategy = 'preserve'
     expect(() => validateTypographySelection(brief, brand, candidates)).not.toThrow()
   })
+
+  it('tells a run that chose a system font which drawn family to use instead', () => {
+    // A Haiku run read "no packages" as "no web fonts", chose Georgia and recorded that itself.
+    const candidates = selectTypographyCandidates(() => 0)
+    const brief = {
+      originalRequest:
+        'A one-page bakery site. One static index.html with inline CSS, no build tools, no packages.',
+      brandInputs: [],
+      explicitAnswers: [],
+    } as unknown as DesignBrief
+    const brand = {
+      foundation: {
+        strategy: 'create',
+        lockedDecisions: ['System font stack with no web font downloads, as the brief requires.'],
+      },
+      typefaces: [{ family: 'Georgia' }],
+    } as unknown as BrandSystem
+    let correction = ''
+    try {
+      validateTypographySelection(brief, brand, candidates)
+    } catch (error) {
+      correction = (error as Error).message
+    }
+    expect(correction).toContain(`serif "${candidates.serif[0]}"`)
+    expect(correction).toContain('a font file in the project is not a package or a build tool')
+    // The agent cannot make a typeface explicit by recording it; only the user can name one.
+    expect(correction).not.toContain('record the explicit')
+    expect(correction).toContain('only when the user named it')
+
+    brand.typefaces[0]!.family = candidates.serif[0]!
+    expect(() => validateTypographySelection(brief, brand, candidates)).not.toThrow()
+  })
 })
