@@ -615,6 +615,14 @@ imported turns by their original time and replaces stale partial client historie
 Provider files stay read-only. Local names, pins, project removal, and deletion remain local
 choices; a deleted chat or closed Side chat keeps an import marker, so a rescan does not bring
 it back. Cloud-only chats and missing native transcript files are outside this local reader.
+**Importing chats is a user's explicit step on top of that discovery.** The background scan
+still adds nothing outside projects. Settings lists every saved session, and what apps that are
+not history sources saved (T3 Code, OpenCode), through read-only readers that know one store
+each; a client picks ids from that scan and never sends a path. A chosen chat a provider can
+resume joins provider history as one conversation. Any other chat is copied in and marked for a
+handover, so its next prompt carries the transcript to a new session. A chat's folder becomes a
+project only here, and the folder's unchosen sessions keep the marker a removed copy has, so
+choosing one chat does not bring in the rest of the folder; they can still be imported later.
 Background rescans stay cheap: Codex reuses indexed transcript file stats for up to 60 seconds
 while its state index is unchanged, and Grok keeps a parsed session summary until the file's
 size or modification time changes.

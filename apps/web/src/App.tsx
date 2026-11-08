@@ -36,6 +36,7 @@ import {
   isDesktop,
   isMacOS,
   onNativeMenuAction,
+  ownServerToken,
   pickFolder,
   reportStartupMilestone,
   setDesktopTheme,
@@ -66,7 +67,7 @@ import { useAppUpdateInstallGate } from './app-update-install.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
 import { AppUpdateToast } from './ui/AppUpdateToast.js'
 import { NoticeBody } from './ui/Notice.js'
-import { IndeterminateRequestError, Transport } from './transport.js'
+import { IndeterminateRequestError, Transport, type MissingServer } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
 import {
   appendUserMessage,
@@ -700,7 +701,9 @@ function replaceSourceRows(
 
 /** `transport` replaces the local server connection; the design sandbox passes one. */
 export function App({ transport: givenTransport }: { transport?: Transport } = {}) {
-  const [transport] = useState<Transport>(() => givenTransport ?? new Transport(SERVER_BASE_URL))
+  const [transport] = useState<Transport>(
+    () => givenTransport ?? new Transport(SERVER_BASE_URL, { ownServerToken }),
+  )
   // StrictMode replays effect cleanup against this same memoized instance.
   const usageController = useMemo(
     () => new UsageLimitsController((params) => transport.request('usage.summary', params)),
@@ -843,6 +846,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const [onboardingMounted, setOnboardingMounted] = useState(onboardingWanted)
   if (onboardingWanted && !onboardingMounted) setOnboardingMounted(true)
   const [offline, setOffline] = useState(false)
+  /** This window works without its own server; it shows nothing from another app's. */
+  const [missingServer, setMissingServer] = useState<MissingServer | undefined>()
+  useEffect(() => transport.onMissingServer?.(setMissingServer), [transport])
   const [threadController] = useState(
     () =>
       new ThreadController(transport, {
@@ -6809,6 +6815,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     },
   )
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  const openChatFromSettings = useCallback(
+    (threadId: string) => {
+      setSettingsOpen(false)
+      void selectSession(threadId)
+    },
+    [selectSession],
+  )
   // Settings covers the window with an opaque page. Once its fade-in has
   // finished, the app behind it cannot be seen, so the app's endless loops (a
   // working chat's spinner, the live activity row) pause until it closes
@@ -8269,6 +8282,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
               onReset={resetSettings}
               onForceOnboarding={forceOnboarding}
               onClose={closeSettings}
+              onOpenChat={openChatFromSettings}
             />
           </SurfaceErrorBoundary>
         </div>
@@ -8407,6 +8421,14 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         visible={offline && (settingsOpen || surface !== 'chat')}
       >
         <NoticeBody tone="progress">Reconnecting to the server…</NoticeBody>
+      </NoticePresence>
+
+      <NoticePresence className="notice" tone="error" role="alert" visible={Boolean(missingServer)}>
+        <NoticeBody tone="error">
+          {missingServer === 'gone'
+            ? "This window's TasteCode server has stopped. Restart TasteCode to continue."
+            : 'Another TasteCode is already running, so this window cannot reach its own server. Quit the other TasteCode, then restart this one.'}
+        </NoticeBody>
       </NoticePresence>
 
       <NoticePresence

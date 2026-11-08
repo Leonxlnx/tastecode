@@ -66,6 +66,8 @@ import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envel
 import { createHistoryResponseProjector } from './history-response.js'
 import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
+import { ChatImportService, openCodeChatReader } from './chat-import.js'
+import { createT3CodeReader } from './chat-import-t3.js'
 import { ProviderHistory } from './provider-history.js'
 import { HistoryRefreshSchedule } from './history-refresh-schedule.js'
 import { STREAM_QUIET_BACKGROUND_WAIT_MS, StreamQuiet } from './stream-quiet.js'
@@ -144,6 +146,11 @@ export function startServer(
     port?: number
     host?: string
     accessToken?: string | undefined
+    /**
+     * Set by the desktop for the server it owns, and removed from the
+     * environment by the entry point: only its own window is admitted.
+     */
+    instanceToken?: string | undefined
     rendererOrigin?: string
     /** Resolved by the entry point, which also removes it from the environment. */
     feedback?: FeedbackConfig
@@ -165,9 +172,20 @@ export function startServer(
     throw error
   }
   restoreProviderExecutablePaths(store)
+  const ownWindow = options.instanceToken ? instanceProtocol(options.instanceToken) : undefined
   let wss: WebSocketServer
   try {
-    wss = new WebSocketServer({ port, host })
+    wss = new WebSocketServer({
+      port,
+      host,
+      // Another window's handshake still completes, so it hears why it is closed.
+      ...(ownWindow
+        ? {
+            handleProtocols: (offered: Set<string>) =>
+              offered.has(ownWindow) ? ownWindow : (offered.values().next().value ?? false),
+          }
+        : {}),
+    })
   } catch (error) {
     try {
       store.close()
@@ -412,6 +430,7 @@ export function startServer(
   const historySources = [
     {
       provider: 'codex',
+      name: 'Codex',
       load: async (accountHome?: string) =>
         (await import('@harness/adapter-codex')).createCodexHistorySource(
           accountHome === undefined ? {} : { codexHome: accountHome },
@@ -419,6 +438,7 @@ export function startServer(
     },
     {
       provider: 'claude-code',
+      name: 'Claude Code',
       load: async (accountHome?: string) =>
         (await import('@harness/adapter-claude-code')).createClaudeHistorySource(
           accountHome === undefined ? {} : { configDir: accountHome },
@@ -426,6 +446,7 @@ export function startServer(
     },
     {
       provider: 'grok',
+      name: 'Grok',
       load: async (accountHome?: string) =>
         (await import('@harness/adapter-grok')).createGrokHistorySource(
           accountHome === undefined ? {} : { root: accountHome },
@@ -433,6 +454,7 @@ export function startServer(
     },
   ] satisfies Array<{
     provider: ProviderId
+    name: string
     load(accountHome?: string): Promise<ProviderHistorySource>
   }>
   /** Why a source failed to load, keyed by the id prefix of the chats it imports. */
@@ -595,6 +617,28 @@ export function startServer(
     if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
   }
 
+  const chatImport = new ChatImportService({
+    store,
+    history: () => {
+      startBackgroundWork()
+      return providerHistory ?? Promise.reject(new Error('Provider history is closed'))
+    },
+    providerNames: new Map(historySources.map(({ provider, name }) => [provider, name])),
+    readers: [
+      createT3CodeReader({
+        attachmentsDir: path.join(path.dirname(databasePath), 'imported-attachments'),
+      }),
+      openCodeChatReader(),
+    ],
+    changed: (threadIds) => {
+      lifecycleScheduler.changed()
+      push.broadcast('providerHistory.changed', { threadIds })
+      announceListChange()
+    },
+    progress: (job) => push.broadcast('chatImport.progress', job),
+    log: (message) => console.log(`[import] ${message}`),
+  })
+
   function historyProvider(threadId: string): ProviderId | undefined {
     const imported = /^external:([^:]+):/.exec(threadId)?.[1]
     if (imported === undefined) return store.thread(threadId)?.provider
@@ -611,6 +655,11 @@ export function startServer(
     }
     if (!hasAccess(request.url, options.accessToken)) {
       socket.close(1008, 'Access denied')
+      return
+    }
+    // Another TasteCode's window, whose own server could not take the port.
+    if (ownWindow && socket.protocol !== ownWindow) {
+      socket.close(1008, 'Another TasteCode window')
       return
     }
     acceptConnection(socket, (message, closed) => {
@@ -1321,6 +1370,15 @@ export function startServer(
         })
       }
 
+      case 'chatImport.scan':
+        parseParams(method, params)
+        return chatImport.scan()
+
+      case 'chatImport.start': {
+        const p = parseParams(method, params)
+        return chatImport.start(p.chats)
+      }
+
       case 'projects.add': {
         const p = parseParams(method, params)
         const project = store.addProject(p.path, p.name)
@@ -1906,6 +1964,7 @@ export function startServer(
       // Terminal jobs get a fixed shutdown budget; waiting on provider history
       // first would spend it. disposeAll below waits for the same close.
       void orchestrator.closeAllTerminals().catch(() => undefined)
+      chatImport.close()
       await providerHistory?.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
       usageHistoryClosing = true
@@ -2086,6 +2145,16 @@ export function hasAccess(requestUrl: string | undefined, expected: string | und
   return (
     expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes)
   )
+}
+
+/**
+ * The subprotocol that proves a window and the desktop-owned server belong
+ * together. The window offers `tastecode` first: a server without this check,
+ * such as an older build that holds the port, selects that one, and the window
+ * refuses it. Mirrored in apps/web/src/transport.ts.
+ */
+export function instanceProtocol(token: string): string {
+  return `tastecode.${token}`
 }
 
 export function assertSafeBind(host: string, accessToken: string | undefined): void {

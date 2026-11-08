@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
@@ -232,8 +232,9 @@ describe('audit integration regressions', () => {
     await orchestrator.panicStop()
     resume.release()
     await rejected
+    // Stop all rejects the waiting prompt at once; the session it resumed stops as its resume ends.
+    await vi.waitFor(() => expect(sessions[0]!.stopped).toBe(true))
     expect(sessions[0]!.sent).toBe(0)
-    expect(sessions[0]!.stopped).toBe(true)
     expect(store.queuedTurns('saved')).toEqual([])
   })
 

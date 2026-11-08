@@ -58,6 +58,13 @@ const OPENCODE_DEFAULT_VARIANT = 'default'
  * failed three of four such starts, each of which then had to be killed.
  */
 export const OPENCODE_SERVER_START_TIMEOUT_MS = 30_000
+/**
+ * `opencode serve` answers v1's `/session/status` only once its first instance
+ * has loaded: 3.1 and 5.7 s after it printed its URL with the CPU at 100%
+ * (1.18.13), while v2's health check answered within 0.1 s. The old 1.5 s
+ * limit then chose v2, which that version refuses for every prompt.
+ */
+const OPENCODE_PROTOCOL_PROBE_TIMEOUT_MS = 30_000
 
 function applyOpenCodeTurnOptions(
   current: OpenCodeTurnOptions,
@@ -210,6 +217,25 @@ const OpenCodeV2AgentSchema = z.object({
 })
 const AgentEnvelopeSchema = z.object({ data: z.array(OpenCodeV2AgentSchema) })
 const HealthSchema = z.object({ healthy: z.boolean() })
+/** A refused v2 request's body, as 1.18.13 sends it (fixtures/). */
+const V2RefusalSchema = z.object({ message: z.string() })
+
+/** A v2 request OpenCode refused, with its own reason when it gave one. */
+class OpenCodeV2RequestError extends Error {
+  readonly reason: string | undefined
+
+  constructor(status: number, reason: string | undefined) {
+    super(`OpenCode v2 request failed (${status})${reason ? `: ${reason}` : ''}`)
+    this.reason = reason
+  }
+}
+
+async function v2RequestError(response: Response): Promise<OpenCodeV2RequestError> {
+  const refusal = V2RefusalSchema.safeParse(await response.json().catch(() => undefined))
+  // "Missing key\n  at [\"prompt\"]" reads as one line in a chat error.
+  const reason = refusal.success ? refusal.data.message.replace(/\s+/g, ' ').trim() : undefined
+  return new OpenCodeV2RequestError(response.status, reason || undefined)
+}
 const PermissionAskedDataSchema = z.object({
   id: z.string(),
   action: z.string().optional(),
@@ -507,7 +533,9 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
     })
     if (this.#protocol === 'v2') {
-      void this.#sendV2Turn(text, turnId, attachments).catch(() => this.#failTurn(turnId))
+      void this.#sendV2Turn(text, turnId, attachments).catch((error: unknown) =>
+        this.#failTurn(turnId, error instanceof OpenCodeV2RequestError ? error.reason : undefined),
+      )
       return turnId
     }
     const variant =
@@ -868,19 +896,21 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
    * clients drive. opencode 1.18.31 also answers v2's health check, but its v2
    * session engine admits a prompt without ever running it ("Session wait is
    * not available yet") and its v2 catalog lists no models, so v2 is only for
-   * a server that has dropped v1.
+   * a server that has dropped v1: one that answers v1's probe with a refusal.
    */
   async #detectProtocol(): Promise<OpenCodeProtocol> {
     const headers = this.#authorization ? { authorization: this.#authorization } : {}
     try {
       const v1 = await fetch(new URL('/session/status', this.#baseUrl), {
         headers,
-        signal: AbortSignal.timeout(1500),
+        signal: AbortSignal.timeout(OPENCODE_PROTOCOL_PROBE_TIMEOUT_MS),
       })
       await v1.body?.cancel()
       if (v1.ok) return 'v1'
     } catch {
-      // A server that does not answer at all is asked about v2 next.
+      // No answer says nothing about v1: a server still loading answers v2's
+      // health check long before it, so that check cannot decide here.
+      return 'v1'
     }
     try {
       const response = await fetch(new URL('/api/health', this.#baseUrl), {
@@ -900,7 +930,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     if (this.#authorization) headers.set('authorization', this.#authorization)
     if (init.body !== undefined) headers.set('content-type', 'application/json')
     const response = await fetch(new URL(path, this.#baseUrl), { ...init, headers })
-    if (!response.ok) throw new Error(`OpenCode v2 request failed (${response.status})`)
+    if (!response.ok) throw await v2RequestError(response)
     if (response.status === 204) return undefined
     return response.json()
   }

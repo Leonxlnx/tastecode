@@ -74,6 +74,7 @@ type Bridge = {
   onOpenChat?: (listener: (chatId: string) => void) => () => void
   reportStartupMilestone?: (name: RendererStartupMilestone) => void
   edition?: unknown
+  ownServerToken?: unknown
   isDesktop: true
 }
 
@@ -101,7 +102,8 @@ declare global {
 
 export type ZoomAction = 'in' | 'out' | 'reset'
 /** A Browser key pressed inside a Browser tab's page. Mirrors apps/desktop/src/browser-shortcuts.ts. */
-export type BrowserShortcutAction = 'back' | 'forward' | 'reload' | 'address' | 'close'
+export type BrowserShortcutAction =
+  'back' | 'forward' | 'reload' | 'hardReload' | 'address' | 'close'
 type AppTheme = 'light' | 'dark'
 export type AppThemePreference = AppTheme | 'system'
 export type NativeHapticPattern = 'alignment' | 'generic'
@@ -178,6 +180,12 @@ export const canPreviewViewedImages = bridge?.previewViewedImage !== undefined
  */
 const edition = bridge?.edition
 export const buildEdition = edition === 'release' || edition === 'dev' ? edition : undefined
+/**
+ * Set when the desktop started this window's server: the transport accepts no
+ * other server on the port. Undefined in a browser or an unpackaged dev run.
+ */
+const token = bridge?.ownServerToken
+export const ownServerToken = typeof token === 'string' && token ? token : undefined
 
 export function reportStartupMilestone(name: RendererStartupMilestone): void {
   bridge?.reportStartupMilestone?.(name)

@@ -32,6 +32,7 @@ import {
 } from './runtime-loader.js'
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import os from 'node:os'
 import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
@@ -81,6 +82,7 @@ import {
   designPhaseNotice,
   isProviderSessionMissing,
   mapProviderSession,
+  DESIGN_FOLLOW_UP_NOTICE,
   RESTORE_CONTEXT_NOTICE,
   StartupCleanupError,
 } from './provider-session.js'
@@ -280,6 +282,8 @@ type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
 type QueueDrain = { queueId: string; completedTurnId?: string }
 type TurnStartBarrier = { done: Promise<void>; release: () => void; turnCompleted?: boolean }
+/** How a prompt still on its way to its session hears a Stop; set once it starts listening. */
+type PromptStopListener = { cancel?: (error: Error) => void; cancelled?: Promise<never> }
 /** A turn Stop already ended for the user, while its agent has not reported its end yet. */
 type SettlingStop = {
   turnId: string
@@ -866,6 +870,14 @@ export class Orchestrator {
   #stoppingPreviewHandles = new WeakSet<RunningPreview>()
   #unstoppedDesignPreviews = new Map<string, RunningPreview[]>()
   #resumingThreads = new Map<string, Promise<void>>()
+  /** The runtime generation each resume started in; a Stop moves the thread past it. */
+  #resumeGenerations = new Map<string, number>()
+  /** Prompts waiting on a resume, rejected at once by a Stop. */
+  #resumeCancels = new Map<string, Array<(error: Error) => void>>()
+  /** Stops that came while a chat resumed, counted per chat. */
+  #resumeStops = new Map<string, number>()
+  /** The resume Stops a prompt on its way had seen when it was sent. */
+  #submissionStops = new AsyncLocalStorage<{ threadId: string; stops: number }>()
   /** Chats whose provider session is being replaced; nothing may start a turn meanwhile. */
   #changingProvider = new Set<string>()
   /**
@@ -3303,9 +3315,7 @@ export class Orchestrator {
           unreadSubagents !== undefined ||
           this.#store.threadNeedsRestoreContext(threadId)) &&
         (await this.#isProviderCommand(threadId, entry, text))
-      const ownPrompt = brief
-        ? `This is an ordinary user turn, not an active TasteCode Design phase. Earlier phase-only JSON protocols no longer apply. Follow the current request normally and explain your work in normal prose, unless the user explicitly requests structured data. If asked to launch a preview, perform the launch on an available local port and report its URL instead of returning a preview-plan JSON object.\n\nUser request:\n${text}`
-        : text
+      const ownPrompt = brief ? `${DESIGN_FOLLOW_UP_NOTICE}${text}` : text
       const prompt = unreadSubagents ? `${unreadSubagents.text}${ownPrompt}` : ownPrompt
       const sent = command
         ? text
@@ -3396,7 +3406,15 @@ export class Orchestrator {
   trackSubmission<T>(threadId: string, submit: () => Promise<T>): Promise<T> {
     let submission: Promise<T>
     try {
-      submission = submit()
+      // The server's own tracking wraps submitTurn's; the prompt was sent under the outer one.
+      const outer = this.#submissionStops.getStore()
+      submission =
+        outer?.threadId === threadId
+          ? submit()
+          : this.#submissionStops.run(
+              { threadId, stops: this.#resumeStops.get(threadId) ?? 0 },
+              submit,
+            )
     } catch (error) {
       return Promise.reject(error instanceof Error ? error : new Error(String(error)))
     }
@@ -3422,23 +3440,64 @@ export class Orchestrator {
     const panicGeneration = this.#panicGeneration
     const disposeGeneration = this.#disposeGeneration
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
+    const tracked = this.#submissionStops.getStore()
+    const sentUnder =
+      tracked?.threadId === threadId ? tracked.stops : (this.#resumeStops.get(threadId) ?? 0)
+    // A prompt that was on its way when a Stop came while the chat resumed goes with it.
+    const stoppedOnTheWay = () => {
+      if ((this.#resumeStops.get(threadId) ?? 0) !== sentUnder)
+        throw new Error('turn cancelled while resuming')
+    }
+    // At once, before it waits for anything, and without releasing what the Stop held.
+    stoppedOnTheWay()
     // The user is writing again after a Stop: what they queued before it may go, in order.
     this.#heldQueues.delete(threadId)
     if (this.#changingProvider.has(threadId)) {
       throw new Error('This chat is moving to another provider. Send again once it has moved.')
     }
-    const approvalChange = this.#approvalChanges.get(threadId)
-    if (approvalChange) await approvalChange.catch(() => undefined)
-    // A resume can take many seconds. The chat shows the prompt starting from
-    // the moment it was sent, not only once the provider session is back.
-    // From there, the turn start (or the queue) that follows sets its status.
-    const resuming = !this.#threads.has(threadId)
-    const sentAt = Date.now()
-    if (resuming) this.#addSidebarStatus(this.#resumingForPrompt, threadId)
+    // A Stop while the session resumes cancels this prompt at once; the resume
+    // itself can take 10-15 s more to wind down, and the chat must not wait for it.
+    // So does a Stop while it waits for an access mode change to the chat first.
+    const stop: PromptStopListener = {}
+    const listenForStop = () => {
+      if (stop.cancelled || this.#threads.has(threadId)) return
+      stop.cancelled = new Promise<never>((_resolve, reject) => {
+        stop.cancel = reject
+      })
+      this.#resumeCancels.set(threadId, [
+        ...(this.#resumeCancels.get(threadId) ?? []),
+        stop.cancel!,
+      ])
+    }
+    let sentAt = 0
+    let resuming = false
     try {
-      await this.#ensureThread(threadId, options)
+      const approvalChange = this.#approvalChanges.get(threadId)
+      if (approvalChange) {
+        listenForStop()
+        const changed = approvalChange.catch(() => undefined)
+        await (stop.cancelled ? Promise.race([changed, stop.cancelled]) : changed)
+      }
+      stoppedOnTheWay()
+      // A resume can take many seconds. The chat shows the prompt starting from
+      // the moment it was sent, not only once the provider session is back.
+      // From there, the turn start (or the queue) that follows sets its status.
+      resuming = !this.#threads.has(threadId)
+      sentAt = Date.now()
+      if (resuming) this.#addSidebarStatus(this.#resumingForPrompt, threadId)
+      listenForStop()
+      const ensured = this.#ensureThread(threadId, options)
+      await (stop.cancelled ? Promise.race([ensured, stop.cancelled]) : ensured)
+      stoppedOnTheWay()
     } finally {
       if (resuming) this.#deleteSidebarStatus(this.#resumingForPrompt, threadId)
+      if (stop.cancel) {
+        const rest = (this.#resumeCancels.get(threadId) ?? []).filter(
+          (item) => item !== stop.cancel,
+        )
+        if (rest.length) this.#resumeCancels.set(threadId, rest)
+        else this.#resumeCancels.delete(threadId)
+      }
     }
     if (panicGeneration !== this.#panicGeneration || disposeGeneration !== this.#disposeGeneration)
       throw new Error('turn cancelled by panic stop or shutdown')
@@ -3564,7 +3623,26 @@ export class Orchestrator {
       !this.#activeTurns.has(threadId) &&
       !this.isTurnRunning(threadId)
     ) {
+      // A Stop or Stop all while it waits wins, as it does for a prompt the user sends.
+      const stops = this.#resumeStops.get(threadId) ?? 0
+      const panicGeneration = this.#panicGeneration
+      const disposeGeneration = this.#disposeGeneration
+      const stoppedMeanwhile = () => {
+        if (
+          this.#panicStopping ||
+          panicGeneration !== this.#panicGeneration ||
+          disposeGeneration !== this.#disposeGeneration
+        )
+          throw new Error('turn cancelled by panic stop or shutdown')
+        if ((this.#resumeStops.get(threadId) ?? 0) !== stops)
+          throw new Error('turn cancelled while resuming')
+      }
+      // An access mode change resumes the chat itself, in its new mode.
+      const approvalChange = this.#approvalChanges.get(threadId)
+      if (approvalChange) await approvalChange.catch(() => undefined)
+      stoppedMeanwhile()
       await this.#ensureThread(threadId)
+      stoppedMeanwhile()
       return this.#sendHeldQueuedTurn(threadId, queuedTurnId)
     }
     const session = this.#get(threadId).session
@@ -5049,10 +5127,13 @@ export class Orchestrator {
    * adapter supports it.
    */
   async setThreadApproval(threadId: string, approval: ApprovalMode): Promise<void> {
+    this.#refuseApprovalDuringMove(threadId)
     const previous = this.#approvalChanges.get(threadId)
+    // A Stop all or shutdown after this request cancels a resume it would start.
+    const asked = { panic: this.#panicGeneration, dispose: this.#disposeGeneration }
     const changing = (async () => {
       await previous?.catch(() => undefined)
-      await this.#applyThreadApproval(threadId, approval)
+      await this.#applyThreadApproval(threadId, approval, asked)
     })()
     this.#approvalChanges.set(threadId, changing)
     try {
@@ -5062,8 +5143,30 @@ export class Orchestrator {
     }
   }
 
-  async #applyThreadApproval(threadId: string, approval: ApprovalMode): Promise<void> {
-    await this.#resumingThreads.get(threadId)
+  async #applyThreadApproval(
+    threadId: string,
+    approval: ApprovalMode,
+    asked: { panic: number; dispose: number },
+  ): Promise<void> {
+    // Wait out every resume, a prompt's own after a Stop included: one that started from
+    // the old mode attaches first and then gets this one, like any attached session.
+    for (
+      let resuming = this.#resumingThreads.get(threadId);
+      resuming;
+      resuming = this.#resumingThreads.get(threadId)
+    ) {
+      // Its own cleanup forgets its generation before the wait below ends.
+      const resumeGeneration = this.#resumeGenerations.get(threadId)
+      try {
+        await resuming
+      } catch (error) {
+        // A resume a Stop cancelled, before or during this wait, ends on its own; the
+        // change then resumes afresh. A resume that fails for a real reason still fails it.
+        if (resumeGeneration === (this.#runtimeGenerations.get(threadId) ?? 0)) throw error
+      }
+    }
+    // A move may have begun while this change waited behind another one.
+    this.#refuseApprovalDuringMove(threadId)
     const previous = this.#threadApprovals.get(threadId)
     const hadPrevious = this.#threadApprovals.has(threadId)
     try {
@@ -5083,6 +5186,8 @@ export class Orchestrator {
           attached.session.setApproval!(approval),
         )
       } else {
+        if (asked.panic !== this.#panicGeneration || asked.dispose !== this.#disposeGeneration)
+          throw new Error('access mode change cancelled by panic stop or shutdown')
         await this.#ensureThread(threadId)
       }
       this.#store.setThreadApproval(threadId, approval)
@@ -5090,6 +5195,15 @@ export class Orchestrator {
       if (hadPrevious) this.#threadApprovals.set(threadId, previous!)
       else this.#threadApprovals.delete(threadId)
       throw error
+    }
+  }
+
+  /** A move starts its session in the mode it was given; a change meanwhile would be lost. */
+  #refuseApprovalDuringMove(threadId: string): void {
+    if (this.#changingProvider.has(threadId)) {
+      throw new Error(
+        'This chat is moving to another provider. Choose the mode again once it has moved.',
+      )
     }
   }
 
@@ -5111,10 +5225,18 @@ export class Orchestrator {
       if (!this.#threads.has(threadId)) {
         // A persisted thread is not attached until resume resolves. Invalidate
         // that resume so its pending submission cannot run after the user stops it.
-        if (this.#resumingThreads.has(threadId)) {
+        // A prompt that waits to resume, behind an access mode change or for the
+        // old session to stop, goes the same way.
+        if (this.#resumingThreads.has(threadId) || this.#resumeCancels.has(threadId)) {
           this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
+          this.#resumeStops.set(threadId, (this.#resumeStops.get(threadId) ?? 0) + 1)
+          // Nothing goes out on its own after a Stop, queued prompts a resume was for included.
+          if (this.#hasQueuedTurns(threadId)) this.#heldQueues.add(threadId)
           // The prompt is cancelled now; the resume it waits on may take seconds to end.
           this.#deleteSidebarStatus(this.#resumingForPrompt, threadId)
+          const cancels = this.#resumeCancels.get(threadId) ?? []
+          this.#resumeCancels.delete(threadId)
+          for (const cancel of cancels) cancel(new Error('turn cancelled while resuming'))
           return
         }
         if (incoming.length === 0) return
@@ -5308,6 +5430,13 @@ export class Orchestrator {
     )
     this.#panicStopping = true
     this.#panicGeneration += 1
+    // A resume under way ends with the Stop all, as at a chat's own Stop: what the
+    // user asks after it waits that resume out and resumes afresh.
+    for (const threadId of this.#resumingThreads.keys()) {
+      this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
+      this.#resumeStops.set(threadId, (this.#resumeStops.get(threadId) ?? 0) + 1)
+    }
+    this.#cancelResumingPrompts('turn cancelled by panic stop')
     // Every sub-agent ends as stopped; the busy chats below include theirs.
     this.#subagents.release()
     try {
@@ -5696,6 +5825,7 @@ export class Orchestrator {
 
   async disposeAll(): Promise<void> {
     this.#disposeGeneration += 1
+    this.#cancelResumingPrompts('turn cancelled by panic stop or shutdown')
     // Their git runs work in the checkouts.
     await Promise.allSettled(this.#turnDiffBuilds.values())
     this.#subagents.dispose()
@@ -5777,6 +5907,8 @@ export class Orchestrator {
     this.#designOutputErrors.clear()
     this.#designActivityItems.clear()
     this.#resumingThreads.clear()
+    this.#resumeGenerations.clear()
+    this.#resumeCancels.clear()
     this.#inboxProjections.clear()
     this.#inboxProjectionsLoaded = false
     this.#staleInboxProjectionThreads.clear()
@@ -5851,20 +5983,61 @@ export class Orchestrator {
   }
 
   /** `turnOptions` are the model options of the turn that needs the runtime, if any. */
-  async #ensureThread(threadId: string, turnOptions: TurnOptions = {}): Promise<void> {
-    if (this.#stoppingSessions.has(threadId)) await this.#stopThreadProvider(threadId)
-    if (this.#threads.has(threadId)) return
-    const existing = this.#resumingThreads.get(threadId)
-    if (existing) return existing
-
-    const pending = this.#resumeThread(threadId, turnOptions).finally(() => {
-      if (this.#resumingThreads.get(threadId) === pending) this.#resumingThreads.delete(threadId)
-      this.#pruneIdleThreadRuntimes()
-    })
-    this.#resumingThreads.set(threadId, pending)
-    return pending
+  /** Rejects every prompt waiting on a resume now, not once its resume has ended. */
+  #cancelResumingPrompts(message: string): void {
+    const waiting = [...this.#resumeCancels.values()].flat()
+    this.#resumeCancels.clear()
+    for (const cancel of waiting) cancel(new Error(message))
   }
 
+  async #ensureThread(threadId: string, turnOptions: TurnOptions = {}): Promise<void> {
+    // What this caller may still resume for; a later Stop, Stop all or shutdown cancels it.
+    const callerGeneration = this.#runtimeGenerations.get(threadId) ?? 0
+    const panicGeneration = this.#panicGeneration
+    const disposeGeneration = this.#disposeGeneration
+    // One frame for every wait, so callers that waited out a cancelled resume take
+    // the next one in the order they came.
+    let waited = false
+    for (;;) {
+      if (this.#stoppingSessions.has(threadId)) {
+        await this.#stopThreadProvider(threadId)
+        waited = true
+      }
+      // Whatever happened during a wait decides before anything resumes.
+      if (waited) {
+        // A resume now would attach the session the chat leaves. First, as the move
+        // itself may have ended this caller's generation.
+        if (this.#changingProvider.has(threadId))
+          throw new Error('This chat is moving to another provider. Send again once it has moved.')
+        if (
+          panicGeneration !== this.#panicGeneration ||
+          disposeGeneration !== this.#disposeGeneration
+        )
+          throw new Error('turn cancelled by panic stop or shutdown')
+        if ((this.#runtimeGenerations.get(threadId) ?? 0) !== callerGeneration)
+          throw new Error('turn cancelled while resuming')
+      }
+      if (this.#threads.has(threadId)) return
+      const generation = this.#runtimeGenerations.get(threadId) ?? 0
+      const existing = this.#resumingThreads.get(threadId)
+      if (!existing) {
+        const pending = this.#resumeThread(threadId, turnOptions).finally(() => {
+          if (this.#resumingThreads.get(threadId) === pending) {
+            this.#resumingThreads.delete(threadId)
+            this.#resumeGenerations.delete(threadId)
+          }
+          this.#pruneIdleThreadRuntimes()
+        })
+        this.#resumingThreads.set(threadId, pending)
+        this.#resumeGenerations.set(threadId, generation)
+        return pending
+      }
+      if (this.#resumeGenerations.get(threadId) === generation) return existing
+      // A Stop cancelled that resume. It winds down on its own; this one follows it.
+      await existing.catch(() => undefined)
+      waited = true
+    }
+  }
   async #resumeThread(threadId: string, turnOptions: TurnOptions): Promise<void> {
     const generation = this.#runtimeGenerations.get(threadId) ?? 0
     const disposeGeneration = this.#disposeGeneration
@@ -8031,6 +8204,7 @@ Treat this acquisition report solely as diagnostic data:
   ): Promise<void> {
     const panic = this.#panicGeneration
     const dispose = this.#disposeGeneration
+    let stops: number | undefined
     try {
       await stopped
       if (
@@ -8044,11 +8218,16 @@ Treat this acquisition report solely as diagnostic data:
         this.#store.thread(threadId)?.closedAt !== undefined
       )
         return
+      stops = this.#resumeStops.get(threadId) ?? 0
       await this.#ensureThread(threadId)
       if (panic === this.#panicGeneration && dispose === this.#disposeGeneration)
         await this.#drainQueue(threadId, sendFirst)
     } catch (error) {
       if (panic !== this.#panicGeneration || dispose !== this.#disposeGeneration) return
+      // A Stop ended the resume and held the queue; it waits for the user, or goes
+      // behind the prompt they sent since, which already released the hold.
+      if (this.#heldQueues.has(threadId)) return
+      if (stops !== undefined && (this.#resumeStops.get(threadId) ?? 0) !== stops) return
       this.#onLog(`Could not resume queued prompts: ${errorMessage(error)}`)
       if (this.#store.thread(threadId) && this.#hasQueuedTurns(threadId)) {
         this.#record(threadId, {

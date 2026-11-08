@@ -2313,6 +2313,28 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Import chats from other apps
+                <span class="d"
+                  >Settings, Import chats lists what Codex, Claude Code, Grok, T3 Code and OpenCode
+                  saved on this computer, wherever it ran: an app filter with a count per app, one
+                  framed list of folders with a count and last use (each folder names its apps
+                  once), search over titles and paths, and a tick for a whole folder or a single
+                  chat, kept across filters, with the Import bar held at the foot of the pane.
+                  Archived chats stay out until asked for. Importing makes each chosen folder a
+                  project, brings in only what was chosen, keeps what was left out available for
+                  later, and reports progress and how many chats could not be read. A chat a
+                  provider can resume keeps its session, and one T3 Code ran on a provider session
+                  is listed once; any other chat is marked Copy and its next prompt hands the
+                  transcript to a new session. The other apps' stores are only read, and T3 Code
+                  pictures are copied into the app's data folder. Desktop only: phone links cannot
+                  call it</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Provider history import reads only what changed
                 <span class="d"
                   >the refresh runs every 15 s while chats change or the app is used and backs off
@@ -3415,17 +3437,17 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Eleven compact sections with flat selection states
+                >Twelve compact sections with flat selection states
                 <span class="d"
                   >General, Profile, Appearance, and Keybinds first, then Providers, Models, MCP
-                  servers, Skills, Usage, Data &amp; privacy, About; Settings opens on General; each
-                  nav label equals its page title, every tab opens scrolled to the top with the same
-                  title position and column, and every panel is named by its heading; Settings loads
-                  in an idle moment once the project list is ready, so its first open does not load
-                  it, and a failed preload is loaded again on open; once Settings covers the app,
-                  the app's endless loops (a working chat's spinner, the live activity row) pause
-                  until it closes, also when it returns after a sign-in, while one-shot animations
-                  behind it still finish</span
+                  servers, Skills, Usage, Import chats, Data &amp; privacy, About; Settings opens on
+                  General; each nav label equals its page title, every tab opens scrolled to the top
+                  with the same title position and column, and every panel is named by its heading;
+                  Settings loads in an idle moment once the project list is ready, so its first open
+                  does not load it, and a failed preload is loaded again on open; once Settings
+                  covers the app, the app's endless loops (a working chat's spinner, the live
+                  activity row) pause until it closes, also when it returns after a sign-in, while
+                  one-shot animations behind it still finish</span
                 ></span
               ></label
             >

@@ -11,12 +11,16 @@ delete process.env['ELECTRON_RUN_AS_NODE']
 // the environment every agent CLI and terminal inherits.
 const feedback = takeFeedbackConfig(process.env)
 takeEdition(process.env)
+// Which window this server belongs to; no agent CLI or terminal needs to know.
+const instanceToken = process.env['HARNESS_INSTANCE_TOKEN']
+delete process.env['HARNESS_INSTANCE_TOKEN']
 
 const port = Number(process.env['HARNESS_PORT'] ?? DEFAULT_PORT)
 const server = startServer({
   port,
   host: process.env['HARNESS_HOST'] ?? '127.0.0.1',
   accessToken: process.env['HARNESS_ACCESS_TOKEN'],
+  instanceToken,
   feedback,
 })
 

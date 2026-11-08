@@ -5,7 +5,12 @@ import { isBrowserShortcutMessage, type BrowserShortcutAction } from './browser-
 import { clipboardText } from './clipboard-text.js'
 import { isNativeMenuActionMessage, type NativeMenuActionSource } from './menu-contract.js'
 import { editionFromArguments } from './owned-server-env.js'
-import { droppedFilePath, isAppUpdateState, isFiniteNumber } from './preload-validation.js'
+import {
+  droppedFilePath,
+  isAppUpdateState,
+  isFiniteNumber,
+  isOwnServerToken,
+} from './preload-validation.js'
 import type { WindowChrome } from './window-theme.js'
 import type { WindowMaterial, WindowMaterialSupport } from './window-material.js'
 
@@ -20,6 +25,8 @@ type PickedAttachment = {
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
 const startupBenchmarkEnabled = Number.isFinite(startupStartedAt) && startupStartedAt > 0
 const edition = editionFromArguments(process.argv)
+// Asked once, before the page connects. Not an argument: command lines are readable by other processes.
+const ownServerToken: unknown = ipcRenderer.sendSync('harness:ownServerToken')
 
 /**
  * The entire native surface exposed to the renderer.
@@ -158,6 +165,8 @@ const api = {
     : {}),
   /** Which providers a packaged build's server offers; absent in an unpackaged run. */
   ...(edition ? { edition } : {}),
+  /** Proves the server this window reaches is its own app's; absent when the desktop owns none. */
+  ...(isOwnServerToken(ownServerToken) ? { ownServerToken } : {}),
   isDesktop: true,
 }
 

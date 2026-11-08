@@ -49,6 +49,17 @@ export function ProviderIcon(props: { mark: ProviderMark; size?: number; classNa
       </svg>
     )
   }
+  if (props.mark === 't3code') {
+    // A plain monogram for an app that is not a provider, set in the app's own ink.
+    return (
+      <svg className={props.className} width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+        <path
+          d="M2 5h11v3.5H9.5V19h-4V8.5H2V5zm12.5 0H22v2.6l-3.3 3.1c2 .3 3.5 1.8 3.5 4 0 2.700-2.200 4.600-5.300 4.600-1.300 0-2.500-.3-3.400-.9v-3.300c1 .7 2 1 3 1 1 0 1.700-.5 1.700-1.300 0-.9-.8-1.300-2.300-1.300h-1.300v-2.700l2.300-2.100h-3.900V5z"
+          fill="currentColor"
+        />
+      </svg>
+    )
+  }
   if (props.mark === 'zai') {
     return (
       <svg className={props.className} width={size} height={size} viewBox="0 0 30 30" aria-hidden>

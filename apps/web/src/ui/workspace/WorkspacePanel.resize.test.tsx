@@ -61,17 +61,16 @@ it('eases to the default width over a few frames instead of jumping', async () =
   reduceMotion(false)
   const base = props()
   const { container } = renderIn('workspace-layout', base)
-  const widths: string[] = []
-  const observer = new MutationObserver(() =>
-    widths.push(container.style.getPropertyValue('--workspace-panel-w')),
-  )
-  observer.observe(container, { attributes: true, attributeFilter: ['style'] })
+  // Count the writes themselves: happy-dom holds a MutationObserver's callback
+  // only through a WeakRef, so a garbage collection mid-test drops its records.
+  const writes = vi.spyOn(container.style, 'setProperty')
 
   fireEvent.doubleClick(screen.getByRole('separator'))
   expect(base.onWidthChange).not.toHaveBeenCalled()
   await vi.waitFor(() => expect(base.onWidthChange).toHaveBeenCalledWith(520))
-  observer.disconnect()
-  const steps = widths.map((width) => Number.parseInt(width, 10))
+  const steps = writes.mock.calls
+    .filter(([property]) => property === '--workspace-panel-w')
+    .map(([, width]) => Number.parseInt(String(width), 10))
   expect(steps.at(-1)).toBe(520)
   expect(steps.length).toBeGreaterThan(2)
   // Every frame moves toward the target, never past it.

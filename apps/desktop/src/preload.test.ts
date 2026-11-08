@@ -1,20 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HarnessBridge } from './preload.js'
 
-const { exposeInMainWorld, getPathForFile, invoke, send } = vi.hoisted(() => ({
+const { exposeInMainWorld, getPathForFile, invoke, send, sendSync } = vi.hoisted(() => ({
   exposeInMainWorld: vi.fn(),
   getPathForFile: vi.fn(),
   invoke: vi.fn(),
   send: vi.fn(),
+  sendSync: vi.fn((channel: string) =>
+    channel === 'harness:ownServerToken' ? 'dGhpcy1pcy1hLXRva2VuLWZvci10ZXN0cw' : undefined,
+  ),
 }))
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld },
-  ipcRenderer: { invoke, send, on: vi.fn(), removeListener: vi.fn() },
+  ipcRenderer: { invoke, send, sendSync, on: vi.fn(), removeListener: vi.fn() },
   webUtils: { getPathForFile },
 }))
 
 await import('./preload.js')
 const api = exposeInMainWorld.mock.calls[0]![1] as HarnessBridge
+
+describe('preload own-server token', () => {
+  it('asks main once, before the page connects, and exposes the answer', () => {
+    expect(sendSync).toHaveBeenCalledExactlyOnceWith('harness:ownServerToken')
+    expect(api.ownServerToken).toBe('dGhpcy1pcy1hLXRva2VuLWZvci10ZXN0cw')
+  })
+})
 
 describe('preload dropped files', () => {
   beforeEach(() => {

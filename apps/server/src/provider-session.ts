@@ -23,6 +23,14 @@ export const HANDOVER_CONTEXT_NOTICE =
 export const CONTINUE_CONTEXT_REQUEST = '\n</earlier_conversation>\n\nUser request:\n'
 
 /**
+ * Goes in front of an ordinary prompt in a chat that has a Design brief, so the agent
+ * leaves the phase protocols behind; the user's words follow. Provider history
+ * recognises it by this whole text, so it must not change.
+ */
+export const DESIGN_FOLLOW_UP_NOTICE =
+  'This is an ordinary user turn, not an active TasteCode Design phase. Earlier phase-only JSON protocols no longer apply. Follow the current request normally and explain your work in normal prose, unless the user explicitly requests structured data. If asked to launch a preview, perform the launch on an available local port and report its URL instead of returning a preview-plan JSON object.\n\nUser request:\n'
+
+/**
  * The first sentence of every Design phase prompt, in every version so far. Provider history
  * recognises phase prompts by it, so it must not change.
  */
