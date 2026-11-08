@@ -8826,6 +8826,70 @@ describe('several sessions at once', () => {
       await orchestrator.disposeAll()
     })
 
+    it('go out in the access mode the user changed while the old session stops', async () => {
+      const { orchestrator, thread, session, queuedId, sessions, resumedOptions } =
+        await stoppedWithQueue()
+      // An agent that takes a new access mode only by starting again.
+      Object.defineProperty(session, 'setApproval', { value: undefined })
+      let release: () => void = () => {}
+      session.disposeBarrier = new Promise<void>((resolve) => (release = resolve))
+      try {
+        const changing = orchestrator.setThreadApproval(thread.id, 'ask')
+        await vi.waitFor(() => expect(session.disposed).toBe(true))
+        const steering = orchestrator.steerQueuedTurn(thread.id, queuedId)
+        release()
+        await expect(changing).resolves.toBeUndefined()
+        await steering
+        expect(resumedOptions.at(-1)?.approval).toBe('ask')
+        await vi.waitFor(() => expect(sessions.at(-1)!.sent).toEqual(['sent by accident']))
+      } finally {
+        release()
+        await orchestrator.disposeAll()
+      }
+    })
+
+    // Stop all also clears every queue.
+    it.each([
+      ['a Stop', 'turn cancelled while resuming', ['sent by accident']],
+      ['Stop all', 'turn cancelled by panic stop or shutdown', []],
+    ] as const)(
+      'do not go out when %s comes while the one the user picks waits for an access mode change',
+      async (stop, message, left) => {
+        const { orchestrator, thread, session, queuedId, sessions, resumeBarriers, resumedIds } =
+          await stoppedWithQueue()
+        // An agent that takes a new access mode only by starting again.
+        Object.defineProperty(session, 'setApproval', { value: undefined })
+        let release: () => void = () => {}
+        session.disposeBarrier = new Promise<void>((resolve) => (release = resolve))
+        let open: () => void = () => {}
+        resumeBarriers.push(new Promise<void>((resolve) => (open = resolve)))
+        try {
+          const changing = orchestrator.setThreadApproval(thread.id, 'ask')
+          await vi.waitFor(() => expect(session.disposed).toBe(true))
+          const steering = orchestrator.steerQueuedTurn(thread.id, queuedId)
+          release()
+          // The change's own resume is under way when the Stop comes.
+          await vi.waitFor(() => expect(resumedIds).toHaveLength(1))
+          const stopping =
+            stop === 'a Stop'
+              ? orchestrator.interrupt(thread.id)
+              : orchestrator.panicStop().then(() => undefined)
+          open()
+          await stopping
+          await changing.catch(() => undefined)
+          await expect(steering).rejects.toThrow(message)
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          expect(resumedIds).toHaveLength(1)
+          expect(sessions.every((each) => !each.sent.includes('sent by accident'))).toBe(true)
+          expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual(left)
+        } finally {
+          release()
+          open()
+          await orchestrator.disposeAll()
+        }
+      },
+    )
+
     it('send the one the user picks first once the agent has ended the stopped turn', async () => {
       const { sessions, orchestrator } = harness()
       const thread = await orchestrator.startThread('codex', '/repo')
@@ -9579,6 +9643,242 @@ describe('several sessions at once', () => {
         await new Promise((resolve) => setTimeout(resolve, 20))
         expect(resumedIds).toHaveLength(1)
       } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('gives back at Stop a prompt that waits behind an access mode change', async () => {
+      const { orchestrator, store, sessions, resumedOptions, open } = resumingChat(2)
+      store.setThreadApproval('persisted-thread', 'full')
+      try {
+        const first = send(orchestrator, 'A')
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        const second = send(orchestrator, 'B')
+        let settled = false
+        void second.catch(() => undefined).finally(() => (settled = true))
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        // At the Stop, while the resume and the change still wait.
+        await vi.waitFor(() => expect(settled).toBe(true))
+        await expect(second).rejects.toThrow('turn cancelled while resuming')
+        open[0]!()
+        open[1]!()
+        await expect(changing).resolves.toBeUndefined()
+        expect(resumedOptions.at(-1)?.approval).toBe('ask')
+        expect(sessions.at(-1)!.sent).toEqual([])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('gives back at once a prompt a Stop caught on its way to an access mode change', async () => {
+      const { orchestrator, store, sessions, resumedIds, open } = resumingChat(2)
+      store.setThreadApproval('persisted-thread', 'full')
+      try {
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        await vi.waitFor(() => expect(resumedIds).toHaveLength(1))
+        let arrive!: () => void
+        const onItsWay = orchestrator.trackSubmission('persisted-thread', async () => {
+          await new Promise<void>((resolve) => (arrive = resolve))
+          return send(orchestrator, 'B')
+        })
+        await orchestrator.interrupt('persisted-thread')
+        arrive()
+        let settled = false
+        void onItsWay.catch(() => undefined).finally(() => (settled = true))
+        // While the change still resumes.
+        await vi.waitFor(() => expect(settled).toBe(true))
+        await expect(onItsWay).rejects.toThrow('turn cancelled while resuming')
+        open[0]!()
+        open[1]!()
+        await changing.catch(() => undefined)
+        expect(sessions.every((session) => session.sent.length === 0)).toBe(true)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('fails an access mode change visibly when a Stop ends its own resume', async () => {
+      const { orchestrator, store, resumedIds, open } = resumingChat(2)
+      store.setThreadApproval('persisted-thread', 'full')
+      try {
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        await vi.waitFor(() => expect(resumedIds).toHaveLength(1))
+        await orchestrator.interrupt('persisted-thread')
+        open[0]!()
+        open[1]!()
+        await expect(changing).rejects.toThrow('turn cancelled while resuming')
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(resumedIds).toHaveLength(1)
+        expect(store.threadApproval('persisted-thread')).toBe('full')
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('refuses an access mode change while the chat moves to another provider', async () => {
+      const { orchestrator, store, resumedIds, open } = resumingChat(2)
+      try {
+        const first = send(orchestrator, 'A')
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        // The move waits out the stopped resume.
+        const moving = orchestrator.changeProvider('persisted-thread', { provider: 'grok' })
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        let settled = false
+        void changing.catch(() => undefined).finally(() => (settled = true))
+        await vi.waitFor(() => expect(settled).toBe(true))
+        await expect(changing).rejects.toThrow('moving to another provider')
+        open[0]!()
+        open[1]!()
+        await moving.catch(() => undefined)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(resumedIds).toHaveLength(1)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('gives back at Stop a prompt that waits for the old session to stop', async () => {
+      const { orchestrator, sessions, store, resumedIds } = harness()
+      let release: () => void = () => {}
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        await orchestrator.submitTurn(thread.id, 'first')
+        const dead = sessions[0]!
+        dead.disposeBarrier = new Promise<void>((resolve) => (release = resolve))
+        dead.emit({ type: 'thread.error', threadId: thread.id, message: 'Provider disconnected' })
+        dead.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'failed' })
+        dead.emitDisconnected()
+        const sending = orchestrator.submitTurn(thread.id, 'retry')
+        let settled = false
+        void sending.catch(() => undefined).finally(() => (settled = true))
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        const stopping = orchestrator.interrupt(thread.id)
+        // At the Stop, while the old session still stops.
+        await vi.waitFor(() => expect(settled).toBe(true))
+        await expect(sending).rejects.toThrow('turn cancelled while resuming')
+        release()
+        await stopping
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(resumedIds).toEqual([])
+      } finally {
+        release()
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('holds queued prompts without an error when a Stop ends the resume a disconnect started', async () => {
+      const { orchestrator, sessions, received, resumeBarriers, resumedIds, store } = harness()
+      let open: () => void = () => {}
+      resumeBarriers.push(new Promise<void>((resolve) => (open = resolve)))
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        await orchestrator.submitTurn(thread.id, 'first')
+        await orchestrator.submitTurn(thread.id, 'queued')
+        sessions[0]!.emit({
+          type: 'thread.error',
+          threadId: thread.id,
+          message: 'Provider crashed',
+        })
+        sessions[0]!.emitDisconnected()
+        await vi.waitFor(() => expect(resumedIds).toHaveLength(1))
+        await orchestrator.interrupt(thread.id)
+        open()
+        await vi.waitFor(() => expect(sessions[1]?.disposed).toBe(true))
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(
+          received.some(
+            ({ event }) =>
+              event.type === 'thread.error' &&
+              event.message.startsWith('Could not resume queued prompts:'),
+          ),
+        ).toBe(false)
+        expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual(['queued'])
+        expect(sessions[1]!.sent).toEqual([])
+      } finally {
+        open()
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('shows no error when the user sends again before a stopped reconnect resume ends', async () => {
+      const { orchestrator, sessions, received, resumeBarriers, resumedIds, store } = harness()
+      let open: () => void = () => {}
+      resumeBarriers.push(new Promise<void>((resolve) => (open = resolve)))
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        await orchestrator.submitTurn(thread.id, 'first')
+        await orchestrator.submitTurn(thread.id, 'queued')
+        sessions[0]!.emit({
+          type: 'thread.error',
+          threadId: thread.id,
+          message: 'Provider crashed',
+        })
+        sessions[0]!.emitDisconnected()
+        await vi.waitFor(() => expect(resumedIds).toHaveLength(1))
+        await orchestrator.interrupt(thread.id)
+        const sending = orchestrator.submitTurn(thread.id, 'again')
+        open()
+        await expect(sending).resolves.toBeDefined()
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(
+          received.some(
+            ({ event }) =>
+              event.type === 'thread.error' &&
+              event.message.startsWith('Could not resume queued prompts:'),
+          ),
+        ).toBe(false)
+      } finally {
+        open()
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('keeps queued prompts held when a prompt the Stop caught on its way arrives', async () => {
+      const { orchestrator, sessions, received, resumeBarriers, resumedIds, store } = harness()
+      let open: () => void = () => {}
+      resumeBarriers.push(new Promise<void>((resolve) => (open = resolve)))
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        await orchestrator.submitTurn(thread.id, 'first')
+        await orchestrator.submitTurn(thread.id, 'queued')
+        sessions[0]!.emit({
+          type: 'thread.error',
+          threadId: thread.id,
+          message: 'Provider crashed',
+        })
+        sessions[0]!.emitDisconnected()
+        await vi.waitFor(() => expect(resumedIds).toHaveLength(1))
+        let arrive!: () => void
+        const onItsWay = orchestrator.trackSubmission(thread.id, async () => {
+          await new Promise<void>((resolve) => (arrive = resolve))
+          return orchestrator.submitTurn(thread.id, 'on its way')
+        })
+        await orchestrator.interrupt(thread.id)
+        arrive()
+        await expect(onItsWay).rejects.toThrow('turn cancelled while resuming')
+        open()
+        await vi.waitFor(() => expect(sessions[1]?.disposed).toBe(true))
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(
+          received.some(
+            ({ event }) =>
+              event.type === 'thread.error' &&
+              event.message.startsWith('Could not resume queued prompts:'),
+          ),
+        ).toBe(false)
+        expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual(['queued'])
+      } finally {
+        open()
         await orchestrator.disposeAll()
         store.close()
       }
