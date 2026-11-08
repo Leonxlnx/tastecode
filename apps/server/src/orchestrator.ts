@@ -82,6 +82,7 @@ import {
   designPhaseNotice,
   isProviderSessionMissing,
   mapProviderSession,
+  DESIGN_FOLLOW_UP_NOTICE,
   RESTORE_CONTEXT_NOTICE,
   StartupCleanupError,
 } from './provider-session.js'
@@ -3312,9 +3313,7 @@ export class Orchestrator {
           unreadSubagents !== undefined ||
           this.#store.threadNeedsRestoreContext(threadId)) &&
         (await this.#isProviderCommand(threadId, entry, text))
-      const ownPrompt = brief
-        ? `This is an ordinary user turn, not an active TasteCode Design phase. Earlier phase-only JSON protocols no longer apply. Follow the current request normally and explain your work in normal prose, unless the user explicitly requests structured data. If asked to launch a preview, perform the launch on an available local port and report its URL instead of returning a preview-plan JSON object.\n\nUser request:\n${text}`
-        : text
+      const ownPrompt = brief ? `${DESIGN_FOLLOW_UP_NOTICE}${text}` : text
       const prompt = unreadSubagents ? `${unreadSubagents.text}${ownPrompt}` : ownPrompt
       const sent = command
         ? text
