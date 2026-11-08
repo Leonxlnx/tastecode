@@ -5165,18 +5165,9 @@ export class Orchestrator {
           attached.session.setApproval!(approval),
         )
       } else {
-        // A Stop for the chat's prompts also ends this resume; the change still applies.
-        for (;;) {
-          if (asked.panic !== this.#panicGeneration || asked.dispose !== this.#disposeGeneration)
-            throw new Error('access mode change cancelled by panic stop or shutdown')
-          const generation = this.#runtimeGenerations.get(threadId) ?? 0
-          try {
-            await this.#ensureThread(threadId)
-            break
-          } catch (error) {
-            if ((this.#runtimeGenerations.get(threadId) ?? 0) === generation) throw error
-          }
-        }
+        if (asked.panic !== this.#panicGeneration || asked.dispose !== this.#disposeGeneration)
+          throw new Error('access mode change cancelled by panic stop or shutdown')
+        await this.#ensureThread(threadId)
       }
       this.#store.setThreadApproval(threadId, approval)
     } catch (error) {

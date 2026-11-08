@@ -9631,8 +9631,8 @@ describe('several sessions at once', () => {
       }
     })
 
-    it('applies an access mode change whose own resume a Stop ended', async () => {
-      const { orchestrator, store, resumedIds, resumedOptions, open } = resumingChat(2)
+    it('fails an access mode change visibly when a Stop ends its own resume', async () => {
+      const { orchestrator, store, resumedIds, open } = resumingChat(2)
       store.setThreadApproval('persisted-thread', 'full')
       try {
         const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
@@ -9640,10 +9640,10 @@ describe('several sessions at once', () => {
         await orchestrator.interrupt('persisted-thread')
         open[0]!()
         open[1]!()
-        await expect(changing).resolves.toBeUndefined()
-        expect(resumedIds).toHaveLength(2)
-        expect(resumedOptions.at(-1)?.approval).toBe('ask')
-        expect(store.threadApproval('persisted-thread')).toBe('ask')
+        await expect(changing).rejects.toThrow('turn cancelled while resuming')
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(resumedIds).toHaveLength(1)
+        expect(store.threadApproval('persisted-thread')).toBe('full')
       } finally {
         await orchestrator.disposeAll()
         store.close()
