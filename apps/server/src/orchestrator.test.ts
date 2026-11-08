@@ -9421,7 +9421,7 @@ describe('several sessions at once', () => {
         const first = send(orchestrator, 'A')
         await orchestrator.interrupt('persisted-thread')
         await expect(first).rejects.toThrow('turn cancelled while resuming')
-        // B waits out the stopped resume first, so it starts the next one.
+        // Both wait out the stopped resume; the change goes on first and resumes with its mode.
         const second = send(orchestrator, 'B')
         const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
         open[0]!()
@@ -9430,7 +9430,91 @@ describe('several sessions at once', () => {
         await expect(second).resolves.toMatchObject({ queued: false })
         const live = sessions.at(-1)!
         expect(live.sent).toEqual(['B'])
-        expect(live.approvalModes.at(-1) ?? resumedOptions.at(-1)?.approval).toBe('ask')
+        expect(resumedOptions.at(-1)?.approval).toBe('ask')
+        expect(live.approvalModes).toEqual([])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    // A prompt sent again started its resume from the old mode before the change came.
+    const resumedBeforeTheChange = async (made: ReturnType<typeof resumingChat>) => {
+      const { orchestrator, store, resumedIds, open } = made
+      store.setThreadApproval('persisted-thread', 'full')
+      const first = send(orchestrator, 'A')
+      await orchestrator.interrupt('persisted-thread')
+      await expect(first).rejects.toThrow('turn cancelled while resuming')
+      const second = send(orchestrator, 'B')
+      open[0]!()
+      await vi.waitFor(() => expect(resumedIds).toHaveLength(2))
+      // Wrapped, so the caller's await does not wait for the prompt itself.
+      return { second }
+    }
+
+    it('tells the session a prompt sent again resumed in the old mode the access mode changed', async () => {
+      const made = resumingChat(2)
+      const { orchestrator, store, sessions, resumedOptions, open } = made
+      try {
+        const { second } = await resumedBeforeTheChange(made)
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        open[1]!()
+        await expect(changing).resolves.toBeUndefined()
+        await expect(second).resolves.toMatchObject({ queued: false })
+        expect(resumedOptions.at(-1)?.approval).toBe('full')
+        const live = sessions.at(-1)!
+        expect(live.approvalModes).toEqual(['ask'])
+        expect(live.sent).toEqual(['B'])
+        expect(store.threadApproval('persisted-thread')).toBe('ask')
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('resumes a session that cannot change its access mode again with the new one', async () => {
+      const made = resumingChat(2)
+      const { orchestrator, store, sessions, resumedIds, resumedOptions, open } = made
+      const setApproval = Object.getOwnPropertyDescriptor(FakeSession.prototype, 'setApproval')!
+      Object.defineProperty(FakeSession.prototype, 'setApproval', {
+        ...setApproval,
+        value: undefined,
+      })
+      try {
+        const { second } = await resumedBeforeTheChange(made)
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        open[1]!()
+        await expect(changing).resolves.toBeUndefined()
+        await expect(second).resolves.toMatchObject({ queued: false })
+        expect(resumedIds).toHaveLength(3)
+        expect(resumedOptions.map((options) => options.approval)).toEqual(['full', 'full', 'ask'])
+        expect(sessions.at(-2)!.disposed).toBe(true)
+        expect(sessions.at(-2)!.sent).toEqual([])
+        expect(sessions.at(-1)!.sent).toEqual(['B'])
+        expect(store.threadApproval('persisted-thread')).toBe('ask')
+      } finally {
+        Object.defineProperty(FakeSession.prototype, 'setApproval', setApproval)
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('resumes afresh for what the user asks after Stop all, with its access mode', async () => {
+      const { orchestrator, store, sessions, resumedOptions, open } = resumingChat(2)
+      store.setThreadApproval('persisted-thread', 'full')
+      try {
+        const first = send(orchestrator, 'A')
+        await orchestrator.panicStop()
+        await expect(first).rejects.toThrow('turn cancelled by panic stop')
+        // Both come after Stop all, while its resume still winds down.
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        const second = send(orchestrator, 'B')
+        open[0]!()
+        open[1]!()
+        await expect(changing).resolves.toBeUndefined()
+        await expect(second).resolves.toMatchObject({ queued: false })
+        expect(resumedOptions.at(-1)?.approval).toBe('ask')
+        expect(sessions.at(-1)!.sent).toEqual(['B'])
       } finally {
         await orchestrator.disposeAll()
         store.close()
@@ -9479,17 +9563,21 @@ describe('several sessions at once', () => {
     })
 
     it('starts no resume for a prompt whose chat moves to another provider meanwhile', async () => {
-      const { orchestrator, store, open } = resumingChat(2)
+      const { orchestrator, store, resumedIds, open } = resumingChat(2)
       try {
         const first = send(orchestrator, 'A')
         await orchestrator.interrupt('persisted-thread')
         await expect(first).rejects.toThrow('turn cancelled while resuming')
+        // B and the move both wait out the stopped resume; whichever goes on first,
+        // B gives up and resumes nothing.
         const second = send(orchestrator, 'B')
         const moving = orchestrator.changeProvider('persisted-thread', { provider: 'grok' })
         open[0]!()
         open[1]!()
         await expect(second).rejects.toThrow('moving to another provider')
         await moving.catch(() => undefined)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(resumedIds).toHaveLength(1)
       } finally {
         await orchestrator.disposeAll()
         store.close()

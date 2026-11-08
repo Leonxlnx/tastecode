@@ -5379,6 +5379,12 @@ export class Orchestrator {
     )
     this.#panicStopping = true
     this.#panicGeneration += 1
+    // A resume under way ends with the Stop all, as at a chat's own Stop: what the
+    // user asks after it waits that resume out and resumes afresh.
+    for (const threadId of this.#resumingThreads.keys()) {
+      this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
+      this.#resumeStops.set(threadId, (this.#resumeStops.get(threadId) ?? 0) + 1)
+    }
     this.#cancelResumingPrompts('turn cancelled by panic stop')
     // Every sub-agent ends as stopped; the busy chats below include theirs.
     this.#subagents.release()
@@ -5948,6 +5954,10 @@ export class Orchestrator {
       }
       // Whatever happened during a wait decides before anything resumes.
       if (waited) {
+        // A resume now would attach the session the chat leaves. First, as the move
+        // itself may have ended this caller's generation.
+        if (this.#changingProvider.has(threadId))
+          throw new Error('This chat is moving to another provider. Send again once it has moved.')
         if (
           panicGeneration !== this.#panicGeneration ||
           disposeGeneration !== this.#disposeGeneration
@@ -5955,9 +5965,6 @@ export class Orchestrator {
           throw new Error('turn cancelled by panic stop or shutdown')
         if ((this.#runtimeGenerations.get(threadId) ?? 0) !== callerGeneration)
           throw new Error('turn cancelled while resuming')
-        // A resume now would attach the session the chat leaves.
-        if (this.#changingProvider.has(threadId))
-          throw new Error('This chat is moving to another provider. Send again once it has moved.')
       }
       if (this.#threads.has(threadId)) return
       const generation = this.#runtimeGenerations.get(threadId) ?? 0
