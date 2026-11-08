@@ -588,7 +588,10 @@ export class ProjectFolders {
 
   project(folder: string): string | undefined {
     if (this.#known.has(folder)) return this.#known.get(folder)
-    let project = this.store.project(folder)?.path
+    const spelled = savedFolder(folder)
+    let project =
+      this.store.project(folder)?.path ??
+      (spelled === folder ? undefined : this.store.project(spelled)?.path)
     if (project === undefined) {
       // Providers may save the same folder with another case or separator.
       // Only the file system can say whether such a spelling is the same folder.
@@ -602,6 +605,9 @@ export class ProjectFolders {
       const candidates = this.#aliases.get(folderSpelling(folder))
       const identity = candidates && folderIdentity(folder)
       if (identity) project = candidates.find((candidate) => folderIdentity(candidate) === identity)
+      // A folder that is gone has no identity; then only another spelling of the
+      // same path counts, case aside where the file system ignores case.
+      else project = candidates?.find((candidate) => folderKey(candidate) === folderKey(folder))
     }
     this.#known.set(folder, project)
     return project
@@ -609,7 +615,33 @@ export class ProjectFolders {
 }
 
 function folderSpelling(folder: string): string {
-  return path.resolve(folder).toLowerCase()
+  return path.resolve(savedFolder(folder)).toLowerCase()
+}
+
+/**
+ * The spelling a folder is filed under. On Windows the same folder arrives as
+ * `E:/work/site` (OpenCode), `\\?\E:\work\site` (Codex at times), with a
+ * lowercase drive (CLIs started from VS Code) or with a trailing separator;
+ * all of them become `E:\work\site`. Elsewhere a folder stays as saved. Case
+ * beyond the drive letter is kept; folderKey compares without it.
+ */
+export function savedFolder(folder: string, platform = process.platform): string {
+  if (platform !== 'win32') return folder
+  const plain = folder.startsWith('\\\\?\\UNC\\')
+    ? `\\\\${folder.slice(8)}`
+    : folder.startsWith('\\\\?\\')
+      ? folder.slice(4)
+      : folder
+  let spelled = path.win32.normalize(plain).replace(/^[a-z]:/, (drive) => drive.toUpperCase())
+  const { root } = path.win32.parse(spelled)
+  if (spelled.length > root.length) spelled = spelled.replace(/\\+$/, '')
+  return spelled
+}
+
+/** Equal for two spellings of one folder path: on Windows also across letter case. */
+export function folderKey(folder: string, platform = process.platform): string {
+  const spelled = savedFolder(folder, platform)
+  return platform === 'win32' ? spelled.toLowerCase() : spelled
 }
 
 /** Same device and file id; a missing folder has none. */

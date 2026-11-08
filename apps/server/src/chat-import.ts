@@ -13,7 +13,13 @@ import type {
   ProviderId,
 } from '@harness/contracts'
 import { createOpenCodeHistorySource } from '@harness/adapter-opencode/history'
-import { importedEvents, ProjectFolders, type ProviderHistory } from './provider-history.js'
+import {
+  importedEvents,
+  folderKey,
+  ProjectFolders,
+  savedFolder,
+  type ProviderHistory,
+} from './provider-history.js'
 import type { Store } from './store.js'
 
 /** A chat another app saved, in the shape provider history already uses. */
@@ -82,6 +88,17 @@ export class ChatImportService {
     const history = await this.deps.history().catch(() => undefined)
     const sources: ChatImportSource[] = []
     const listed = new Map<string, Listed>()
+    // One string per folder, the first spelling seen, so the list groups it once and an
+    // import adds it as one project, however each app spelled it.
+    const spellings = new Map<string, string>()
+    const fileUnder = (folder: string) => {
+      const key = folderKey(folder)
+      const known = spellings.get(key)
+      if (known !== undefined) return known
+      const spelled = savedFolder(folder)
+      spellings.set(key, spelled)
+      return spelled
+    }
     const saved = new Map<ProviderId, Map<string, ProviderHistorySession>>()
     for (const [provider, name] of this.deps.providerNames) {
       const sessions = history?.providers().includes(provider)
@@ -101,7 +118,7 @@ export class ChatImportService {
             id: `${provider}:${session.id}`,
             source: provider,
             title: session.title,
-            folder: session.workspacePath,
+            folder: fileUnder(session.workspacePath),
             provider,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
@@ -126,7 +143,8 @@ export class ChatImportService {
         continue
       }
       if (chats.length) sources.push({ ...named, state: 'ready' })
-      for (const saved_ of chats) {
+      for (const found of chats) {
+        const saved_ = { ...found, workspacePath: fileUnder(found.workspacePath) }
         const id = `${reader.id}:${saved_.id}`
         const mirrored = saved_.nativeSession
           ? `${saved_.provider}:${saved_.nativeSession}`
@@ -340,7 +358,7 @@ function folderLabel(folder: string, home = os.homedir()): string {
 }
 
 function samePath(left: string, right: string): boolean {
-  return path.resolve(left) === path.resolve(right)
+  return folderKey(left) === folderKey(right)
 }
 
 function describe(error: unknown): string {
