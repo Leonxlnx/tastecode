@@ -9650,6 +9650,30 @@ describe('several sessions at once', () => {
       }
     })
 
+    it('refuses an access mode change while the chat moves to another provider', async () => {
+      const { orchestrator, store, resumedIds, open } = resumingChat(2)
+      try {
+        const first = send(orchestrator, 'A')
+        await orchestrator.interrupt('persisted-thread')
+        await expect(first).rejects.toThrow('turn cancelled while resuming')
+        // The move waits out the stopped resume.
+        const moving = orchestrator.changeProvider('persisted-thread', { provider: 'grok' })
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        let settled = false
+        void changing.catch(() => undefined).finally(() => (settled = true))
+        await vi.waitFor(() => expect(settled).toBe(true))
+        await expect(changing).rejects.toThrow('moving to another provider')
+        open[0]!()
+        open[1]!()
+        await moving.catch(() => undefined)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(resumedIds).toHaveLength(1)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
     it('gives back at Stop a prompt that waits for the old session to stop', async () => {
       const { orchestrator, sessions, store, resumedIds } = harness()
       let release: () => void = () => {}

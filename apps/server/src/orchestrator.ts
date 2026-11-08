@@ -5109,6 +5109,7 @@ export class Orchestrator {
    * adapter supports it.
    */
   async setThreadApproval(threadId: string, approval: ApprovalMode): Promise<void> {
+    this.#refuseApprovalDuringMove(threadId)
     const previous = this.#approvalChanges.get(threadId)
     // A Stop all or shutdown after this request cancels a resume it would start.
     const asked = { panic: this.#panicGeneration, dispose: this.#disposeGeneration }
@@ -5146,6 +5147,8 @@ export class Orchestrator {
         if (resumeGeneration === (this.#runtimeGenerations.get(threadId) ?? 0)) throw error
       }
     }
+    // A move may have begun while this change waited behind another one.
+    this.#refuseApprovalDuringMove(threadId)
     const previous = this.#threadApprovals.get(threadId)
     const hadPrevious = this.#threadApprovals.has(threadId)
     try {
@@ -5174,6 +5177,15 @@ export class Orchestrator {
       if (hadPrevious) this.#threadApprovals.set(threadId, previous!)
       else this.#threadApprovals.delete(threadId)
       throw error
+    }
+  }
+
+  /** A move starts its session in the mode it was given; a change meanwhile would be lost. */
+  #refuseApprovalDuringMove(threadId: string): void {
+    if (this.#changingProvider.has(threadId)) {
+      throw new Error(
+        'This chat is moving to another provider. Choose the mode again once it has moved.',
+      )
     }
   }
 
