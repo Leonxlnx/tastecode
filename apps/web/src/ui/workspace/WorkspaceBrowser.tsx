@@ -75,6 +75,7 @@ type BrowserGuest = AnnotationGuest & {
   isLoading(): boolean
   loadURL(url: string): Promise<void>
   reload(): void
+  reloadIgnoringCache(): void
   stop(): void
   executeJavaScript(code: string): Promise<unknown>
   capturePage(): Promise<{ toDataURL(): string }>
@@ -509,7 +510,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     if (navigate(navigation.url)) lastNavigationRequest.current = navigation.requestId
   }, [guestReadyRevision, navigate, navigation])
 
-  const action = (nextAction: 'back' | 'forward' | 'reload' | 'stop') => {
+  const action = (nextAction: 'back' | 'forward' | 'reload' | 'hardReload' | 'stop') => {
     const view = guest.current
     if (!view) return
     setError(undefined)
@@ -517,10 +518,11 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       if (nextAction === 'back' && view.canGoBack()) view.goBack()
       else if (nextAction === 'forward' && view.canGoForward()) view.goForward()
       // Reload retries the address that failed, not the page still shown under it.
-      else if (nextAction === 'reload' && failedAddress.current) {
+      else if ((nextAction === 'reload' || nextAction === 'hardReload') && failedAddress.current) {
         navigate(failedAddress.current)
         return
       } else if (nextAction === 'reload' && state.url) view.reload()
+      else if (nextAction === 'hardReload' && state.url) view.reloadIgnoringCache()
       else if (nextAction === 'stop') {
         stopRequested.current = true
         failedAddress.current = undefined
