@@ -8,8 +8,10 @@ import {
   IndeterminateRequestError,
   parseIncomingFrame,
   parseResponseFrame,
+  REFUSED_SERVER_RETRY_MS,
   Transport,
   TRANSPORT_LIMITS,
+  type MissingServer,
 } from './transport.js'
 import {
   parseChannelData,
@@ -37,8 +39,13 @@ class FakeSocket {
   onopen: (() => void) | null = null
   onmessage: ((event: { data: string }) => void) | null = null
   onclose: (() => void) | null = null
+  /** The subprotocol the server selected. */
+  protocol = ''
 
-  constructor(public url: string) {
+  constructor(
+    public url: string,
+    public protocols?: string | string[],
+  ) {
     FakeSocket.instances.push(this)
   }
 
@@ -80,6 +87,78 @@ const completedThreadEvent = (turnId: string) => ({
     status: 'completed' as const,
     error: null,
   },
+})
+
+describe('a window whose desktop started its server', () => {
+  it("uses no server that does not answer with this window's protocol", async () => {
+    const transport = new Transport('ws://127.0.0.1:4311', { ownServerToken: 'window-a' })
+    const reasons: Array<MissingServer | undefined> = []
+    transport.onMissingServer?.((reason) => reasons.push(reason))
+    transport.connect()
+    const pushes: unknown[] = []
+    transport.on('projects.changed', (data) => pushes.push(data))
+    const listing = transport.request('projects.list', {})
+    const other = FakeSocket.instances.at(-1)!
+    expect(other.protocols).toEqual(['tastecode', 'tastecode.window-a'])
+    // Another TasteCode's server, which does not check windows, picks the first one.
+    other.protocol = 'tastecode'
+    other.open()
+    // What that server sends must reach nothing: a push, and an answer to the first request id.
+    other.onmessage?.({
+      data: JSON.stringify({ channel: 'projects.changed', sequence: 1, data: { other: 'app' } }),
+    })
+    other.onmessage?.({
+      data: JSON.stringify({ id: '1', result: { projects: [{ path: 'C:\\other-app' }] } }),
+    })
+    expect(other.sent).toEqual([])
+    await vi.dynamicImportSettled()
+    expect(pushes).toEqual([])
+    expect(reasons).toEqual(['other-app'])
+    expect(transport.state).toBe('connecting')
+
+    // It looks for its own server again, slowly, and sends its request there.
+    vi.advanceTimersByTime(REFUSED_SERVER_RETRY_MS - 1)
+    expect(FakeSocket.instances).toHaveLength(1)
+    vi.advanceTimersByTime(1)
+    const own = FakeSocket.instances.at(-1)!
+    expect(own).not.toBe(other)
+    own.protocol = 'tastecode.window-a'
+    own.open()
+    expect(reasons).toEqual(['other-app', undefined])
+    const [frame] = userFrames(own).map((sent) => RequestFrameSchema.parse(JSON.parse(sent)))
+    own.onmessage?.({ data: JSON.stringify({ id: frame!.id, result: { projects: [] } }) })
+    await expect(listing).resolves.toEqual({ projects: [] })
+    expect(pushes).toEqual([])
+    transport.close()
+  })
+
+  it('says its own server has gone, not another app, once that app has quit', () => {
+    const transport = new Transport('ws://127.0.0.1:4311', { ownServerToken: 'window-a' })
+    const reasons: Array<MissingServer | undefined> = []
+    transport.onMissingServer?.((reason) => reasons.push(reason))
+    transport.connect()
+    const other = FakeSocket.instances.at(-1)!
+    other.protocol = 'tastecode'
+    other.open()
+    expect(reasons).toEqual(['other-app'])
+
+    // The other app has quit, and this window's server gave up while it held the port.
+    vi.advanceTimersByTime(REFUSED_SERVER_RETRY_MS)
+    FakeSocket.instances.at(-1)!.close()
+    expect(reasons).toEqual(['other-app', 'gone'])
+    // It keeps looking at the slow pace, not in the 100 ms cold-start loop.
+    const tries = FakeSocket.instances.length
+    vi.advanceTimersByTime(REFUSED_SERVER_RETRY_MS - 1)
+    expect(FakeSocket.instances).toHaveLength(tries)
+    vi.advanceTimersByTime(1)
+    expect(FakeSocket.instances).toHaveLength(tries + 1)
+
+    const own = FakeSocket.instances.at(-1)!
+    own.protocol = 'tastecode.window-a'
+    own.open()
+    expect(reasons).toEqual(['other-app', 'gone', undefined])
+    transport.close()
+  })
 })
 
 describe('Transport', () => {

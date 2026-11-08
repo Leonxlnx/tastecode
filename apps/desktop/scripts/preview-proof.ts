@@ -103,6 +103,12 @@ async function capture(url: string): Promise<PreviewCaptureResult> {
 
 async function main() {
   await app.whenReady()
+  // The real preload asks for its own server's token with sendSync before the page loads, and
+  // a sync call nobody answers blocks the renderer. This proof owns no server, as main.ts
+  // answers a page without one.
+  ipcMain.on('harness:ownServerToken', (event) => {
+    event.returnValue = null
+  })
   await mkdir(report, { recursive: true })
   const html = path.join(directory, 'controller.html')
   await writeFile(html, '<!doctype html><title>Preview capture IPC proof</title>')

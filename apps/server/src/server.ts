@@ -146,6 +146,11 @@ export function startServer(
     port?: number
     host?: string
     accessToken?: string | undefined
+    /**
+     * Set by the desktop for the server it owns, and removed from the
+     * environment by the entry point: only its own window is admitted.
+     */
+    instanceToken?: string | undefined
     rendererOrigin?: string
     /** Resolved by the entry point, which also removes it from the environment. */
     feedback?: FeedbackConfig
@@ -167,9 +172,20 @@ export function startServer(
     throw error
   }
   restoreProviderExecutablePaths(store)
+  const ownWindow = options.instanceToken ? instanceProtocol(options.instanceToken) : undefined
   let wss: WebSocketServer
   try {
-    wss = new WebSocketServer({ port, host })
+    wss = new WebSocketServer({
+      port,
+      host,
+      // Another window's handshake still completes, so it hears why it is closed.
+      ...(ownWindow
+        ? {
+            handleProtocols: (offered: Set<string>) =>
+              offered.has(ownWindow) ? ownWindow : (offered.values().next().value ?? false),
+          }
+        : {}),
+    })
   } catch (error) {
     try {
       store.close()
@@ -639,6 +655,11 @@ export function startServer(
     }
     if (!hasAccess(request.url, options.accessToken)) {
       socket.close(1008, 'Access denied')
+      return
+    }
+    // Another TasteCode's window, whose own server could not take the port.
+    if (ownWindow && socket.protocol !== ownWindow) {
+      socket.close(1008, 'Another TasteCode window')
       return
     }
     acceptConnection(socket, (message, closed) => {
@@ -2124,6 +2145,16 @@ export function hasAccess(requestUrl: string | undefined, expected: string | und
   return (
     expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes)
   )
+}
+
+/**
+ * The subprotocol that proves a window and the desktop-owned server belong
+ * together. The window offers `tastecode` first: a server without this check,
+ * such as an older build that holds the port, selects that one, and the window
+ * refuses it. Mirrored in apps/web/src/transport.ts.
+ */
+export function instanceProtocol(token: string): string {
+  return `tastecode.${token}`
 }
 
 export function assertSafeBind(host: string, accessToken: string | undefined): void {
