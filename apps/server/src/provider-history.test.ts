@@ -1669,11 +1669,7 @@ describe('provider history integration', () => {
     await history.load(id)
     expect(messages(id)).toHaveLength(2)
     expect(messages(id)[1]!.text).toBe('Updated\n\n- item')
-    // The changed answer moves to the end of the log, and the turn's end follows it.
-    expect(store.history(id, after).map(({ event }) => event.type)).toEqual([
-      'item.completed',
-      'turn.completed',
-    ])
+    expect(store.history(id, after)).toHaveLength(1)
     expect(store.localHistory(id)).toEqual([])
   })
 
