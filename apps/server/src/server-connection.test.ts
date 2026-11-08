@@ -460,8 +460,8 @@ afterEach(async () => {
   )
 })
 
-async function listen(accessToken?: string) {
-  running = startServer({ port: 0, accessToken })
+async function listen(accessToken?: string, instanceToken?: string) {
+  running = startServer({ port: 0, accessToken, instanceToken })
   const listener = state.servers.at(-1)!
   await once(listener, 'listening')
   const address = listener.address()
@@ -522,6 +522,33 @@ describe('rejected websocket connections', () => {
       }
     },
   )
+
+  it("admits only its own window to a desktop-owned server, by that window's protocol", async () => {
+    const { port } = await listen(undefined, 'window-a')
+    const own = new WebSocket(`ws://127.0.0.1:${port}`, ['tastecode', 'tastecode.window-a'], {
+      origin: 'file://',
+    })
+    try {
+      const [message] = await once(own, 'message')
+      expect(JSON.parse(String(message))).toMatchObject({ channel: 'server.welcome' })
+      expect(own.protocol).toBe('tastecode.window-a')
+    } finally {
+      own.terminate()
+    }
+    for (const offered of [['tastecode', 'tastecode.window-b'], []]) {
+      const other = new WebSocket(`ws://127.0.0.1:${port}`, offered, { origin: 'file://' })
+      const messages: unknown[] = []
+      other.on('message', (message) => messages.push(message))
+      try {
+        const [code, reason] = await once(other, 'close')
+        expect(code).toBe(1008)
+        expect(String(reason)).toBe('Another TasteCode window')
+        expect(messages).toEqual([])
+      } finally {
+        other.terminate()
+      }
+    }
+  })
 
   it('uses the explicitly configured renderer origin instead of the dev port', async () => {
     vi.stubEnv('HARNESS_RENDERER_ORIGIN', 'http://127.0.0.1:6100')
