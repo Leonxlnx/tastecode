@@ -86,6 +86,47 @@ afterEach(async () => {
 })
 
 describe('OpenCode adapter', () => {
+  it('speaks v1 to a server that answers its probe only once it has loaded', async () => {
+    // A cold 1.18.13 answered v1's probe 3.1-5.7 s late at 100% CPU, v2's health check at once.
+    const mock = await serveOpenCode(
+      undefined,
+      [],
+      () => new Promise((resolve) => setTimeout(resolve, 2_000)),
+    )
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      await adapter.startThread('C:\\repo')
+      expect(mock.requests.some((request) => request.url.startsWith('/api/session'))).toBe(false)
+      expect(
+        mock.requests.some(
+          (request) =>
+            request.method === 'POST' &&
+            new URL(request.url, 'http://mock').pathname === '/session',
+        ),
+      ).toBe(true)
+    } finally {
+      adapter.dispose()
+    }
+  }, 10_000)
+
+  it("names OpenCode's reason when it refuses a v2 prompt", async () => {
+    // How 1.18.13 refused the prompt this adapter sends over v2 (fixtures/).
+    const mock = await serveOpenCodeV2(0, false, true)
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    try {
+      await adapter.resumeThread('opencode-session-v2', 'C:\\repo')
+      await adapter.sendTurn('opencode-session-v2', 'Hi')
+      await expect
+        .poll(() => events.find((event) => event.type === 'thread.error'))
+        .toMatchObject({ message: 'The OpenCode request failed: Missing key at ["prompt"]' })
+      expect(events.at(-1)).toMatchObject({ type: 'turn.completed', status: 'failed' })
+    } finally {
+      adapter.dispose()
+    }
+  })
+
   it('does not reuse a turn identity when a fresh instance resumes', async () => {
     const mock = await serveOpenCodeV2()
     const first = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
@@ -1297,6 +1338,7 @@ function serverPort(server: Server): number {
 async function serveOpenCode(
   beforeSessionResponse?: () => Promise<void>,
   messages: unknown[] = [],
+  beforeStatusResponse?: () => Promise<void>,
 ): Promise<{
   baseUrl: string
   requests: RequestRecord[]
@@ -1340,6 +1382,7 @@ async function serveOpenCode(
     }
     // opencode 1.18.31 answers v2's health check beside v1.
     if (request.url === '/api/health') return json(response, { healthy: true })
+    if (request.url?.startsWith('/session/status')) await beforeStatusResponse?.()
     if (request.url?.startsWith('/config/providers')) {
       return json(response, {
         providers: [
@@ -1413,6 +1456,7 @@ async function serveOpenCode(
 async function serveOpenCodeV2(
   failedPermissionReplies = 0,
   holdFirstPermissionReply = false,
+  refusePrompts = false,
 ): Promise<{
   baseUrl: string
   requests: RequestRecord[]
@@ -1516,6 +1560,10 @@ async function serveOpenCodeV2(
       return response.end()
     }
     if (request.method === 'POST' && request.url?.endsWith('/prompt')) {
+      if (refusePrompts) {
+        response.writeHead(400, { 'content-type': 'application/json' })
+        return response.end(fixtureText('opencode-1.18.13-v2-prompt-refused.json'))
+      }
       return json(response, { data: { id: 'input-v2' } })
     }
     if (request.method === 'POST' && request.url?.endsWith('/interrupt')) {
