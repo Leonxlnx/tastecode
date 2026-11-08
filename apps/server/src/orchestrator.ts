@@ -3623,10 +3623,26 @@ export class Orchestrator {
       !this.#activeTurns.has(threadId) &&
       !this.isTurnRunning(threadId)
     ) {
+      // A Stop or Stop all while it waits wins, as it does for a prompt the user sends.
+      const stops = this.#resumeStops.get(threadId) ?? 0
+      const panicGeneration = this.#panicGeneration
+      const disposeGeneration = this.#disposeGeneration
+      const stoppedMeanwhile = () => {
+        if (
+          this.#panicStopping ||
+          panicGeneration !== this.#panicGeneration ||
+          disposeGeneration !== this.#disposeGeneration
+        )
+          throw new Error('turn cancelled by panic stop or shutdown')
+        if ((this.#resumeStops.get(threadId) ?? 0) !== stops)
+          throw new Error('turn cancelled while resuming')
+      }
       // An access mode change resumes the chat itself, in its new mode.
       const approvalChange = this.#approvalChanges.get(threadId)
       if (approvalChange) await approvalChange.catch(() => undefined)
+      stoppedMeanwhile()
       await this.#ensureThread(threadId)
+      stoppedMeanwhile()
       return this.#sendHeldQueuedTurn(threadId, queuedTurnId)
     }
     const session = this.#get(threadId).session

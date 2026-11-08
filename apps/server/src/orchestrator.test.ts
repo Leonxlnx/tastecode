@@ -8848,6 +8848,48 @@ describe('several sessions at once', () => {
       }
     })
 
+    // Stop all also clears every queue.
+    it.each([
+      ['a Stop', 'turn cancelled while resuming', ['sent by accident']],
+      ['Stop all', 'turn cancelled by panic stop or shutdown', []],
+    ] as const)(
+      'do not go out when %s comes while the one the user picks waits for an access mode change',
+      async (stop, message, left) => {
+        const { orchestrator, thread, session, queuedId, sessions, resumeBarriers, resumedIds } =
+          await stoppedWithQueue()
+        // An agent that takes a new access mode only by starting again.
+        Object.defineProperty(session, 'setApproval', { value: undefined })
+        let release: () => void = () => {}
+        session.disposeBarrier = new Promise<void>((resolve) => (release = resolve))
+        let open: () => void = () => {}
+        resumeBarriers.push(new Promise<void>((resolve) => (open = resolve)))
+        try {
+          const changing = orchestrator.setThreadApproval(thread.id, 'ask')
+          await vi.waitFor(() => expect(session.disposed).toBe(true))
+          const steering = orchestrator.steerQueuedTurn(thread.id, queuedId)
+          release()
+          // The change's own resume is under way when the Stop comes.
+          await vi.waitFor(() => expect(resumedIds).toHaveLength(1))
+          const stopping =
+            stop === 'a Stop'
+              ? orchestrator.interrupt(thread.id)
+              : orchestrator.panicStop().then(() => undefined)
+          open()
+          await stopping
+          await changing.catch(() => undefined)
+          await expect(steering).rejects.toThrow(message)
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          expect(resumedIds).toHaveLength(1)
+          expect(sessions.every((each) => !each.sent.includes('sent by accident'))).toBe(true)
+          expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual(left)
+        } finally {
+          release()
+          open()
+          await orchestrator.disposeAll()
+        }
+      },
+    )
+
     it('send the one the user picks first once the agent has ended the stopped turn', async () => {
       const { sessions, orchestrator } = harness()
       const thread = await orchestrator.startThread('codex', '/repo')
