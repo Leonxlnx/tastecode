@@ -487,13 +487,18 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
           <GitBranch size={14} aria-hidden />
           <strong title={props.branch}>{props.branch ?? 'Workspace'}</strong>
         </span>
-        <span className="workspace-review__stats" aria-label="Diff statistics">
-          <span className="is-add">+{stats.added.toLocaleString()}</span>
-          <span className="is-delete">−{stats.removed.toLocaleString()}</span>
-        </span>
-        <span className="workspace-review__file-count">
-          {fileCount} file{fileCount === 1 ? '' : 's'}
-        </span>
+        {/* Until the checkout's diff arrives its numbers are unknown, not zero. */}
+        {diff ? (
+          <>
+            <span className="workspace-review__stats" aria-label="Diff statistics">
+              <span className="is-add">+{stats.added.toLocaleString()}</span>
+              <span className="is-delete">−{stats.removed.toLocaleString()}</span>
+            </span>
+            <span className="workspace-review__file-count">
+              {fileCount} file{fileCount === 1 ? '' : 's'}
+            </span>
+          </>
+        ) : null}
         <button
           type="button"
           className={`workspace-review__action${composer === 'commit' ? ' is-open' : ''}`}
