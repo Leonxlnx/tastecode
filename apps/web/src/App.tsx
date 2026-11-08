@@ -67,7 +67,7 @@ import { useAppUpdateInstallGate } from './app-update-install.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
 import { AppUpdateToast } from './ui/AppUpdateToast.js'
 import { NoticeBody } from './ui/Notice.js'
-import { IndeterminateRequestError, Transport } from './transport.js'
+import { IndeterminateRequestError, Transport, type MissingServer } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
 import {
   appendUserMessage,
@@ -846,9 +846,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const [onboardingMounted, setOnboardingMounted] = useState(onboardingWanted)
   if (onboardingWanted && !onboardingMounted) setOnboardingMounted(true)
   const [offline, setOffline] = useState(false)
-  /** Another TasteCode's server holds the port; this window shows nothing from it. */
-  const [serverRefused, setServerRefused] = useState(false)
-  useEffect(() => transport.onServerRefused?.(setServerRefused), [transport])
+  /** This window works without its own server; it shows nothing from another app's. */
+  const [missingServer, setMissingServer] = useState<MissingServer | undefined>()
+  useEffect(() => transport.onMissingServer?.(setMissingServer), [transport])
   const [threadController] = useState(
     () =>
       new ThreadController(transport, {
@@ -8423,10 +8423,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         <NoticeBody tone="progress">Reconnecting to the server…</NoticeBody>
       </NoticePresence>
 
-      <NoticePresence className="notice" tone="error" role="alert" visible={serverRefused}>
+      <NoticePresence className="notice" tone="error" role="alert" visible={Boolean(missingServer)}>
         <NoticeBody tone="error">
-          Another TasteCode is already running, so this window cannot reach its own server. Quit the
-          other TasteCode, then restart this one.
+          {missingServer === 'gone'
+            ? "This window's TasteCode server has stopped. Restart TasteCode to continue."
+            : 'Another TasteCode is already running, so this window cannot reach its own server. Quit the other TasteCode, then restart this one.'}
         </NoticeBody>
       </NoticePresence>
 

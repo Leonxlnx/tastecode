@@ -106,8 +106,8 @@ export interface Transport {
   ensureHealthy(timeoutMs?: number): Promise<void>
   onState(listener: (state: ConnectionState) => void): () => void
   onSequenceGap(listener: (expected: number, received: number) => void): () => void
-  /** Whether the server on the port is another TasteCode's, which this window refuses. */
-  onServerRefused?(listener: (refused: boolean) => void): () => void
+  /** Why this window has no server of its own, or undefined once it has one. */
+  onMissingServer?(listener: (reason: MissingServer | undefined) => void): () => void
   on<C extends ChannelName>(channel: C, listener: (data: DataOf<C>) => void): () => void
   request<M extends MethodName>(method: M, params: ParamsOf<M>): Promise<ResultOf<M>>
 }
@@ -154,8 +154,14 @@ export const HEALTH_CHECK_TIMEOUT_MS = 10_000
  * this one. Mirrors instanceProtocol in apps/server/src/server.ts.
  */
 const UNCHECKED_PROTOCOL = 'tastecode'
-/** How often a window refused by another TasteCode's server looks for its own again. */
+/** How often a window without its own server looks for it again. */
 export const REFUSED_SERVER_RETRY_MS = 5_000
+/**
+ * Why a window whose desktop started its server works without it: another
+ * TasteCode's server holds the port (`other-app`), or, after that one went,
+ * nothing answers there any more (`gone`): the own server gave up meanwhile.
+ */
+export type MissingServer = 'other-app' | 'gone'
 
 /** The server may have accepted a transmitted mutation before its reply was lost. */
 export class IndeterminateRequestError extends Error {
@@ -166,8 +172,8 @@ class WebSocketTransport implements Transport {
   #url: string
   /** Set when the desktop started this window's server; no other server is used. */
   #ownProtocol: string | undefined
-  #serverRefused = false
-  #refusedListeners = new Set<(refused: boolean) => void>()
+  #missingServer: MissingServer | undefined
+  #missingServerListeners = new Set<(reason: MissingServer | undefined) => void>()
   #socket: WebSocket | undefined
   #pending = new Map<string, Pending>()
   /** Ids actually transmitted on the current socket — lost if it drops. */
@@ -202,27 +208,31 @@ class WebSocketTransport implements Transport {
     this.#ownProtocol = options.ownServerToken ? `tastecode.${options.ownServerToken}` : undefined
   }
 
-  onServerRefused(listener: (refused: boolean) => void): () => void {
-    this.#refusedListeners.add(listener)
-    return () => this.#refusedListeners.delete(listener)
+  onMissingServer(listener: (reason: MissingServer | undefined) => void): () => void {
+    this.#missingServerListeners.add(listener)
+    return () => this.#missingServerListeners.delete(listener)
   }
 
-  #setServerRefused(refused: boolean): void {
-    if (this.#serverRefused === refused) return
-    this.#serverRefused = refused
-    for (const listener of this.#refusedListeners) listener(refused)
+  #setMissingServer(reason: MissingServer | undefined): void {
+    if (this.#missingServer === reason) return
+    this.#missingServer = reason
+    for (const listener of this.#missingServerListeners) listener(reason)
   }
 
   /**
    * Another TasteCode's server holds the port, so this window's own could not
-   * start. Nothing is sent to it, and nothing it sends is applied; the window
-   * looks again, slowly, in case its own server comes up after all.
+   * start. Nothing is sent to it, and nothing it sends is applied.
    */
   #refuseServer(socket: WebSocket): void {
     this.#socket = undefined
     socket.close()
     this.#rejectInFlight()
-    this.#setServerRefused(true)
+    this.#setMissingServer('other-app')
+    this.#lookForOwnServerLater()
+  }
+
+  /** Slowly, in case the window's own server comes up after all. */
+  #lookForOwnServerLater(): void {
     this.#clearReconnectTimer()
     const state = this.#hasOpened ? 'reconnecting' : 'connecting'
     this.#setState(state)
@@ -466,6 +476,7 @@ class WebSocketTransport implements Transport {
       ? new WebSocket(this.#url, [UNCHECKED_PROTOCOL, this.#ownProtocol])
       : new WebSocket(this.#url)
     this.#socket = socket
+    let opened = false
     this.#connectTimer = setTimeout(() => {
       if (this.#socket === socket && socket.readyState === WebSocket.CONNECTING)
         this.#restartSocket(false)
@@ -480,7 +491,8 @@ class WebSocketTransport implements Transport {
         this.#refuseServer(socket)
         return
       }
-      this.#setServerRefused(false)
+      opened = true
+      this.#setMissingServer(undefined)
       this.#hasOpened = true
       const queued = this.#queue.splice(0)
       this.#queuedBytes = 0
@@ -526,8 +538,21 @@ class WebSocketTransport implements Transport {
       this.#socket = undefined
       this.#rejectInFlight()
       if (this.#closedByUs) return
+      if (!opened && this.#ownServerGone()) return
       this.#scheduleReconnect()
     }
+  }
+
+  /**
+   * After another TasteCode held the port, nothing answering there means that
+   * app has gone and this window's own server gave up meanwhile; saying another
+   * app runs would be wrong. Look again at the slow pace, not every 100 ms.
+   */
+  #ownServerGone(): boolean {
+    if (!this.#missingServer) return false
+    this.#setMissingServer('gone')
+    this.#lookForOwnServerLater()
+    return true
   }
 
   #restartSocket(immediate = true): void {
@@ -536,7 +561,11 @@ class WebSocketTransport implements Transport {
     this.#socket = undefined
     if (socket && socket.readyState !== WebSocket.CLOSED) socket.close()
     this.#rejectInFlight()
-    if (!this.#closedByUs) this.#scheduleReconnect(immediate)
+    if (this.#closedByUs) return
+    // A connect that timed out. While the reason is set no socket has opened with the
+    // window's own server, which clears it.
+    if (!immediate && this.#ownServerGone()) return
+    this.#scheduleReconnect(immediate)
   }
 
   #rejectInFlight(): void {
