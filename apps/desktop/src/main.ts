@@ -283,6 +283,8 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
+/** Proves to this app's window that the server it reaches is the one this app started. */
+let ownServerToken: string | undefined
 let serverFailureNoticeOpen = false
 
 function showServerFailureNotice(): void {
@@ -506,6 +508,10 @@ function startOwnedServer(): boolean {
   if (process.env['HARNESS_PORT'] && process.env['HARNESS_PORT'] !== serverEnv['HARNESS_PORT']) {
     console.warn('[desktop] ignoring HARNESS_PORT; using the packaged renderer endpoint')
   }
+  // Every build bakes the same port. When another TasteCode holds it, this
+  // server cannot start, and the window must not work against that app instead.
+  ownServerToken = randomBytes(24).toString('base64url')
+  serverEnv = { ...serverEnv, HARNESS_INSTANCE_TOKEN: ownServerToken }
   const serverEntry = app.isPackaged
     ? require.resolve('@harness/server')
     : path.join(here, '../../server/dist/main.js')
@@ -876,6 +882,11 @@ function sendNativeMenuAction(action: NativeMenuAction, source: NativeMenuAction
   if (window && !window.isDestroyed())
     nativeMenuDispatch.send(window.webContents, { action, source })
 }
+
+// The preload asks once, before the page connects; only this app's own page learns it.
+ipcMain.on('harness:ownServerToken', (event) => {
+  event.returnValue = isOwnRenderer(event.sender) ? (ownServerToken ?? null) : null
+})
 
 ipcMain.on('harness:menuReady', (event) => {
   if (!isOwnRenderer(event.sender)) return

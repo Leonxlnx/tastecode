@@ -35,6 +35,11 @@ function isUpdateStatus(value: unknown): value is AppUpdateState['status'] {
   }
 }
 
+/** The desktop's own-server token: base64url, and only that, so it is a valid WebSocket subprotocol. */
+export function isOwnServerToken(value: unknown): value is string {
+  return typeof value === 'string' && /^[\w-]{16,128}$/.test(value)
+}
+
 export function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }

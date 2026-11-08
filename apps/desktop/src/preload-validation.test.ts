@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { droppedFilePath, isAppUpdateState, isFiniteNumber } from './preload-validation.js'
+import {
+  droppedFilePath,
+  isAppUpdateState,
+  isFiniteNumber,
+  isOwnServerToken,
+} from './preload-validation.js'
 
 describe('preload validation', () => {
   it('uses the native File lookup rather than a supplied path property', () => {
@@ -45,5 +50,19 @@ describe('preload validation', () => {
     ).toBe(false)
     expect(isFiniteNumber(Number.NaN)).toBe(false)
     expect(isFiniteNumber(Infinity)).toBe(false)
+  })
+
+  it('exposes only a base64url own-server token, a valid WebSocket subprotocol', () => {
+    expect(isOwnServerToken('dGhpcy1pcy1hLXRva2VuLWZvci10ZXN0cw')).toBe(true)
+    for (const value of [
+      undefined,
+      null,
+      42,
+      '',
+      'short',
+      'has a space in it here',
+      'a,b;c=d+e/f/g',
+    ])
+      expect(isOwnServerToken(value)).toBe(false)
   })
 })
