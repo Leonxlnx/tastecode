@@ -19,7 +19,11 @@ import {
   RESTORE_CONTEXT_NOTICE,
 } from './provider-session.js'
 import { continuationPromptFromReplay } from './side-chat.js'
-import { designBriefingPrompt, designTaskContinuation } from '@harness/design-agent'
+import {
+  designBriefingContinuation,
+  designBriefingPrompt,
+  designTaskContinuation,
+} from '@harness/design-agent'
 
 /** The Design phase notice as provider histories saved before 2026-11-05 hold it. */
 const EARLIER_DESIGN_NOTICE =
@@ -2300,6 +2304,17 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     expect(shown('local-thread', turn('native', phaseBrief(request), '{}'))).toEqual([])
   })
 
+  it('hides the bare continuation that carried the user’s answers to a brief', () => {
+    const question = {
+      id: 'audience',
+      header: 'Audience',
+      question: 'Who is the page for?',
+      allowOther: true,
+      options: [{ label: 'Locals', description: 'People nearby' }],
+    }
+    expect(imported(designBriefingContinuation([question], { audience: ['Locals'] }))).toEqual([])
+  })
+
   it('shows a not_design request as the ordinary turn that carried it on', () => {
     const native = [
       ...turn('brief', phaseBrief('How do I rename a git branch?'), '{"status":"not_design"}'),
@@ -2340,7 +2355,7 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     ])
   })
 
-  it('keeps a pasted briefing prompt and its answer', () => {
+  it('keeps a briefing prompt pasted into a chat with a Design brief, and its answer', () => {
     // The user pasted a briefing prompt; the provider got it behind the follow-up notice.
     const pasted = designBriefingPrompt('a pasted request')
     expect(imported(`${DESIGN_FOLLOW_UP_NOTICE}${pasted}`)).toEqual([
@@ -2363,20 +2378,34 @@ describe('a chat that ran in TasteCode before it was imported', () => {
   })
 
   it('reads an imported chat again without changing what it saved', () => {
+    const thread = 'external:claude-code:native'
     store.addThread({
-      id: 'external:codex:native',
-      provider: 'codex',
+      id: thread,
+      provider: 'claude-code',
       projectPath: process.cwd(),
       title: 'Imported',
     })
-    const entries = importedEvents(
-      turn('native', `${DESIGN_FOLLOW_UP_NOTICE}${words}`, 'pineapple'),
-      'external:codex:native',
-      [],
-    )
-    expect(store.mergeProviderHistory('external:codex:native', '1', entries)).toBe(true)
-    const after = store.lastSeq('external:codex:native')
-    expect(store.mergeProviderHistory('external:codex:native', '2', entries)).toBe(false)
-    expect(store.lastSeq('external:codex:native')).toBe(after)
+    // Continued here: the local log holds a prompt of its own.
+    for (const event of typed('continue', 500_000, 'l1')) store.append(thread, event)
+    /** One read as ProviderHistory makes it, from freshly built native events. */
+    const read = () =>
+      importedEvents(
+        [
+          ...turn(
+            'before',
+            `${RESTORE_CONTEXT_NOTICE}${unreadResults}Make the header sticky.`,
+            'Done.',
+          ),
+          ...turn('brief', phaseBrief(request), '{"status":"complete"}', 200_000),
+          ...turn('more', `${DESIGN_FOLLOW_UP_NOTICE}continue`, 'Continuing.', 500_000),
+          ...turn('outside', `${DESIGN_FOLLOW_UP_NOTICE}${words}`, 'pineapple', 900_000),
+        ],
+        thread,
+        store.localHistory(thread).map(({ event }) => event),
+      )
+    expect(store.mergeProviderHistory(thread, '1', read())).toBe(true)
+    const after = store.lastSeq(thread)
+    expect(store.mergeProviderHistory(thread, '2', read())).toBe(false)
+    expect(store.lastSeq(thread)).toBe(after)
   })
 })

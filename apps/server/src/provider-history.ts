@@ -829,15 +829,23 @@ function withoutRestoreNotice(text: string | undefined): string | undefined {
 }
 
 /**
- * A Design phase prompt: one with the phase notice, or a Design brief sent bare
- * (designBriefingPrompt alone) as before 2026-09-16.
+ * A Design phase prompt: one with the phase notice, or a Design brief or the brief's
+ * continuation with the user's answers, both sent bare (alone) before 2026-09-16.
  */
 function isDesignPhasePrompt(text: string | undefined): boolean {
-  return text?.startsWith(DESIGN_PHASE_MARKER) === true || text?.startsWith(BRIEFING_START) === true
+  return (
+    text !== undefined &&
+    (text.startsWith(DESIGN_PHASE_MARKER) ||
+      text.startsWith(BRIEFING_START) ||
+      text.startsWith(BRIEFING_CONTINUATION_START))
+  )
 }
 
-/** The first line of designBriefingPrompt, in every version so far. */
+/** The first line of designBriefingPrompt since the 2026-08-14 rename. */
 const BRIEFING_START = 'You are running TasteCode Design Briefing mode.\n'
+/** The first line of designBriefingContinuation since the 2026-08-14 rename. */
+const BRIEFING_CONTINUATION_START =
+  'Continue the TasteCode Design Briefing using the answers below.\n'
 
 /**
  * What an imported chat shows of a prompt TasteCode wrapped before sending it: the
