@@ -3440,11 +3440,6 @@ export class Orchestrator {
     const panicGeneration = this.#panicGeneration
     const disposeGeneration = this.#disposeGeneration
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
-    // The user is writing again after a Stop: what they queued before it may go, in order.
-    this.#heldQueues.delete(threadId)
-    if (this.#changingProvider.has(threadId)) {
-      throw new Error('This chat is moving to another provider. Send again once it has moved.')
-    }
     const tracked = this.#submissionStops.getStore()
     const sentUnder =
       tracked?.threadId === threadId ? tracked.stops : (this.#resumeStops.get(threadId) ?? 0)
@@ -3452,6 +3447,13 @@ export class Orchestrator {
     const stoppedOnTheWay = () => {
       if ((this.#resumeStops.get(threadId) ?? 0) !== sentUnder)
         throw new Error('turn cancelled while resuming')
+    }
+    // At once, before it waits for anything, and without releasing what the Stop held.
+    stoppedOnTheWay()
+    // The user is writing again after a Stop: what they queued before it may go, in order.
+    this.#heldQueues.delete(threadId)
+    if (this.#changingProvider.has(threadId)) {
+      throw new Error('This chat is moving to another provider. Send again once it has moved.')
     }
     // A Stop while the session resumes cancels this prompt at once; the resume
     // itself can take 10-15 s more to wind down, and the chat must not wait for it.
