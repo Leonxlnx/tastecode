@@ -217,6 +217,25 @@ const OpenCodeV2AgentSchema = z.object({
 })
 const AgentEnvelopeSchema = z.object({ data: z.array(OpenCodeV2AgentSchema) })
 const HealthSchema = z.object({ healthy: z.boolean() })
+/** A refused v2 request's body, as 1.18.13 sends it (fixtures/). */
+const V2RefusalSchema = z.object({ message: z.string() })
+
+/** A v2 request OpenCode refused, with its own reason when it gave one. */
+class OpenCodeV2RequestError extends Error {
+  readonly reason: string | undefined
+
+  constructor(status: number, reason: string | undefined) {
+    super(`OpenCode v2 request failed (${status})${reason ? `: ${reason}` : ''}`)
+    this.reason = reason
+  }
+}
+
+async function v2RequestError(response: Response): Promise<OpenCodeV2RequestError> {
+  const refusal = V2RefusalSchema.safeParse(await response.json().catch(() => undefined))
+  // "Missing key\n  at [\"prompt\"]" reads as one line in a chat error.
+  const reason = refusal.success ? refusal.data.message.replace(/\s+/g, ' ').trim() : undefined
+  return new OpenCodeV2RequestError(response.status, reason || undefined)
+}
 const PermissionAskedDataSchema = z.object({
   id: z.string(),
   action: z.string().optional(),
@@ -514,7 +533,9 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
     })
     if (this.#protocol === 'v2') {
-      void this.#sendV2Turn(text, turnId, attachments).catch(() => this.#failTurn(turnId))
+      void this.#sendV2Turn(text, turnId, attachments).catch((error: unknown) =>
+        this.#failTurn(turnId, error instanceof OpenCodeV2RequestError ? error.reason : undefined),
+      )
       return turnId
     }
     const variant =
@@ -909,7 +930,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     if (this.#authorization) headers.set('authorization', this.#authorization)
     if (init.body !== undefined) headers.set('content-type', 'application/json')
     const response = await fetch(new URL(path, this.#baseUrl), { ...init, headers })
-    if (!response.ok) throw new Error(`OpenCode v2 request failed (${response.status})`)
+    if (!response.ok) throw await v2RequestError(response)
     if (response.status === 204) return undefined
     return response.json()
   }
