@@ -282,6 +282,8 @@ type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
 type QueueDrain = { queueId: string; completedTurnId?: string }
 type TurnStartBarrier = { done: Promise<void>; release: () => void; turnCompleted?: boolean }
+/** How a prompt still on its way to its session hears a Stop; set once it starts listening. */
+type PromptStopListener = { cancel?: (error: Error) => void; cancelled?: Promise<never> }
 /** A turn Stop already ended for the user, while its agent has not reported its end yet. */
 type SettlingStop = {
   turnId: string
@@ -3454,7 +3456,7 @@ export class Orchestrator {
     // A Stop while the session resumes cancels this prompt at once; the resume
     // itself can take 10-15 s more to wind down, and the chat must not wait for it.
     // So does a Stop while it waits for an access mode change to the chat first.
-    const stop: { cancel?: (error: Error) => void; cancelled?: Promise<never> } = {}
+    const stop: PromptStopListener = {}
     const listenForStop = () => {
       if (stop.cancelled || this.#threads.has(threadId)) return
       stop.cancelled = new Promise<never>((_resolve, reject) => {
