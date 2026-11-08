@@ -103,10 +103,15 @@ describe('a window whose desktop started its server', () => {
     // Another TasteCode's server, which does not check windows, picks the first one.
     other.protocol = 'tastecode'
     other.open()
+    // What that server sends must reach nothing: a push, and an answer to the first request id.
     other.onmessage?.({
-      data: JSON.stringify({ channel: 'projects.changed', sequence: 1, data: {} }),
+      data: JSON.stringify({ channel: 'projects.changed', sequence: 1, data: { other: 'app' } }),
+    })
+    other.onmessage?.({
+      data: JSON.stringify({ id: '1', result: { projects: [{ path: 'C:\\other-app' }] } }),
     })
     expect(other.sent).toEqual([])
+    await vi.dynamicImportSettled()
     expect(pushes).toEqual([])
     expect(reasons).toEqual(['other-app'])
     expect(transport.state).toBe('connecting')
@@ -123,6 +128,7 @@ describe('a window whose desktop started its server', () => {
     const [frame] = userFrames(own).map((sent) => RequestFrameSchema.parse(JSON.parse(sent)))
     own.onmessage?.({ data: JSON.stringify({ id: frame!.id, result: { projects: [] } }) })
     await expect(listing).resolves.toEqual({ projects: [] })
+    expect(pushes).toEqual([])
     transport.close()
   })
 
