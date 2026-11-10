@@ -199,12 +199,15 @@ export function historyItems(
               return ref ? [ref] : []
             })
           : []
+        // A finished edit keeps its diff alone, as the live item does: the diff view
+        // would show Claude's success message as lines of the file.
+        const edited = call?.type === 'file_change' && !block.is_error
         const item: Item = {
           ...itemBase,
           ...call,
           type: call?.type ?? 'tool_call',
           status: block.is_error ? 'failed' : 'completed',
-          text: call?.text ? `${call.text}\n\n${text}` : text,
+          ...(edited ? {} : { text: call?.text ? `${call.text}\n\n${text}` : text }),
           ...(attachments.length ? { attachments } : {}),
           ...(call?.command ? { command: call.command } : {}),
           ...(call?.path ? { path: call.path } : {}),
