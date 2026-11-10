@@ -12,6 +12,7 @@ describe('closestReasoningEffort', () => {
     expect(closestReasoningEffort('low', ['medium', 'high', 'xhigh'])).toBe('medium')
     expect(closestReasoningEffort('xhigh', ['low', 'medium', 'high'])).toBe('high')
     expect(closestReasoningEffort('medium', ['low', 'high'])).toBe('high')
+    expect(closestReasoningEffort('ultracode', ['low', 'high', 'max'])).toBe('max')
   })
 
   it('keeps a name it cannot place', () => {
