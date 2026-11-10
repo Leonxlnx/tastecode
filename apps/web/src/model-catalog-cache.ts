@@ -246,6 +246,7 @@ function parseModel(value: unknown): Model | undefined {
   const defaultReasoningEffort = value['defaultReasoningEffort']
   const rawServiceTiers = value['serviceTiers']
   const defaultServiceTier = value['defaultServiceTier']
+  const images = value['images']
   if (
     typeof id !== 'string' ||
     typeof displayName !== 'string' ||
@@ -256,7 +257,8 @@ function parseModel(value: unknown): Model | undefined {
     (rawServiceTiers !== undefined && !Array.isArray(rawServiceTiers)) ||
     (defaultServiceTier !== undefined &&
       defaultServiceTier !== null &&
-      typeof defaultServiceTier !== 'string')
+      typeof defaultServiceTier !== 'string') ||
+    (images !== undefined && typeof images !== 'boolean')
   ) {
     return undefined
   }
@@ -287,6 +289,9 @@ function parseModel(value: unknown): Model | undefined {
     ...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
     serviceTiers,
     ...(defaultServiceTier === undefined ? {} : { defaultServiceTier }),
+    // Left out, the engine's capability would decide and a model that takes no
+    // images would accept attachments until its source is listed again.
+    ...(images === undefined ? {} : { images }),
     ...parseModelMetadata(value),
   }
 }
