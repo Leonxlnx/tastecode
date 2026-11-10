@@ -520,6 +520,7 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
   let approvedPage: PageBlueprint | undefined
   let approvedAssets: AssetManifest | undefined
   let appDirection: AppDirection | undefined
+  let referenceDeck: DesignFlow['referenceDeck']
   try {
     if (stored.appDirection !== undefined)
       appDirection = designAgent().parseAppDirection(stored.appDirection)
@@ -536,6 +537,7 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
       approvedPage = designAgent().parsePageBlueprint(stored.approvedPage)
     if (stored.approvedAssets !== undefined)
       approvedAssets = designAgent().parseAssetManifest(stored.approvedAssets)
+    if (stored.referenceDeck) referenceDeck = designAgent().parseReferenceDeck(stored.referenceDeck)
   } catch {
     return undefined
   }
@@ -554,9 +556,7 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     originalRequest: stored.originalRequest,
     referenceAttachments: stored.referenceAttachments,
     ...(stored.referenceSnapshot ? { referenceSnapshot: stored.referenceSnapshot } : {}),
-    ...(stored.referenceDeck
-      ? { referenceDeck: designAgent().parseReferenceDeck(stored.referenceDeck) }
-      : {}),
+    ...(referenceDeck ? { referenceDeck } : {}),
     ...(stored.typographyCandidates ? { typographyCandidates: stored.typographyCandidates } : {}),
     ...(stored.referenceDeckSnapshot
       ? { referenceDeckSnapshot: stored.referenceDeckSnapshot }
