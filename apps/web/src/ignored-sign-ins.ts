@@ -12,6 +12,8 @@ const IGNORED_KEY = 'harness.ignoredSignIns.v1'
 const listeners = new Set<() => void>()
 let cachedRaw: string | null = null
 let cached: readonly string[] = []
+/** The list of a write storage refused. Storage still holds the one before it. */
+let unsaved: readonly string[] | undefined
 
 /** One found folder, as the ignore list keys it: provider ids hold no spaces. */
 export function signInKey(entry: Pick<DetectedAccountHome, 'provider' | 'home'>): string {
@@ -20,6 +22,7 @@ export function signInKey(entry: Pick<DetectedAccountHome, 'provider' | 'home'>)
 
 /** The same list for as long as storage holds the same text, as useSyncExternalStore needs. */
 function read(): readonly string[] {
+  if (unsaved) return unsaved
   let raw: string | null
   try {
     raw = localStorage.getItem(IGNORED_KEY)
@@ -42,10 +45,10 @@ function read(): readonly string[] {
 function write(keys: readonly string[]): void {
   try {
     localStorage.setItem(IGNORED_KEY, JSON.stringify(keys))
+    unsaved = undefined
   } catch {
     // The choice still holds until the app restarts when storage is full or blocked.
-    cachedRaw = JSON.stringify(keys)
-    cached = keys
+    unsaved = keys
   }
   for (const listener of listeners) listener()
 }
