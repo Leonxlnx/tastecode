@@ -145,6 +145,24 @@ describe('model catalog cache', () => {
     expect(parseModelCatalogCache(JSON.stringify(cached))).toBeUndefined()
   })
 
+  it('keeps whether a model takes images', () => {
+    const declared = choicesFor(
+      { provider: 'opencode', sourceName: 'OpenCode', mark: 'opencode' },
+      [
+        { ...model, id: 'deepseek/deepseek-chat', images: false },
+        { ...model, id: 'openai/gpt-5.6-sol', isDefault: false, images: true },
+        { ...model, id: 'local/unknown', isDefault: false },
+      ],
+    )
+    expect(parseModelCatalogCache(serializeModelCatalogCache(declared))?.models).toEqual(declared)
+
+    const cached = JSON.parse(serializeModelCatalogCache([declared[0]!])!) as {
+      models: Array<{ model: Record<string, unknown> }>
+    }
+    cached.models[0]!.model['images'] = 'no'
+    expect(parseModelCatalogCache(JSON.stringify(cached))).toBeUndefined()
+  })
+
   it('keeps the lineage and curation an adapter declared', () => {
     const declared = choicesFor(
       { provider: 'opencode', sourceName: 'OpenCode', mark: 'opencode' },
