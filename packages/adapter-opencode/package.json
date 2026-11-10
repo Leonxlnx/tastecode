@@ -30,7 +30,7 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests --testTimeout=20000"
   },
   "dependencies": {
     "@harness/contracts": "workspace:*",

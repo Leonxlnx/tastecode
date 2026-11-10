@@ -11,9 +11,19 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
 
+/**
+ * Test rows need no durability. A synced commit per insert took seconds on a busy
+ * windows-latest runner and ran these tests past their time limit.
+ */
+function open() {
+  const db = new DatabaseSync(path.join(root, 'opencode.db'))
+  db.exec('PRAGMA journal_mode = MEMORY; PRAGMA synchronous = OFF')
+  return db
+}
+
 /** The tables OpenCode 2.2.1 writes, narrowed to what the reader uses. */
 function database() {
-  const db = new DatabaseSync(path.join(root, 'opencode.db'))
+  const db = open()
   db.exec(`
     CREATE TABLE session_v2 (
       id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT NOT NULL, title TEXT,
@@ -27,7 +37,7 @@ function database() {
 
 /** The tables builds before 2.x wrote. */
 function legacyDatabase() {
-  const db = new DatabaseSync(path.join(root, 'opencode.db'))
+  const db = open()
   db.exec(`
     CREATE TABLE session (
       id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT NOT NULL, title TEXT NOT NULL,
