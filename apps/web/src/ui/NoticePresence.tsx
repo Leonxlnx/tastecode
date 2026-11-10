@@ -46,10 +46,6 @@ function dockedComposer(): HTMLElement | null {
  * right-aligned with the composer box. The values land on the toast itself,
  * so measuring never restyles the rest of the document.
  */
-export function placeNoticeAboveComposer(notice: HTMLElement): void {
-  placeNoticeAbove(notice, dockedComposer())
-}
-
 function placeNoticeAbove(notice: HTMLElement, composer: HTMLElement | null): void {
   const rect = composer?.getBoundingClientRect()
   if (!composer || !rect || rect.height <= 0) {
