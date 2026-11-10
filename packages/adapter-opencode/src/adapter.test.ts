@@ -640,6 +640,24 @@ describe('OpenCode adapter', () => {
       }
     })
 
+    it('reports the usage of each captured answer once', async () => {
+      const { mock, adapter, events, thread, completed } = await capturedTurn('full')
+      try {
+        await adapter.sendTurn(thread.id, 'RUN_TOOL please')
+        await mock.waitFor('/session/session-1/prompt_async')
+        // Two answers, the tool call and the reply. Each arrives as a `step-finish` part
+        // and two finished `message.updated`, all three with the same counts.
+        for (const event of CAPTURED_1_18_31.tool) mock.broadcast(event)
+
+        expect(await completed).toMatchObject({ status: 'completed' })
+        expect(
+          events.flatMap((event) => (event.type === 'usage.updated' ? [event.usage.model] : [])),
+        ).toEqual(['stub/stub-model', 'stub/stub-model'])
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
     it('asks a captured permission and resolves it once', async () => {
       const { mock, adapter, events, thread, completed } = await capturedTurn('ask')
       try {

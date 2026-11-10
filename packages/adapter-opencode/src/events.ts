@@ -53,6 +53,10 @@ export class OpenCodeEventMapper {
   readonly #v2Tools = new Map<string, { name: string; input?: Record<string, JsonRpcValue> }>()
   /** The user's own messages: their parts repeat the prompt and are no answer. */
   readonly #userMessages = new Set<string>()
+  /** The model of each answer, for the step that reports its usage without one. */
+  readonly #messageModels = new Map<string, string>()
+  /** Answers whose usage is already reported. */
+  readonly #usageReported = new Set<string>()
 
   constructor(turnId: string, model?: string) {
     this.#turnId = turnId
@@ -74,8 +78,16 @@ export class OpenCodeEventMapper {
         this.#userMessages.add(info.id)
         return []
       }
-      if (info.role === 'assistant' && info.time.completed) {
-        return [usage(info.tokens, info.cost, `${info.providerID}/${info.modelID}`)]
+      if (info.role === 'assistant') {
+        const model = `${info.providerID}/${info.modelID}`
+        this.#messageModels.set(info.id, model)
+        // opencode 1.18.31 sends a finished answer twice, after the `step-finish` part
+        // that already carried its counts. Every report is added to the chat's total,
+        // so one answer is reported once.
+        if (info.time.completed && !this.#usageReported.has(info.id)) {
+          this.#usageReported.add(info.id)
+          return [usage(info.tokens, info.cost, model)]
+        }
       }
     }
     if (event.type === 'session.diff') {
@@ -275,7 +287,10 @@ export class OpenCodeEventMapper {
       return events
     }
     if (part.type === 'tool') return this.#tool(part)
-    if (part.type === 'step-finish') return [usage(part.tokens, part.cost)]
+    if (part.type === 'step-finish') {
+      this.#usageReported.add(part.messageID)
+      return [usage(part.tokens, part.cost, this.#messageModels.get(part.messageID))]
+    }
     return []
   }
 
