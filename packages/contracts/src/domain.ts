@@ -219,10 +219,6 @@ export const ThreadSchema = z
 export type Thread = z.infer<typeof ThreadSchema>
 
 /**
- * What an adapter emits. The server persists these to the event log and pushes
- * them to clients; adapters never talk to the UI directly.
- */
-/**
  * The agent asking permission before it does something.
  *
  * This is the highest-privilege moment in the app: answering yes authorises
@@ -312,6 +308,10 @@ export const UsageSchema = z.object({
 })
 export type Usage = z.infer<typeof UsageSchema>
 
+/**
+ * What an adapter emits. The server persists these to the event log and pushes
+ * them to clients; adapters never talk to the UI directly.
+ */
 export const DomainEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('thread.started'), thread: ThreadSchema }),
   z.object({ type: z.literal('turn.started'), turn: TurnSchema }),
