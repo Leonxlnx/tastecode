@@ -12135,9 +12135,12 @@ describe('rolling a session back', () => {
       windowsHide: true,
     })
     const root = repo.replaceAll('\\', '/')
-    const absolute = relative
-      .replaceAll('a/file.txt', `a/${root}/file.txt`)
-      .replaceAll('b/file.txt', `b/${root}/file.txt`)
+    // In one pass: a second replace would also rewrite the `b/file.txt` at the end of a
+    // temporary folder whose random name ends in "b" (one run in 62).
+    const absolute = relative.replaceAll(
+      /([ab])\/file\.txt/g,
+      (_match, side: string) => `${side}/${root}/file.txt`,
+    )
     sessions[0]!.emit({ type: 'diff.updated', turnId: 'turn-1', diff: absolute })
     sessions[0]!.emit(message('Done with the requested edit.', 'turn-1'))
     sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
