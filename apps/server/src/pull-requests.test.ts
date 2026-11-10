@@ -1025,7 +1025,8 @@ describe('PullRequestService', () => {
                         nodes: [
                           {
                             id: 'PRRC_1',
-                            databaseId: 1,
+                            // GitHub can leave this out; the anchor in the URL carries it too.
+                            databaseId: null,
                             author: { login: 'reviewer' },
                             body: 'First',
                             createdAt: '2026-08-09T11:30:00Z',
@@ -1055,6 +1056,7 @@ describe('PullRequestService', () => {
     const loaded = await service.detail('Blueemi/harness', 7, [])
     expect(loaded.reviewThreadsUnavailable).toBeUndefined()
     expect(loaded.reviewThreads[0]?.commentsTruncated).toBe(true)
+    expect(loaded.reviewThreads[0]?.comments[0]?.databaseId).toBe(1)
 
     repositoryFails = true
     await expect(service.detail('Blueemi/harness', 7, [], true)).rejects.toThrow(
