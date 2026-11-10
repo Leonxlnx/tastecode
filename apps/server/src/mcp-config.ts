@@ -79,7 +79,9 @@ function setOwn<T>(target: Record<string, T>, key: string, value: T): void {
 
 function parseConfig(raw: string): ParsedConfig {
   // Walked by hand rather than with record schemas, which drop a `__proto__` key.
-  const value: unknown = JSON.parse(raw)
+  // Windows editors and PowerShell 5 save UTF-8 with a byte order mark, which
+  // `JSON.parse` rejects.
+  const value: unknown = JSON.parse(raw.replace(/^﻿/, ''))
   if (!isObject(value) || value.version !== 1 || !isObject(value.projects)) {
     throw new Error('invalid MCP config: expected a version 1 project map')
   }
@@ -224,7 +226,19 @@ export class McpConfigStore {
       return this.#cache(structuredClone(EMPTY_CONFIG), stamp, checkedAt)
     }
     const raw = readFileSync(this.location, 'utf8')
-    const parsed = parseConfig(raw)
+    let parsed: ParsedConfig
+    try {
+      parsed = parseConfig(raw)
+    } catch (error) {
+      // The file is read on every chat start, for every project. A stray comma
+      // from a hand edit must not stop all of them, nor the settings page that
+      // could repair it: read it as empty, and let the next write park the
+      // original like any other file we could not fully parse.
+      console.warn(
+        `[mcp-config] ignoring ${this.location}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      parsed = { config: structuredClone(EMPTY_CONFIG), skipped: true }
+    }
     this.#readLossy = parsed.skipped
     return this.#cache(parsed.config, stamp, checkedAt)
   }

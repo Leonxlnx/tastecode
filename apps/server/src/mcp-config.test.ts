@@ -65,6 +65,32 @@ describe('project MCP config', () => {
     expect(store.list('codex', project)).toEqual([{ id: 'fresh', enabled: false }])
   })
 
+  it('reads a file that does not parse as empty and parks it before rewriting', () => {
+    const { project, location, store } = setup()
+    mkdirSync(path.dirname(location))
+    const broken = '{"version":1,"projects":{},}'
+    writeFileSync(location, broken)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    expect(store.list('codex', project)).toEqual([])
+
+    store.add('codex', project, { id: 'fresh', enabled: false })
+    const backups = readdirSync(path.dirname(location)).filter((name) => name.includes('.invalid-'))
+    expect(backups).toHaveLength(1)
+    expect(readFileSync(path.join(path.dirname(location), backups[0]!), 'utf8')).toBe(broken)
+    expect(store.list('codex', project)).toEqual([{ id: 'fresh', enabled: false }])
+  })
+
+  it('reads a file saved with a byte order mark', () => {
+    const { project, location, store } = setup()
+    store.add('codex', project, { id: 'docs', enabled: false })
+    writeFileSync(location, `﻿${readFileSync(location, 'utf8')}`)
+
+    expect(new McpConfigStore(location).list('codex', project)).toEqual([
+      { id: 'docs', enabled: false },
+    ])
+  })
+
   it('keeps provider blocks this build does not ship when it saves', () => {
     const { project, location, store } = setup()
     mkdirSync(path.dirname(location))
