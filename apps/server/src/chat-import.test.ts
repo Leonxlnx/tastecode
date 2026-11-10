@@ -8,7 +8,7 @@ import type {
   ProviderHistorySession,
   ProviderHistorySource,
 } from '@harness/contracts'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatImportService, importedThreadId, openCodeChatReader } from './chat-import.js'
 import { createT3CodeReader } from './chat-import-t3.js'
 import { ProjectFolders, ProviderHistory, savedFolder } from './provider-history.js'
@@ -378,6 +378,26 @@ describe('T3 Code chats', () => {
     await run(['t3-code:thread'])
     expect(store.thread(importedThreadId('t3-code', 'thread'))?.projectPath).toBe(site)
     expect(store.thread('external:codex:native-1')).toBeUndefined()
+  })
+
+  it('leaves no empty chat when a copy cannot be stored, so it can be imported again', async () => {
+    const site = folder('site')
+    const t3 = path.join(root, 't3')
+    t3Database(t3, [{ id: 'thread', folder: site }])
+    const { service: scanner, run } = await service({ t3 })
+    await scanner.scan()
+    const threadId = importedThreadId('t3-code', 'thread')
+    vi.spyOn(store, 'mergeProviderHistory').mockImplementationOnce(() => {
+      throw new Error('database or disk is full')
+    })
+    await expect(run(['t3-code:thread'])).resolves.toMatchObject({ imported: 0, failed: 1 })
+    expect(store.thread(threadId)).toBeUndefined()
+
+    expect((await scanner.scan()).chats).toEqual([
+      expect.objectContaining({ id: 't3-code:thread', imported: false }),
+    ])
+    await expect(run(['t3-code:thread'])).resolves.toMatchObject({ imported: 1, failed: 0 })
+    expect(store.thread(threadId)).toBeDefined()
   })
 
   it('copies the transcript, hands it to the next session and keeps the source untouched', async () => {

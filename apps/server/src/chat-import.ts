@@ -310,7 +310,14 @@ export class ChatImportService {
       archived: saved.archived,
       ...(saved.resumes ? { providerSessionId: saved.id } : {}),
     })
-    store.mergeProviderHistory(threadId, saved.revision, importedEvents(events, threadId, []))
+    try {
+      store.mergeProviderHistory(threadId, saved.revision, importedEvents(events, threadId, []))
+    } catch (error) {
+      // The chat row is already there. Left behind it would be an empty chat
+      // that every later scan reports as imported, with no way to try again.
+      store.deleteThread(threadId)
+      throw error
+    }
     if (!saved.resumes) store.rearmThreadHandover(threadId)
     this.deps.changed([threadId])
     return threadId
