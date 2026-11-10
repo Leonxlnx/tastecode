@@ -163,6 +163,12 @@ describe('review and repair phases', () => {
     )
   })
 
+  it('names the missing findings when a repair verdict lists none', () => {
+    expect(() => parseReviewPhaseOutput(JSON.stringify({ ...review, findings: [] }))).toThrow(
+      'a repair visual review must contain at least one finding',
+    )
+  })
+
   it('keeps repair bounded to the review and attempt budget', () => {
     const prompt = designRepairPrompt(
       review,

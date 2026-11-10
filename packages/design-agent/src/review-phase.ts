@@ -247,8 +247,11 @@ export function parseReviewPhaseOutput(text: string): VisualReview {
       repair: string(finding.repair, `visual review findings[${index}].repair`),
     }
   })
-  if ((value.verdict === 'pass') !== (findings.length === 0)) {
+  if (value.verdict === 'pass' && findings.length > 0) {
     throw new Error('a passing visual review cannot contain findings')
+  }
+  if (value.verdict === 'repair' && findings.length === 0) {
+    throw new Error('a repair visual review must contain at least one finding')
   }
   return {
     version: 1,
