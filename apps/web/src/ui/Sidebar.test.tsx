@@ -807,6 +807,50 @@ describe('Sidebar chat actions', () => {
     )
     expect(onOpenSettings).toHaveBeenCalledTimes(2)
     expect(onOpenSettings).toHaveBeenLastCalledWith()
+
+    // The usage button beside the gear opens usage straight away; without an
+    // owner for the usage dialog it falls back to the Usage page in Settings.
+    onOpenSettings.mockClear()
+    const usageButton = screen.getByRole('button', { name: 'Usage' })
+    expect(usageButton.querySelector('svg')).not.toBeNull()
+    expect(usageButton.hasAttribute('aria-haspopup')).toBe(false)
+    fireEvent.click(usageButton)
+    expect(onOpenSettings).toHaveBeenLastCalledWith('usage')
+    expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('opens the usage dialog from the button beside the gear', () => {
+    const onOpenUsage = vi.fn()
+    const onOpenSettings = vi.fn()
+    render(
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={onOpenSettings}
+        onOpenUsage={onOpenUsage}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Usage' }))
+    expect(onOpenUsage).toHaveBeenCalledOnce()
+    expect(onOpenSettings).not.toHaveBeenCalled()
   })
 
   it('offers Archive on hover and keeps rename and delete in the row menu', () => {
