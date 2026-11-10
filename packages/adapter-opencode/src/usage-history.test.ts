@@ -61,6 +61,9 @@ describe('OpenCode local usage history', () => {
     const file = path.join(directory, 'opencode.db')
     const database = new DatabaseSync(file)
     try {
+      // Test rows need no durability; a synced commit per insert took seconds on a busy
+      // windows-latest runner and ran this test past its time limit.
+      database.exec('PRAGMA journal_mode = MEMORY; PRAGMA synchronous = OFF')
       database.exec(
         `CREATE TABLE message (
            id TEXT PRIMARY KEY,
