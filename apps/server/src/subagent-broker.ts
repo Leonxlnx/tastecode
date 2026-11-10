@@ -368,7 +368,6 @@ export class SubagentBroker implements AgentToolsBroker {
     return this.#report(live.run)
   }
 
-  /** A child chat's event; the orchestrator passes no `item.delta`. */
   /**
    * The user sent a sub-agent's chat a prompt of their own, from the Agents tab. The
    * turn it starts reopens the run if it has finished by then, so its row runs again
@@ -379,6 +378,7 @@ export class SubagentBroker implements AgentToolsBroker {
     if (!this.#disposed && this.#runs.forThread(threadId)) this.#prompted.set(threadId, text)
   }
 
+  /** A child chat's event; the orchestrator passes no `item.delta`. */
   childEvent(threadId: string, event: DomainEvent): void {
     const live =
       this.#byChild.get(threadId) ??

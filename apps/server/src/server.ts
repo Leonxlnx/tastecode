@@ -701,7 +701,6 @@ export function startServer(
   })
 
   let listChange: ReturnType<typeof setTimeout> | undefined
-  /** Coalesces a burst (a new chat is started, renamed and titled within moments). */
   /**
    * A chat left for its provider to name still has its stand-in title after a
    * turn: history is read first, so a name the provider did write wins, and
@@ -716,6 +715,7 @@ export function startServer(
     }
   }
 
+  /** Coalesces a burst (a new chat is started, renamed and titled within moments). */
   function announceListChange(): void {
     listChange ??= setTimeout(() => {
       listChange = undefined
