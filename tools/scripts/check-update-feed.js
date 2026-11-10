@@ -11,9 +11,11 @@ export const generations = [
   { label: 'Later builds', picks: 'the highest published version' },
 ]
 
-// The asset names and checks mirror the desktop GitHubReleaseProvider.
+// The asset names and checks mirror the desktop GitHubReleaseProvider. Intel Mac
+// builds exist only since 0.5.1, so only the later generation looks for theirs.
 const installers = [
   { platform: 'macOS', target: 'mac', arch: 'arm64', extension: 'dmg' },
+  { platform: 'macOS Intel', target: 'mac', arch: 'x64', extension: 'dmg', laterBuildsOnly: true },
   { platform: 'Windows', target: 'win', arch: 'x64', extension: 'exe' },
 ]
 
@@ -78,6 +80,7 @@ export function updateFeedVerdicts(
   )[0]
   return [byDate, byVersion].map((release, index) => {
     const problems = installers
+      .filter((installer) => index === 1 || !installer.laterBuildsOnly)
       .map((installer) => installerProblem(release, repository, installer))
       .filter(Boolean)
     const notes = []

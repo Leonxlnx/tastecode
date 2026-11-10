@@ -7,7 +7,7 @@ const repository = 'Leonxlnx/tastecode'
 function release(
   version,
   publishedAt,
-  { assets = ['mac-arm64.dmg', 'win-x64.exe'], ...rest } = {},
+  { assets = ['mac-arm64.dmg', 'win-x64.exe', 'mac-x64.dmg'], ...rest } = {},
 ) {
   const tag = `v${version}`
   return {
@@ -85,6 +85,18 @@ test('every generation fails when the newest release lacks an installer or its d
     'TasteCode-0.1.2-mac-arm64.dmg has no SHA-256 digest',
     'TasteCode-0.1.2-win-x64.exe is still uploading',
   ])
+})
+
+test('a release without the Intel Mac installer fails only the builds that have one', () => {
+  const [old, later] = verdicts([
+    release('0.5.2', '2026-11-08T00:00:00Z', { assets: ['mac-arm64.dmg', 'win-x64.exe'] }),
+  ])
+  assert.deepEqual(old, { tag: 'v0.5.2', failed: false, problems: [] })
+  assert.deepEqual(later, {
+    tag: 'v0.5.2',
+    failed: true,
+    problems: ['missing TasteCode-0.5.2-mac-x64.dmg'],
+  })
 })
 
 test('a draft is judged as if published now, with its assets moved under the tag', () => {
