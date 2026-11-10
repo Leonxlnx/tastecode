@@ -98,6 +98,8 @@ export const PHONE_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
 
 /** Pushes a phone never receives: its own pairing state and desktop-only previews. */
 const PHONE_HIDDEN_PUSH = /^\{"channel":"(?:phone|preview)\./
+/** The same rule by channel name, asked by the push bus before it numbers a push. */
+const PHONE_HIDDEN_CHANNEL = /^(?:phone|preview)\./
 
 const StoredDeviceSchema = z.object({
   id: z.string().min(1),
@@ -165,6 +167,10 @@ export class PhoneLinkSocket implements PushSocket {
 
   get bufferedAmount(): number {
     return this.#socket.bufferedAmount
+  }
+
+  accepts(channel: string): boolean {
+    return !PHONE_HIDDEN_CHANNEL.test(channel)
   }
 
   send(frame: string, callback?: (error?: Error) => void): void {
