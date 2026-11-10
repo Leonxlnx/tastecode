@@ -1796,7 +1796,8 @@ function normalizeListItem(
 function normalizeComment(raw: ParsedRawComment, viewerLogin: string): PullRequestComment {
   const url = raw.url ?? 'https://github.com/'
   const author = actor(raw.author)
-  const parsedDatabaseId = Number(/(?:issuecomment|discussion_r)-(\d+)/.exec(url)?.[1] ?? 0)
+  // Anchors are `#issuecomment-123` and, without a hyphen, `#discussion_r123`.
+  const parsedDatabaseId = Number(/(?:issuecomment-|discussion_r)(\d+)/.exec(url)?.[1] ?? 0)
   const databaseId = raw.databaseId ?? (parsedDatabaseId || undefined)
   return {
     id: raw.id ?? `${author.login}:${raw.createdAt ?? ''}`,
