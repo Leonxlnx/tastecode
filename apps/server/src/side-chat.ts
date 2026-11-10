@@ -376,9 +376,11 @@ function toSnapshotEntry(item: Item): SideChatSnapshotEntry | undefined {
 }
 
 function boundedText(text: string): string {
-  return text.length <= MAX_ENTRY_CHARACTERS
-    ? text
-    : `[earlier content truncated]\n${text.slice(-MAX_ENTRY_CHARACTERS)}`
+  if (text.length <= MAX_ENTRY_CHARACTERS) return text
+  let tail = text.slice(-MAX_ENTRY_CHARACTERS)
+  // A cut must not start on a low surrogate.
+  if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1)
+  return `[earlier content truncated]\n${tail}`
 }
 
 /** A command keeps its command line up to this length, and never its output. */

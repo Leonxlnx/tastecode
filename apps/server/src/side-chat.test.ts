@@ -105,6 +105,19 @@ describe('Side chat context', () => {
     expect(snapshotCompactReplayEntries(history)).toEqual(snapshot)
   })
 
+  it('never starts a shortened message in the middle of a character', () => {
+    // One code unit over the limit, so the cut lands inside the first emoji.
+    const text = `${'😀'.repeat(12_000)}a`
+
+    const [entry] = snapshotEntries([{ event: item('user', 'user', text) }])
+
+    expect(entry).toEqual({
+      kind: 'message',
+      role: 'user',
+      text: `[earlier content truncated]\n${'😀'.repeat(11_999)}a`,
+    })
+  })
+
   it('keeps the output of a tool step under its text', () => {
     const history: Array<{ event: DomainEvent }> = [
       { event: item('user', 'user', 'Run the tests') },
