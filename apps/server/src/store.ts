@@ -3012,9 +3012,14 @@ export class Store {
   }
 
   pruneHistory(before: number, archive: string): number {
+    let closed = 0
     let ids: string[] = []
     this.#transaction(() => {
-      ids = this.historyCleanupCandidates(before)
+      const candidates = this.historyCleanupCandidates(before)
+      closed = candidates.length
+      // A chat's sub-agents go with it, as in `deleteThread`. They are never
+      // closed themselves, so left behind nothing could reach or remove them.
+      ids = [...new Set(candidates.flatMap((id) => [id, ...this.ownedThreadIds(id)]))]
       // The archive is flushed to disk while the transaction still holds the
       // selected state. A failed write cannot erase even one conversation.
       this.#writeHistoryArchive(archive, ids)
@@ -3045,7 +3050,7 @@ export class Store {
     this.#searchSnapshots.clear()
     this.#queuedThreadIdsCache = undefined
     this.#invalidateSidebarThreads()
-    return ids.length
+    return closed
   }
 
   /**
