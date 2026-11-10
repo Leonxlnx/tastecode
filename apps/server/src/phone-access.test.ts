@@ -1,4 +1,4 @@
-import { Server } from 'node:net'
+import { connect, Server } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import { PhonePairingPayloadSchema, type PhoneAccessStatus } from '@harness/contracts'
@@ -214,6 +214,31 @@ describe('phone access', () => {
         { Origin: 'https://example.com' },
       ),
     ).rejects.toThrow(/403/)
+  })
+
+  it('refuses a request target that does not parse instead of throwing', async () => {
+    const { access } = harness()
+    const { status } = await access.startPairing()
+    const socket = connect(status.port, '127.0.0.1')
+    const answer = new Promise<string>((resolve, reject) => {
+      let received = ''
+      socket.on('data', (chunk: Buffer) => (received += chunk.toString()))
+      socket.once('close', () => resolve(received))
+      socket.once('error', reject)
+    })
+    socket.write(
+      [
+        'GET // HTTP/1.1',
+        'Host: 127.0.0.1',
+        'Connection: Upgrade',
+        'Upgrade: websocket',
+        'Sec-WebSocket-Version: 13',
+        'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+        '',
+        '',
+      ].join('\r\n'),
+    )
+    expect(await answer).toMatch(/^HTTP\/1\.1 403 /)
   })
 
   it('closes a removed phone and does not let it back in', async () => {

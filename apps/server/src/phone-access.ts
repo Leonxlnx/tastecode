@@ -507,7 +507,15 @@ export class PhoneAccess {
       return false
     }
     const remote = request.socket.remoteAddress ?? ''
-    const path = new URL(request.url ?? '/', 'ws://phone.local').pathname
+    // The request target is whatever the client sent, and some targets ("//")
+    // do not parse. This runs before the handshake, in an event listener: a
+    // throw here would be an uncaught exception that takes the server down.
+    let path: string | undefined
+    try {
+      path = new URL(request.url ?? '/', 'ws://phone.local').pathname
+    } catch {
+      path = undefined
+    }
     // A browser always sends Origin; the phone app never does. No page may
     // reach this listener, whatever it guesses about the protocol.
     if (path !== PHONE_LINK_PATH || request.headers.origin !== undefined) return refuse(403)
