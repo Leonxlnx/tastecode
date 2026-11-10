@@ -287,6 +287,15 @@ describe('PullRequestService', () => {
               createdAt: '2026-08-09T10:00:00Z',
               url: 'https://github.com/Blueemi/harness/pull/7#issuecomment-11',
             },
+            {
+              id: 'IC_2',
+              databaseId: 12,
+              // A person: GitHub says so, whatever the login ends in.
+              author: { login: 'talbot', is_bot: false },
+              body: 'hi',
+              createdAt: '2026-08-09T10:05:00Z',
+              url: 'https://github.com/Blueemi/harness/pull/7#issuecomment-12',
+            },
           ],
           reviews: [
             {
@@ -431,6 +440,7 @@ describe('PullRequestService', () => {
       resolved: false,
     })
     expect(detail.comments[0]?.viewerDidAuthor).toBe(true)
+    expect(detail.comments[1]?.author).toEqual({ login: 'talbot', isBot: false })
 
     await service.action('Blueemi/harness', 7, {
       type: 'update_metadata',

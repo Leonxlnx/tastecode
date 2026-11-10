@@ -1965,7 +1965,8 @@ function reviewRequestActor(raw: ParsedRawActor, owner: string): PullRequestDeta
 
 function actor(raw: ParsedRawActor | null | undefined): PullRequestDetail['author'] {
   const login = raw?.login || raw?.slug || raw?.name || 'ghost'
-  return { login, isBot: raw?.is_bot === true || /(?:\[bot\]|-bot$|bot$)/i.test(login) }
+  // GitHub's own answer wins; the login is only a guess for when it gives none.
+  return { login, isBot: raw?.is_bot ?? /(?:\[bot\]|bot$)/i.test(login) }
 }
 
 export function normalizeState(state: string | undefined): PullRequestListItem['state'] {
