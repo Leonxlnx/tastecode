@@ -4735,6 +4735,56 @@ describe('provider-neutral design briefing', () => {
     },
   )
 
+  it('ends a resumed Design run whose stored reference deck no longer parses', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-stale-deck-'))
+    writePreviewArtifacts(workspace)
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'stale-deck',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Stale deck',
+    })
+    store.setDesignRun('stale-deck', {
+      ...approvalSnapshot(workspace),
+      referenceAttachments: [],
+      // Stored by a build that knew a layout family this one does not.
+      referenceDeck: [
+        {
+          id: 'reviewed-hero',
+          family: 'retired-family',
+          cue: 'Reviewed composition',
+          imagePath: path.join(workspace, 'reference.png'),
+        },
+      ],
+      originalRequest: 'Build a site.',
+      phase: 'build',
+      askedQuestions: false,
+      finalAsked: true,
+      explicitAnswers: [],
+    })
+    const { orchestrator, sessions, received } = harness(undefined, store)
+    try {
+      await orchestrator.submitTurn('stale-deck', 'Continue as a normal task.')
+      expect(sessions[0]?.sent).toEqual([
+        expect.stringContaining('User request:\nContinue as a normal task.'),
+      ])
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'thread.error' &&
+            event.message.includes('Stored Design state is invalid'),
+        ),
+      ).toBe(true)
+      expect(store.designRun('stale-deck')).toBeUndefined()
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  })
+
   it('accepts a Design turn from turn.started while sendTurn is still pending', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-started-'))
     const { orchestrator, sessions, received, store, logs } = harness()
