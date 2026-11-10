@@ -23,7 +23,6 @@ import { z } from 'zod'
 import { PullRequestImageService } from './pull-request-images.js'
 
 const runFile = promisify(execFile)
-const LIST_TTL_MS = 30_000
 const DETAIL_TTL_MS = 15_000
 const FILES_TTL_MS = 60_000
 const ACCOUNT_TTL_MS = 60_000
@@ -426,7 +425,7 @@ export class PullRequestService {
   readonly #resolveProjects: (paths: readonly string[]) => Promise<Map<string, string>>
 
   #accountCache: Cache<PullRequestAccount> | undefined
-  #listCache: (Cache<PullRequestListResult> & { projectKey: string }) | undefined
+  #listCache: { projectKey: string; value: PullRequestListResult } | undefined
   #detailCache = new Map<string, Cache<PullRequestDetail>>()
   #filesCache = new Map<string, Cache<PullRequestFilesResult>>()
   #metadataOptionsCache = new Map<string, Cache<PullRequestMetadataOptions>>()
@@ -843,7 +842,7 @@ export class PullRequestService {
     const account = await this.#account(refresh)
     if (!account.authenticated) {
       const value = { account, items: [], fetchedAt: this.#now(), truncated: false }
-      this.#listCache = { projectKey, value, expiresAt: this.#now() + LIST_TTL_MS }
+      this.#listCache = { projectKey, value }
       return value
     }
 
@@ -901,7 +900,7 @@ export class PullRequestService {
           }
         : {}),
     }
-    this.#listCache = { projectKey, value, expiresAt: this.#now() + LIST_TTL_MS }
+    this.#listCache = { projectKey, value }
     return value
   }
 
