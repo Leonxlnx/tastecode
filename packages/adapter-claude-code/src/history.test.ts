@@ -925,9 +925,49 @@ describe('Claude Code saved history', { timeout: 20_000 }, () => {
       status: 'completed',
       attachments: ['data:image/png;base64,AA=='],
     })
-    expect(result?.text).toContain('-before\n+after')
-    expect(result?.text).toContain('Saved\n')
+    expect(result?.text).toMatch(/-before\n\+after$/)
     expect(result?.text).not.toContain('base64')
+  })
+
+  it('keeps only the diff on a finished edit and adds the error to a failed one', async () => {
+    const edit = (id: string) => ({
+      type: 'tool_use',
+      id,
+      name: 'Edit',
+      input: { file_path: 'src/example.ts', old_string: 'before', new_string: 'after' },
+    })
+    const f = await fixture([
+      row('u1', 'user', 'Edit twice'),
+      row('a1', 'assistant', [edit('done'), edit('refused')], 'u1'),
+      row(
+        'r1',
+        'user',
+        [
+          {
+            type: 'tool_result',
+            tool_use_id: 'done',
+            content: 'The file src/example.ts has been updated.\n     1→after',
+          },
+          {
+            type: 'tool_result',
+            tool_use_id: 'refused',
+            is_error: true,
+            content: 'String to replace not found in file.',
+          },
+        ],
+        'a1',
+      ),
+    ])
+    const changes = items(await f.source.read((await f.source.list())[0]!)).filter(
+      (item) => item.type === 'file_change',
+    )
+    const diff = changes.find((item) => item.id === 'a1:0')?.text
+    expect(diff).toMatch(/^diff --git /)
+    expect(diff).toMatch(/-before\n\+after$/)
+    expect(changes.find((item) => item.id === 'a1:1')).toMatchObject({
+      status: 'failed',
+      text: `${diff}\n\nString to replace not found in file.`,
+    })
   })
 
   it('isolates bad JSON, incomplete records, missing stores, and removed transcripts', async () => {
