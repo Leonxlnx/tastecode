@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -199,6 +199,22 @@ describe('sub-agent chats in the store', () => {
     expect(store.thread('child')).toBeUndefined()
     expect(store.history('child')).toEqual([])
     expect(store.subagents.ofParent('main')).toEqual([])
+    store.close()
+  })
+
+  it('prunes a closed chat’s sub-agent chats with it, and archives them', () => {
+    const store = new Store(':memory:')
+    seed(store)
+    store.subagents.add(run())
+    store.closeThread('main')
+    const archive = path.join(dir, 'pruned.ndjson')
+    // One closed chat: its sub-agent chat is part of it, not a second one.
+    expect(store.pruneHistory(Date.now() + 1_000, archive)).toBe(1)
+    expect(store.thread('main')).toBeUndefined()
+    expect(store.thread('child')).toBeUndefined()
+    expect(store.history('child')).toEqual([])
+    expect(store.subagents.ofParent('main')).toEqual([])
+    expect(readFileSync(archive, 'utf8')).toContain('private sub-agent answer')
     store.close()
   })
 
