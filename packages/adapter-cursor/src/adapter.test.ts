@@ -215,6 +215,7 @@ describe('Cursor adapter', () => {
       'stream-json',
       '--model',
       'cursor-model',
+      '--',
       '<system-instructions>\nAnswer plainly.\n</system-instructions>\n\nUpdate README',
     ])
     expect(events).toEqual(
@@ -253,6 +254,7 @@ describe('Cursor adapter', () => {
           '--print',
           '--output-format',
           'stream-json',
+          '--',
           '<system-instructions>\nAnswer plainly.\n</system-instructions>\n\nline one\nline two',
         ],
         expect.objectContaining({ cwd: 'C:\\repo' }),
@@ -304,12 +306,37 @@ describe('Cursor adapter', () => {
     await adapter.sendTurn(thread.id, 'What is wrong here?', [image, notes])
 
     expect(CURSOR_CAPABILITIES.images).toBe(true)
-    expect(args.slice(-5)).toEqual([
+    expect(args.slice(-6)).toEqual([
       '--image',
       image,
       '--add-dir',
       folder,
+      '--',
       `What is wrong here?\n\nAttached files:\n- ${notes}`,
+    ])
+    adapter.dispose()
+  })
+
+  it('keeps a prompt that starts with a dash from being read as an option', async () => {
+    // cursor-agent 2026.07.23-e383d2b and 2026.10.22-27dcf5f both answer
+    // `--print "- one"` with "error: unknown option '- one'"; behind "--" the
+    // same prompt is taken as the prompt.
+    let args: string[] = []
+    const adapter = new CursorAdapter({
+      spawn: (_command, value) => {
+        args = value
+        return new FakeChild()
+      },
+    })
+    const thread = await adapter.resumeThread('cursor-session-1', 'C:\\repo')
+
+    await adapter.sendTurn(thread.id, '- fix the footer\n- fix the header')
+
+    expect(args.slice(-4)).toEqual([
+      '--resume',
+      'session-1',
+      '--',
+      '- fix the footer\n- fix the header',
     ])
     adapter.dispose()
   })

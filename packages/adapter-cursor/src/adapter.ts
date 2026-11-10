@@ -230,6 +230,10 @@ export class CursorAdapter extends EventEmitter<Events> {
       ...(effectiveOptions.model ? ['--model', effectiveOptions.model] : []),
       ...(this.#sessionId ? ['--resume', this.#sessionId] : []),
       ...attached.args,
+      // The CLI reads a prompt that starts with "-" as an option and exits
+      // with "error: unknown option" (a list, "--- notes", "-1 is wrong").
+      // After "--" everything is the prompt.
+      '--',
       prompt,
     ]
     const child = this.#spawn('cursor-agent', args, { cwd: this.#workspacePath })
