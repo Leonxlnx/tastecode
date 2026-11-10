@@ -11,6 +11,7 @@ const EFFORT_RANKS = new Map([
   ['max', 7],
   ['maximum', 7],
   ['ultra', 8],
+  ['ultracode', 8],
 ])
 
 /** Where an effort name sits from least to most thinking; undefined for a name no engine shares. */
