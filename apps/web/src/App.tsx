@@ -170,6 +170,7 @@ import { UsageResetController, usageResetAt } from './usage-reset.js'
 import { poolsOf, recommendedAccounts } from './account-pool.js'
 import {
   AccountLabelContext,
+  accountIdentityOf,
   accountLabelOf,
   accountsOf,
   activeAccountOf,
@@ -1548,19 +1549,20 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     activeModelSource !== undefined &&
     !activeSession.id.startsWith('pending:')
   /**
-   * A provider's other signed-in accounts, each offered as a source of its
-   * own: an open chat moves to the account picked, a new chat starts on it.
-   * The provider's own entry stands for an open chat's account, else for the
-   * account new chats start on.
+   * A provider's other signed-in accounts. The provider's own entry stands for
+   * an open chat's account, else for the account new chats start on, which a
+   * chat still starting runs on too: it has no account of its own yet.
    */
-  const otherAccountSources = useMemo(() => {
+  const accountSources = useMemo(() => {
     const sources: Array<{ provider: ProviderId; accountId: AccountId; primary: AccountId }> = []
-    if (activeSession && !movableChat) return sources
     for (const status of providerStatuses) {
       if (status.capabilities?.multipleAccounts !== true) continue
       if (!rosterAllows(providerRoster, sourceKey({ provider: status.id }))) continue
       const primary =
-        activeSession?.provider === status.id && !activeSession.agent && !activeSession.connectionId
+        movableChat &&
+        activeSession?.provider === status.id &&
+        !activeSession.agent &&
+        !activeSession.connectionId
           ? ((activeSession.accountId as AccountId | undefined) ?? DEFAULT_ACCOUNT_ID)
           : activeAccountOf(providerAccounts, status.id)
       const signedIn = status.auth === 'authenticated'
@@ -1570,6 +1572,14 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     }
     return sources
   }, [activeSession, movableChat, providerStatuses, providerRoster, providerAccounts])
+  /**
+   * Those accounts as sources of their own: an open chat moves to the account
+   * picked, a new chat starts on it. A chat still starting cannot move yet.
+   */
+  const otherAccountSources = useMemo(
+    () => (activeSession && !movableChat ? [] : accountSources),
+    [activeSession, movableChat, accountSources],
+  )
   const otherAccountKeys = otherAccountSources
     .map(({ provider: id, accountId }) => chatAccountKey(id, accountId))
     .join('\u0001')
@@ -1613,20 +1623,23 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       ),
     [otherAccountSources, otherAccountModels, hiddenModels],
   )
-  /** "Claude Code (Team)", once a provider offers more than one of its accounts. */
+  /**
+   * "Claude Code (Team)" and who that is, once a provider offers more than one
+   * of its accounts. A choice that already says so stays as it is.
+   */
   const withAccountName = useCallback(
     (choice: ModelChoice): ModelChoice => {
-      if (choice.agent || choice.connectionId) return choice
-      const offered = otherAccountSources.find((entry) => entry.provider === choice.provider)
+      if (choice.account || choice.agent || choice.connectionId) return choice
+      const offered = accountSources.find((entry) => entry.provider === choice.provider)
       if (!offered) return choice
-      const account = accountLabelOf(
+      const account = accountIdentityOf(
         providerAccounts,
         choice.provider,
         choice.accountId ?? offered.primary,
       )
-      return { ...choice, sourceName: `${choice.sourceName} (${account})` }
+      return { ...choice, sourceName: `${choice.sourceName} (${account.label})`, account }
     },
-    [otherAccountSources, providerAccounts],
+    [accountSources, providerAccounts],
   )
   const signInsVersion = useSyncExternalStore(
     subscribeRememberedSignIns,
@@ -1781,6 +1794,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   // One effective setup drives both the picker and requests. State can briefly
   // contain values from storage or the model that was just hidden; resolving
   // in render prevents that transition from leaking into an immediate send.
+  /** The same choice, saying which account the next message runs on. */
+  const composerModelChoice = useMemo(
+    () => selectedModelChoice && withAccountName(selectedModelChoice),
+    [selectedModelChoice, withAccountName],
+  )
   const selectedEffort = selectedModelChoice
     ? resolveReasoningEffort({
         currentEffort: effort,
@@ -4549,6 +4567,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           pendingSession.current?.id === provisionalId ? pendingSession.current : undefined
         if (pending) pending.threadId = threadId
         const canonicalTitle = pending?.title ?? title
+        // The provisional row has no account of its own. Without this a chat on
+        // another account read as the default one until the next project list.
+        const startedOn =
+          namedAccount && namedAccount !== DEFAULT_ACCOUNT_ID ? { accountId: namedAccount } : {}
         setProjects((current) =>
           current.map((project) =>
             project.path !== projectPath
@@ -4560,7 +4582,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                   sessions: project.sessions.some((session) => session.id === provisionalId)
                     ? project.sessions.flatMap((session) =>
                         session.id === provisionalId
-                          ? [{ ...session, id: threadId }]
+                          ? [{ ...session, id: threadId, ...startedOn }]
                           : session.id === threadId
                             ? []
                             : [session],
@@ -4572,9 +4594,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                             id: threadId,
                             title: canonicalTitle,
                             provider: choice.provider,
-                            ...(namedAccount && namedAccount !== DEFAULT_ACCOUNT_ID
-                              ? { accountId: namedAccount }
-                              : {}),
+                            ...startedOn,
                             ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
                             ...(choice.agent
                               ? {
@@ -7747,7 +7767,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     models: pickerModels,
     modelsLoaded: modelsLoaded,
     modelId: selectedModelChoice?.key,
-    modelChoice: selectedModelChoice,
+    modelChoice: composerModelChoice,
     modelPending: modelChoicePending,
     effort: selectedEffort,
     serviceTier: selectedServiceTier,

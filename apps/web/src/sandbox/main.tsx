@@ -26,7 +26,8 @@ import './sandbox.css'
  * apps/web and open http://127.0.0.1:5420/sandbox.html.
  *
  * `?chat=<id>` opens that chat once the sidebar shows it, for example
- * `?chat=demo-focus-ring`. The ids are in demo-data.ts.
+ * `?chat=demo-focus-ring`. The ids are in demo-data.ts. `?accounts=several`
+ * adds a second Claude Code account.
  */
 
 const root = document.getElementById('root')
@@ -43,12 +44,14 @@ applyAccentPreference(readAccentPreference(appearanceMode))
 document.documentElement.dataset['shell'] = 'web'
 
 // `?usageReset=60&chat=demo-focus-ring` exercises a quota reset in sixty seconds.
-const usageResetSeconds = Number(new URLSearchParams(window.location.search).get('usageReset'))
-const transport = new DemoTransport(
-  usageResetSeconds > 0 && Number.isFinite(usageResetSeconds)
+const sandboxParams = new URLSearchParams(window.location.search)
+const usageResetSeconds = Number(sandboxParams.get('usageReset'))
+const transport = new DemoTransport({
+  ...(usageResetSeconds > 0 && Number.isFinite(usageResetSeconds)
     ? { usageResetMs: Math.min(usageResetSeconds, 604_800) * 1000 }
-    : {},
-)
+    : {}),
+  severalAccounts: sandboxParams.get('accounts') === 'several',
+})
 
 createRoot(root).render(
   <StrictMode>

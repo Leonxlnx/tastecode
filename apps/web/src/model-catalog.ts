@@ -1,4 +1,5 @@
 import type { AccountId, Model, ProviderId } from '@harness/contracts'
+import type { AccountIdentity } from './provider-accounts-state.js'
 import type { ProviderMark } from './provider-presentation.js'
 import { providerPresentation, sourcePresentation } from './provider-presentation.js'
 
@@ -18,6 +19,8 @@ export type ModelChoice = {
    * an open chat's own account or else the one new chats start on.
    */
   accountId?: AccountId | undefined
+  /** Who the model runs as, set once a provider offers more than one of its accounts. */
+  account?: AccountIdentity | undefined
   model: Model
 }
 

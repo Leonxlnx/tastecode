@@ -137,6 +137,15 @@
   --mark-openai: var(--text);
   --mark-grok: #9085e9;
 
+  /* Which of a provider's accounts, where it has several (AccountBadge). The
+     first two are the pair most people, colour-blind or not, tell apart. */
+  --account-1: #6aa8f7;
+  --account-2: #e9a23b;
+  --account-3: #5cc08f;
+  --account-4: #ee7ba6;
+  --account-5: #a98df5;
+  --account-6: #4cc3c9;
+
   /* Meaning only. */
   --running: #d4d4d4;
   --attention: #4c9dff;
@@ -439,6 +448,13 @@
 
   --mark-anthropic: #c6613f;
   --mark-grok: #6250d6;
+
+  --account-1: #1d6fd1;
+  --account-2: #b26a00;
+  --account-3: #12804a;
+  --account-4: #c9306f;
+  --account-5: #6b4bd8;
+  --account-6: #0b7f87;
 
   --running: #52525b;
   --attention: #2563eb;
