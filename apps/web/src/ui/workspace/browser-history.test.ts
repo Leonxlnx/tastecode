@@ -41,6 +41,24 @@ it('keeps one row for a page whose fragment moves, and stores no fragment', () =
   expect(urls()).toEqual(['https://docs.example/guide'])
 })
 
+it("keeps a single-page app's route, one row per route, without its secrets", () => {
+  rememberBrowserVisit('http://127.0.0.1:5173/#/settings', 'App')
+  rememberBrowserVisit('http://127.0.0.1:5173/#!/inbox?tab=all', 'App')
+  rememberBrowserVisit(
+    'http://127.0.0.1:5173/#/callback?access_token=route-secret&next=home',
+    'App',
+  )
+  rememberBrowserVisit('http://127.0.0.1:5173/#/settings', 'App')
+
+  expect(urls()).toEqual([
+    'http://127.0.0.1:5173/#/settings',
+    'http://127.0.0.1:5173/#/callback?next=home',
+    'http://127.0.0.1:5173/#!/inbox?tab=all',
+  ])
+  expect(localStorage.getItem(STORAGE_KEY)).not.toContain('route-secret')
+  expect(browserVisitAddress(urls()[0]!)).toBe('127.0.0.1:5173#/settings')
+})
+
 it('keeps separate rows for different paths and queries', () => {
   rememberBrowserVisit('https://site.example/a', 'A')
   rememberBrowserVisit('https://site.example/b', 'B')

@@ -96,13 +96,14 @@ export function rememberBrowserVisit(url: string, title: string, now = Date.now(
   if (!page || page.href.length > MAX_URL_LENGTH) return
   const reportedAt = page.href
   // A password, a sign-in code or a token in the address would otherwise sit in storage in
-  // plain text. The fragment can carry tokens too (implicit sign-in), and a row never needs it.
+  // plain text. The fragment can carry tokens too (implicit sign-in), so only an app's route
+  // in it is kept, without its secrets.
   const removed = [decode(page.username), decode(page.password)]
   for (const [name, value] of new URLSearchParams(page.hash.slice(1)))
     if (secretParam(name)) removed.push(value)
   page.username = ''
   page.password = ''
-  page.hash = ''
+  page.hash = appRoute(page.hash)
   // A copy: deleting from the live parameters while walking them would skip one.
   for (const [name, value] of Array.from(page.searchParams)) {
     if (!secretParam(name)) continue
@@ -136,12 +137,30 @@ export function rememberBrowserVisit(url: string, title: string, now = Date.now(
   for (const listener of listeners) listener()
 }
 
-/** The address a row shows: the page without its scheme, and no bare trailing slash. */
+/**
+ * The address a row shows: the page without its scheme, and no bare trailing
+ * slash. An app's route stays, since it is the page; an anchor does not.
+ */
 export function browserVisitAddress(url: string): string {
   const page = webPage(url)
   if (!page) return url
   const path = page.pathname === '/' ? '' : page.pathname
-  return `${page.host}${path}${page.search}`
+  return `${page.host}${path}${page.search}${appRoute(page.hash)}`
+}
+
+/**
+ * A fragment that is a single-page app's route, `#/settings` or `#!/inbox`,
+ * with its secret parameters taken out. Any other fragment is an anchor or a
+ * sign-in response, and becomes empty.
+ */
+function appRoute(hash: string): string {
+  if (!/^#!?\//.test(hash)) return ''
+  const queryAt = hash.indexOf('?')
+  if (queryAt === -1) return hash
+  const query = new URLSearchParams(hash.slice(queryAt + 1))
+  for (const [name] of Array.from(query)) if (secretParam(name)) query.delete(name)
+  const kept = query.toString()
+  return `${hash.slice(0, queryAt)}${kept ? `?${kept}` : ''}`
 }
 
 function decode(value: string): string {
@@ -161,8 +180,8 @@ function webPage(value: string): URL | undefined {
   }
 }
 
-/** A fragment moves within a page, so it does not make another row. */
+/** An anchor moves within a page, so it does not make another row; an app's route does. */
 function pageKey(page: URL | undefined): string | undefined {
   if (!page) return undefined
-  return `${page.origin}${page.pathname}${page.search}`
+  return `${page.origin}${page.pathname}${page.search}${appRoute(page.hash)}`
 }
