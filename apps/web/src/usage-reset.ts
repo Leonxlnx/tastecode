@@ -218,10 +218,25 @@ export class UsageResetController {
     if (later !== undefined) {
       // The user may have cancelled or woken the chat while the reads above ran.
       if (!this.#running || !this.#stored()?.some((each) => sameRequest(each, entry))) return
+      // Saved first: the snooze's own lifecycle event must find the new time, or it cancels.
       this.#update((entries) =>
         entries.map((each) => (sameRequest(each, entry) ? { ...each, resetsAt: later } : each)),
       )
-      await this.transport.request('thread.snooze', { threadId: entry.threadId, wakeAt: later })
+      try {
+        await this.transport.request('thread.snooze', { threadId: entry.threadId, wakeAt: later })
+      } catch (error) {
+        // The server snoozes only an active chat, and this one may not be awake yet. With the
+        // later time kept, its wake would read as the user's and cancel the resume; the time it
+        // had keeps it due, so the next check snoozes it again.
+        this.#update((entries) =>
+          entries.map((each) =>
+            sameRequest(each, entry) && each.resetsAt === later
+              ? { ...each, resetsAt: entry.resetsAt }
+              : each,
+          ),
+        )
+        throw error
+      }
       return
     }
     if (

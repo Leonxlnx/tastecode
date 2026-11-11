@@ -212,6 +212,33 @@ describe('resume at usage reset', () => {
     expect(controller.snapshot()).toHaveLength(sends ? 0 : 1)
   })
 
+  it('tries the later snooze again when the chat was not awake for it', async () => {
+    const { controller, request, listeners } = setup()
+    await controller.schedule(session, 'ask', NOW + 1000)
+    const original = request.getMockImplementation()!
+    let awake = false
+    request.mockImplementation(async (method) => {
+      if (method === 'usage.summary') return { limits: [window(NOW + 5000)] }
+      if (method === 'thread.snooze' && !awake)
+        throw new Error('thread is snoozed, expected active')
+      return original(method)
+    })
+    vi.setSystemTime(NOW + 1000)
+    await controller.check()
+    expect(controller.snapshot()[0]?.resetsAt).toBe(NOW + 1000)
+
+    // The server wakes the chat at the first reset; that is not the user waking it.
+    awake = true
+    listeners.get('thread.lifecycle')!({ threadId: 'limited', lifecycle: { state: 'active' } })
+    expect(controller.snapshot()).toHaveLength(1)
+    await controller.check()
+    expect(controller.snapshot()[0]?.resetsAt).toBe(NOW + 5000)
+    expect(request).toHaveBeenLastCalledWith('thread.snooze', {
+      threadId: 'limited',
+      wakeAt: NOW + 5000,
+    })
+  })
+
   it('does not snooze again when the resume is cancelled while usage is read', async () => {
     const { controller, request } = setup()
     await controller.schedule(session, 'ask', NOW + 1000)
