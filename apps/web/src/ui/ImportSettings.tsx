@@ -61,6 +61,10 @@ export function ImportSettings(props: {
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set())
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set())
   const [job, setJob] = useState<ChatImportJob>()
+  /** What the last import was asked to bring in, to find what it could not. */
+  const [started, setStarted] = useState<readonly string[]>([])
+  /** The first scan after that import finished; an earlier one still lists its chats as new. */
+  const [afterImport, setAfterImport] = useState<ChatImportScan>()
   const [startFailure, setStartFailure] = useState<string>()
   const [now] = useState(() => Date.now())
 
@@ -71,8 +75,10 @@ export function ImportSettings(props: {
       setFailure(undefined)
       // A finished import from an earlier visit is not news on this one.
       if (next.job?.state === 'running') setJob(next.job)
+      return next
     } catch (cause) {
       setFailure(message(cause))
+      return undefined
     }
   }, [transport])
 
@@ -93,7 +99,8 @@ export function ImportSettings(props: {
         setJob(next)
         if (next.state !== 'finished') return
         setSelected(new Set())
-        void load()
+        setAfterImport(undefined)
+        void load().then(setAfterImport)
       }),
     [transport, load],
   )
@@ -108,14 +115,23 @@ export function ImportSettings(props: {
   const start = async (ids: string[]) => {
     setStartFailure(undefined)
     setJob(undefined)
+    setStarted(ids)
     try {
-      const started = await transport.request('chatImport.start', { chats: ids })
+      const running = await transport.request('chatImport.start', { chats: ids })
       // The last report can arrive before this reply on a small import.
-      setJob((current) => current ?? started)
+      setJob((current) => current ?? running)
     } catch (cause) {
       setStartFailure(message(cause))
     }
   }
+
+  // A chat the import could not bring in is still listed, not imported, once the scan after it
+  // has come back, so the list itself says which chats to try again.
+  const failedIds = useMemo(() => {
+    if (job?.state !== 'finished' || !job.failed || !afterImport) return []
+    const waiting = new Set(afterImport.chats.flatMap(({ id, imported }) => (imported ? [] : [id])))
+    return started.filter((id) => waiting.has(id))
+  }, [job, afterImport, started])
 
   const running = job?.state === 'running'
   const refresh = (
@@ -162,6 +178,7 @@ export function ImportSettings(props: {
           selected={selected}
           open={open}
           job={job}
+          failedIds={failedIds}
           startFailure={startFailure}
           now={now}
           onSource={setSource}
@@ -186,6 +203,7 @@ function ImportList(props: {
   selected: ReadonlySet<string>
   open: ReadonlySet<string>
   job: ChatImportJob | undefined
+  failedIds: readonly string[]
   startFailure: string | undefined
   now: number
   onSource: (source: string) => void
@@ -324,6 +342,7 @@ function ImportList(props: {
       {nothingLeft ? null : (
         <ImportBar
           job={job}
+          failed={props.failedIds.length}
           chats={summary.chats}
           folders={summary.folders}
           newProjects={summary.newProjects}
@@ -333,6 +352,13 @@ function ImportList(props: {
               : undefined
           }
           onStart={() => props.onStart(summary.ids)}
+          onSelectFailed={() => {
+            const failedChats = scan.chats.filter(({ id }) => props.failedIds.includes(id))
+            // Shown where they are, so the list says which chats did not come in.
+            props.onOpen(new Set([...open, ...failedChats.map(({ folder }) => folder)]))
+            if (failedChats.some(({ archived }) => archived)) props.onArchived(true)
+            props.onSelected(new Set(props.failedIds))
+          }}
           onOpenChat={props.onOpenChat}
         />
       )}
@@ -625,11 +651,14 @@ function ChatRow(props: {
 
 function ImportBar(props: {
   job: ChatImportJob | undefined
+  /** Chats the finished import could not bring in that are still listed. */
+  failed: number
   chats: number
   folders: number
   newProjects: number
   note: string | undefined
   onStart: () => void
+  onSelectFailed: () => void
   onOpenChat: (threadId: string) => void
 }) {
   const { job } = props
@@ -660,6 +689,11 @@ function ImportBar(props: {
     return (
       <div className="import-bar" role="status">
         <span className="import-bar__summary">{finishedLine(job)}</span>
+        {props.failed ? (
+          <button className="set-button" type="button" onClick={props.onSelectFailed}>
+            {props.failed === 1 ? 'Select the failed chat' : 'Select the failed chats'}
+          </button>
+        ) : null}
         {thread ? (
           <button
             className="set-button set-button--primary"
