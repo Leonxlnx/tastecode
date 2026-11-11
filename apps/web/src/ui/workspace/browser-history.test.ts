@@ -56,7 +56,13 @@ it("keeps a single-page app's route, one row per route, without its secrets", ()
     'http://127.0.0.1:5173/#!/inbox?tab=all',
   ])
   expect(localStorage.getItem(STORAGE_KEY)).not.toContain('route-secret')
-  expect(browserVisitAddress(urls()[0]!)).toBe('127.0.0.1:5173#/settings')
+  expect(browserVisitAddress(urls()[0]!)).toBe('127.0.0.1:5173/#/settings')
+})
+
+it('does not take the address Chromium reports for an untitled app route as a title', () => {
+  rememberBrowserVisit('http://127.0.0.1:5173/#/billing', '127.0.0.1:5173/#/billing')
+
+  expect(titles()).toEqual([''])
 })
 
 it('keeps separate rows for different paths and queries', () => {

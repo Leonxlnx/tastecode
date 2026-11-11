@@ -144,8 +144,10 @@ export function rememberBrowserVisit(url: string, title: string, now = Date.now(
 export function browserVisitAddress(url: string): string {
   const page = webPage(url)
   if (!page) return url
-  const path = page.pathname === '/' ? '' : page.pathname
-  return `${page.host}${path}${page.search}${appRoute(page.hash)}`
+  const route = appRoute(page.hash)
+  // Before a route the slash stays, as Chromium writes it in an untitled page's title.
+  const path = page.pathname === '/' && !route ? '' : page.pathname
+  return `${page.host}${path}${page.search}${route}`
 }
 
 /**
