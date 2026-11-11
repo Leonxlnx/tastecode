@@ -211,6 +211,8 @@ export class UsageResetController {
     const limits = source ? (source.status === 'ready' ? source.limits : []) : summary.limits
     const later = usageResetAt(limits, Date.now())
     if (later !== undefined) {
+      // The user may have cancelled or woken the chat while the reads above ran.
+      if (!this.#running || !this.#stored()?.some((each) => sameRequest(each, entry))) return
       this.#update((entries) =>
         entries.map((each) => (sameRequest(each, entry) ? { ...each, resetsAt: later } : each)),
       )

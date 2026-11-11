@@ -212,6 +212,25 @@ describe('resume at usage reset', () => {
     expect(controller.snapshot()).toHaveLength(sends ? 0 : 1)
   })
 
+  it('does not snooze again when the resume is cancelled while usage is read', async () => {
+    const { controller, request } = setup()
+    await controller.schedule(session, 'ask', NOW + 1000)
+    const original = request.getMockImplementation()!
+    let answer!: (summary: unknown) => void
+    request.mockImplementation((method) =>
+      method === 'usage.summary' ? new Promise((resolve) => (answer = resolve)) : original(method),
+    )
+    vi.setSystemTime(NOW + 1000)
+    const checking = controller.check()
+    await vi.waitFor(() => expect(answer).toBeDefined())
+    controller.cancel('limited')
+    answer({ limits: [window(NOW + 5000)] })
+    await checking
+    expect(request.mock.calls.filter(([method]) => method === 'thread.snooze')).toHaveLength(1)
+    expect(request.mock.calls.some(([method]) => method === 'thread.sendTurn')).toBe(false)
+    expect(controller.snapshot()).toEqual([])
+  })
+
   it('does not duplicate a continuation claimed by another window', async () => {
     const { controller, transport, storage, report, request } = setup()
     await controller.schedule(session, 'ask', NOW + 1000)
