@@ -752,6 +752,23 @@ describe('WorkspaceBrowser history', () => {
     await waitFor(() => expect(view.loadURL).toHaveBeenCalledWith('https://example.com/docs'))
   })
 
+  it('removes one listed page, or clears the list back to the empty state', () => {
+    rememberBrowserVisit('https://one.example/', 'One')
+    rememberBrowserVisit('https://two.example/', 'Two')
+    render(<WorkspaceBrowser active keepHistory />)
+
+    const removes = screen.getAllByRole('button', { name: 'Remove from Recently used' })
+    expect(removes).toHaveLength(2)
+    // Newest first: the first row is Two.
+    fireEvent.click(removes[0]!)
+    expect(screen.queryByRole('button', { name: /Two/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /One/ })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(screen.queryByText('Recently used')).toBeNull()
+    expect(screen.getByText('Start browsing')).toBeTruthy()
+  })
+
   it('updates a page in the list when another tab opens one', async () => {
     render(<WorkspaceBrowser active keepHistory />)
     expect(screen.queryByText('Recently used')).toBeNull()

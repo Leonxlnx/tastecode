@@ -110,6 +110,30 @@ export function rememberBrowserVisit(url: string, title: string, now = Date.now(
   for (const listener of listeners) listener()
 }
 
+/** Takes one page off the list, the row whose stored address this is. */
+export function forgetBrowserVisit(url: string): void {
+  const visits = readBrowserHistory()
+  const next = visits.filter((visit) => visit.url !== url)
+  if (next.length === visits.length) return
+  writeHistory(() => localStorage.setItem(BROWSER_HISTORY_KEY, JSON.stringify(next)))
+}
+
+/** Empties the list. Nothing else the browser keeps, such as sign-ins, changes. */
+export function clearBrowserHistory(): void {
+  if (readBrowserHistory().length === 0) return
+  writeHistory(() => localStorage.removeItem(BROWSER_HISTORY_KEY))
+}
+
+function writeHistory(write: () => void): void {
+  try {
+    write()
+  } catch {
+    // Storage is blocked: the list stays as it was, and says so by not changing.
+    return
+  }
+  for (const listener of listeners) listener()
+}
+
 /** The address a row shows: the page without its scheme, and no bare trailing slash. */
 export function browserVisitAddress(url: string): string {
   const page = webPage(url)
