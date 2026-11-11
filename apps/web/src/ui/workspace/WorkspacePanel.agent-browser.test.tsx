@@ -118,3 +118,36 @@ it('stops the agent for the rest of its turn when the user presses Stop', async 
   ])
   expect(agent.link?.command).toEqual(allowed)
 })
+
+it('keeps Stop for a chat while the panel shows another chat', async () => {
+  const { view, props, transport, answers } = panel()
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: command() }))
+  await screen.findByTestId('browser-surface')
+  act(() => agent.link!.onStop())
+  view.rerender(<WorkspacePanel {...props} threadId="chat-2" />)
+
+  // The other chat's agent is not stopped.
+  const elsewhere = command('chat-2')
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: elsewhere }))
+  expect(agent.link?.command).toEqual(elsewhere)
+  act(() => agent.link!.onResult({ commandId: elsewhere.commandId, ok: true }))
+
+  view.rerender(<WorkspacePanel {...props} threadId="chat-1" />)
+  const later = command()
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: later }))
+  expect(answers()).toContainEqual({ commandId: later.commandId, ok: false, error: STOPPED })
+
+  // The stopped turn ends while another chat is shown, and the next one may use the browser.
+  view.rerender(<WorkspacePanel {...props} threadId="chat-2" />)
+  act(() =>
+    transport.emit('thread.event', {
+      threadId: 'chat-1',
+      seq: 1,
+      event: { type: 'turn.completed', turnId: 't1', status: 'interrupted' },
+    }),
+  )
+  view.rerender(<WorkspacePanel {...props} threadId="chat-1" />)
+  const allowed = command()
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: allowed }))
+  expect(agent.link?.command).toEqual(allowed)
+})
