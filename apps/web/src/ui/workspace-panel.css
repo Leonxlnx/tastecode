@@ -1304,13 +1304,19 @@ textarea.workspace-review__field {
   border-top: 1px solid var(--line);
 }
 
-.workspace-browser__recent-list button {
+.workspace-browser__recent-list li {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.workspace-browser__recent-list .workspace-browser__recent-open {
   display: flex;
   width: 100%;
   min-width: 0;
   align-items: center;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 10px 40px 10px 12px;
   background: transparent;
   border: 0;
   color: inherit;
@@ -1319,14 +1325,44 @@ textarea.workspace-review__field {
   cursor: pointer;
 }
 
-.workspace-browser__recent-list button:hover {
+.workspace-browser__recent-list .workspace-browser__recent-open:hover {
   background: var(--control-hover);
 }
 
 /* Inset: the list's rounded clip would cut off a ring drawn outside the row. */
-.workspace-browser__recent-list button:focus-visible {
+.workspace-browser__recent-list .workspace-browser__recent-open:focus-visible {
   outline: var(--focus-ring);
   outline-offset: -2px;
+}
+
+/* Over the row's right end, shown while the row is hovered or the button has focus. */
+.workspace-browser__recent-forget {
+  position: absolute;
+  right: 10px;
+}
+
+.workspace-browser__recent-list li:hover .workspace-browser__recent-forget {
+  opacity: 1;
+}
+
+.workspace-browser__recent-clear {
+  margin-left: auto;
+  padding: 2px 6px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.workspace-browser__recent-clear:hover {
+  color: var(--text);
+}
+
+.workspace-browser__recent-clear:focus-visible {
+  outline: var(--focus-ring);
 }
 
 /* A small browser window, not a favicon: no page's own image is fetched or kept. */
