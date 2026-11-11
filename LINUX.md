@@ -7,7 +7,7 @@ sudo pacman -S git base-devel fuse2 pnpm
 # Node.js 20+ (nvm, fnm...)
 
 ## Build
-git clone https://github.com/TON_PSEUDO/tastecode.git
+git clone https://github.com/david15tonon/tastecode.git
 cd tastecode
 git checkout linux-build
 pnpm install
