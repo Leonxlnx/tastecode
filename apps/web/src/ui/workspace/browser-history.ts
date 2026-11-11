@@ -26,7 +26,19 @@ const SECRET_PARAMS = new Set([
   'auth',
   'session',
   'password',
+  'otp',
+  'jwt',
 ])
+// Names that carry a secret wherever they appear, as in api_key, refresh_token or X-Amz-Signature.
+const SECRET_PARAM_PART =
+  /token|secret|passw|signature|credential|api[-_]?key|private[-_]?key|session[-_]?id/
+// A removed value this short also turns up in ordinary titles, so a title is not judged by it.
+const MIN_SECRET_IN_TITLE = 6
+
+function secretParam(name: string): boolean {
+  const lower = name.toLowerCase()
+  return SECRET_PARAMS.has(lower) || SECRET_PARAM_PART.test(lower)
+}
 
 const BrowserHistorySchema = z.array(
   z.object({ url: z.string(), title: z.string(), visitedAt: z.number() }),
@@ -82,19 +94,33 @@ export function subscribeBrowserHistory(onChange: () => void): () => void {
 export function rememberBrowserVisit(url: string, title: string, now = Date.now()): void {
   const page = webPage(url)
   if (!page || page.href.length > MAX_URL_LENGTH) return
+  const reportedAt = page.href
   // A password, a sign-in code or a token in the address would otherwise sit in storage in
   // plain text. The fragment can carry tokens too (implicit sign-in), and a row never needs it.
+  const removed = [decode(page.username), decode(page.password)]
+  for (const [name, value] of new URLSearchParams(page.hash.slice(1)))
+    if (secretParam(name)) removed.push(value)
   page.username = ''
   page.password = ''
   page.hash = ''
-  for (const name of [...page.searchParams.keys()])
-    if (SECRET_PARAMS.has(name.toLowerCase())) page.searchParams.delete(name)
+  // A copy: deleting from the live parameters while walking them would skip one.
+  for (const [name, value] of Array.from(page.searchParams)) {
+    if (!secretParam(name)) continue
+    removed.push(value)
+    page.searchParams.delete(name)
+  }
   const key = pageKey(page)
   const visits = readBrowserHistory()
   const earlier = visits.find((visit) => pageKey(webPage(visit.url)) === key)
-  // Chromium names an untitled page after its address, which the row already shows.
+  // Chromium names an untitled page after its address, which the row already shows. That
+  // is the address before the secrets came out, so the title must not bring them back.
   const reported = title.trim()
-  const ownTitle = reported === browserVisitAddress(page.href) ? '' : reported
+  const untitled = [reportedAt, browserVisitAddress(reportedAt), browserVisitAddress(page.href)]
+  const ownTitle =
+    untitled.includes(reported) ||
+    removed.some((value) => value.length >= MIN_SECRET_IN_TITLE && reported.includes(value))
+      ? ''
+      : reported
   const visit: BrowserVisit = {
     url: page.href,
     title: ownTitle.slice(0, MAX_TITLE_LENGTH) || (earlier?.title ?? ''),
@@ -116,6 +142,14 @@ export function browserVisitAddress(url: string): string {
   if (!page) return url
   const path = page.pathname === '/' ? '' : page.pathname
   return `${page.host}${path}${page.search}`
+}
+
+function decode(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
 }
 
 function webPage(value: string): URL | undefined {
