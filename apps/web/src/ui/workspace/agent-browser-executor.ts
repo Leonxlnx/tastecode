@@ -102,7 +102,9 @@ export async function runAgentBrowserCommand(
             const element = ${target}
             if (!element) return 'missing'
             element.scrollIntoView({ block: 'center', inline: 'center' })
-            element.click()
+            // An icon's <svg> or <path> has no click(); its click bubbles to the button it sits in.
+            if (typeof element.click === 'function') element.click()
+            else element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
             return 'ok'
           })()`,
         )
