@@ -190,6 +190,74 @@ describe('resume at usage reset', () => {
     expect(request.mock.calls.some(([method]) => method === 'thread.sendTurn')).toBe(false)
   })
 
+  it.each([
+    ['could not be read', { status: 'unavailable', reason: 'failed' }, 0],
+    ['were not read yet by an older server', { status: 'unavailable' }, 0],
+    ['are not reported by the provider', { status: 'unavailable', reason: 'unsupported' }, 1],
+    ['do not exist for the plan', { status: 'unavailable', reason: 'noPlan' }, 1],
+  ])('waits or continues at the reset when limits %s', async (_, limitSource, sends) => {
+    const { controller, request } = setup()
+    await controller.schedule(session, 'ask', NOW + 1000)
+    const original = request.getMockImplementation()!
+    request.mockImplementation(async (method) =>
+      method === 'usage.summary'
+        ? { limits: [], limitSource: { provider: 'codex', ...limitSource } }
+        : original(method),
+    )
+    vi.setSystemTime(NOW + 1000)
+    await controller.check()
+    expect(request.mock.calls.filter(([method]) => method === 'thread.sendTurn')).toHaveLength(
+      sends,
+    )
+    expect(controller.snapshot()).toHaveLength(sends ? 0 : 1)
+  })
+
+  it('tries the later snooze again when the chat was not awake for it', async () => {
+    const { controller, request, listeners } = setup()
+    await controller.schedule(session, 'ask', NOW + 1000)
+    const original = request.getMockImplementation()!
+    let awake = false
+    request.mockImplementation(async (method) => {
+      if (method === 'usage.summary') return { limits: [window(NOW + 5000)] }
+      if (method === 'thread.snooze' && !awake)
+        throw new Error('thread is snoozed, expected active')
+      return original(method)
+    })
+    vi.setSystemTime(NOW + 1000)
+    await controller.check()
+    expect(controller.snapshot()[0]?.resetsAt).toBe(NOW + 1000)
+
+    // The server wakes the chat at the first reset; that is not the user waking it.
+    awake = true
+    listeners.get('thread.lifecycle')!({ threadId: 'limited', lifecycle: { state: 'active' } })
+    expect(controller.snapshot()).toHaveLength(1)
+    await controller.check()
+    expect(controller.snapshot()[0]?.resetsAt).toBe(NOW + 5000)
+    expect(request).toHaveBeenLastCalledWith('thread.snooze', {
+      threadId: 'limited',
+      wakeAt: NOW + 5000,
+    })
+  })
+
+  it('does not snooze again when the resume is cancelled while usage is read', async () => {
+    const { controller, request } = setup()
+    await controller.schedule(session, 'ask', NOW + 1000)
+    const original = request.getMockImplementation()!
+    let answer!: (summary: unknown) => void
+    request.mockImplementation((method) =>
+      method === 'usage.summary' ? new Promise((resolve) => (answer = resolve)) : original(method),
+    )
+    vi.setSystemTime(NOW + 1000)
+    const checking = controller.check()
+    await vi.waitFor(() => expect(answer).toBeDefined())
+    controller.cancel('limited')
+    answer({ limits: [window(NOW + 5000)] })
+    await checking
+    expect(request.mock.calls.filter(([method]) => method === 'thread.snooze')).toHaveLength(1)
+    expect(request.mock.calls.some(([method]) => method === 'thread.sendTurn')).toBe(false)
+    expect(controller.snapshot()).toEqual([])
+  })
+
   it('does not duplicate a continuation claimed by another window', async () => {
     const { controller, transport, storage, report, request } = setup()
     await controller.schedule(session, 'ask', NOW + 1000)
@@ -199,6 +267,55 @@ describe('resume at usage reset', () => {
     await controller.check()
     await other.check()
     expect(request.mock.calls.filter(([method]) => method === 'thread.sendTurn')).toHaveLength(1)
+  })
+
+  it('keeps what another window scheduled when this one schedules a chat', async () => {
+    const { controller, transport, storage, report } = setup()
+    const other = new UsageResetController(transport, storage, report)
+    stops.push(other.start())
+    await controller.schedule(session, 'ask', NOW + 1000)
+    await other.schedule({ ...session, id: 'second' }, 'ask', NOW + 2000)
+    const stored = () =>
+      (JSON.parse(storage.read()) as Array<{ threadId: string }>).map(({ threadId }) => threadId)
+    expect(stored()).toEqual(['limited', 'second'])
+
+    // A cancel in the first window leaves the second window's chat scheduled.
+    controller.cancel('limited')
+    expect(stored()).toEqual(['second'])
+    await controller.check()
+    expect(controller.snapshot().map(({ threadId }) => threadId)).toEqual(['second'])
+  })
+
+  it('keeps every stored resume when the list is long or holds one bad entry', async () => {
+    const { transport, storage, report } = setup()
+    const entry = (index: number) => ({
+      threadId: `chat-${index}`,
+      provider: 'codex',
+      userItemId: 'ask',
+      resetsAt: NOW + 1000,
+    })
+    storage.write(
+      JSON.stringify([...Array.from({ length: 101 }, (_, index) => entry(index)), { bad: true }]),
+    )
+    const restored = new UsageResetController(transport, storage, report)
+    expect(restored.snapshot()).toHaveLength(101)
+  })
+
+  it('refuses a resume past the limit before it snoozes the chat', async () => {
+    const { controller, request, storage } = setup()
+    storage.write(
+      JSON.stringify(
+        Array.from({ length: 100 }, (_, index) => ({
+          threadId: `chat-${index}`,
+          provider: 'codex',
+          userItemId: 'ask',
+          resetsAt: NOW + 1000,
+        })),
+      ),
+    )
+    await expect(controller.schedule(session, 'ask', NOW + 1000)).rejects.toThrow()
+    expect(request.mock.calls.some(([method]) => method === 'thread.snooze')).toBe(false)
+    expect(JSON.parse(storage.read())).toHaveLength(100)
   })
 
   it('undoes the snooze if the schedule cannot be saved', async () => {

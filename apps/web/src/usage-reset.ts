@@ -28,6 +28,8 @@ const ResumeSchema = z.object({
 export type UsageResume = z.infer<typeof ResumeSchema>
 type Session = ResultOf<'projects.list'>['projects'][number]['sessions'][number]
 type Storage = { read: () => string | null; write: (value: string) => void }
+/** A bound for the stored list, enforced when a chat is scheduled rather than when it is read. */
+const MAX_RESUMES = 100
 
 /** Renderer-owned, opt-in continuations. No prompts or credentials are stored. */
 export class UsageResetController {
@@ -41,14 +43,7 @@ export class UsageResetController {
     private readonly storage: Storage,
     private readonly report: (message: string) => void,
   ) {
-    try {
-      this.#entries = z
-        .array(ResumeSchema)
-        .max(100)
-        .parse(JSON.parse(storage.read() ?? '[]'))
-    } catch {
-      this.#entries = []
-    }
+    this.#entries = this.#stored() ?? []
   }
 
   snapshot = (): readonly UsageResume[] => this.#entries
@@ -62,6 +57,9 @@ export class UsageResetController {
     userItemId: string,
     resetsAt: number,
   ): Promise<void> {
+    const others = (this.#stored() ?? this.#entries).filter((each) => each.threadId !== session.id)
+    // Refused before the snooze, so a chat is never hidden without its resume.
+    if (others.length >= MAX_RESUMES) throw new Error('Too many chats are waiting to resume.')
     const settings = await this.transport.request('thread.settings', { threadId: session.id })
     await this.transport.request('thread.snooze', { threadId: session.id, wakeAt: resetsAt })
     const entry = ResumeSchema.parse({
@@ -72,7 +70,10 @@ export class UsageResetController {
       model: settings.model,
     })
     try {
-      this.#save([...this.#entries.filter((each) => each.threadId !== entry.threadId), entry])
+      this.#update((entries) => [
+        ...entries.filter((each) => each.threadId !== entry.threadId),
+        entry,
+      ])
     } catch (error) {
       await this.transport
         .request('thread.unsnooze', { threadId: session.id })
@@ -82,8 +83,11 @@ export class UsageResetController {
   }
 
   cancel = (threadId: string): void => {
-    if (!this.#entries.some((entry) => entry.threadId === threadId)) return
-    this.#save(this.#entries.filter((entry) => entry.threadId !== threadId))
+    this.#update((entries) =>
+      entries.some((entry) => entry.threadId === threadId)
+        ? entries.filter((entry) => entry.threadId !== threadId)
+        : entries,
+    )
   }
 
   start(): () => void {
@@ -127,6 +131,8 @@ export class UsageResetController {
   /** Revalidate after sleep, reconnect or a reload before consuming the one-shot request. */
   async check(): Promise<void> {
     if (!this.#running || this.#checking || this.transport.state !== 'open') return
+    // Another window may have scheduled a chat since this one last read the list.
+    this.#show(this.#stored() ?? this.#entries)
     if (!this.#entries.some((entry) => entry.resetsAt <= Date.now())) return
     this.#checking = true
     try {
@@ -198,17 +204,39 @@ export class UsageResetController {
       this.cancel(entry.threadId)
       return
     }
-    const limits = summary.limitSource
-      ? summary.limitSource.status === 'ready'
-        ? summary.limitSource.limits
-        : []
-      : summary.limits
+    const source = summary.limitSource
+    // Limits that could not be read say nothing about whether they reset. Keep
+    // the one-shot request for the next check rather than spend it on a guess.
+    if (
+      source?.status === 'unavailable' &&
+      source.reason !== 'unsupported' &&
+      source.reason !== 'noPlan'
+    )
+      return
+    const limits = source ? (source.status === 'ready' ? source.limits : []) : summary.limits
     const later = usageResetAt(limits, Date.now())
     if (later !== undefined) {
-      this.#save(
-        this.#entries.map((each) => (each === entry ? { ...entry, resetsAt: later } : each)),
+      // The user may have cancelled or woken the chat while the reads above ran.
+      if (!this.#running || !this.#stored()?.some((each) => sameRequest(each, entry))) return
+      // Saved first: the snooze's own lifecycle event must find the new time, or it cancels.
+      this.#update((entries) =>
+        entries.map((each) => (sameRequest(each, entry) ? { ...each, resetsAt: later } : each)),
       )
-      await this.transport.request('thread.snooze', { threadId: entry.threadId, wakeAt: later })
+      try {
+        await this.transport.request('thread.snooze', { threadId: entry.threadId, wakeAt: later })
+      } catch (error) {
+        // The server snoozes only an active chat, and this one may not be awake yet. With the
+        // later time kept, its wake would read as the user's and cancel the resume; the time it
+        // had keeps it due, so the next check snoozes it again.
+        this.#update((entries) =>
+          entries.map((each) =>
+            sameRequest(each, entry) && each.resetsAt === later
+              ? { ...each, resetsAt: entry.resetsAt }
+              : each,
+          ),
+        )
+        throw error
+      }
       return
     }
     if (
@@ -220,15 +248,12 @@ export class UsageResetController {
       )
     )
       return
-    if (!this.#running || !this.#entries.includes(entry)) return
+    if (!this.#running) return
     // The shared storage check and lock stop a second window from sending the same request.
-    const saved = z.array(ResumeSchema).parse(JSON.parse(this.storage.read() ?? '[]'))
-    if (
-      !saved.some(
-        (each) => each.threadId === entry.threadId && each.userItemId === entry.userItemId,
-      )
-    ) {
-      this.cancel(entry.threadId)
+    const saved = this.#stored()
+    if (!saved) return
+    if (!saved.some((each) => sameRequest(each, entry))) {
+      this.#show(saved)
       return
     }
     this.cancel(entry.threadId)
@@ -246,9 +271,42 @@ export class UsageResetController {
     }
   }
 
-  #save(entries: UsageResume[]): void {
-    this.storage.write(JSON.stringify(entries))
+  /**
+   * Every window keeps its own copy of the shared list. A change starts from
+   * what is stored now, so one window never writes back a list that is
+   * missing what another window scheduled.
+   */
+  #update(change: (entries: UsageResume[]) => UsageResume[]): void {
+    const current = this.#stored() ?? this.#entries
+    const next = change(current)
+    if (next !== current) this.storage.write(JSON.stringify(next))
+    this.#show(next)
+  }
+
+  /**
+   * Undefined when the stored list cannot be read at all. An entry that does
+   * not parse is dropped on its own; it never takes the other chats with it.
+   */
+  #stored(): UsageResume[] | undefined {
+    try {
+      const stored: unknown = JSON.parse(this.storage.read() ?? '[]')
+      if (!Array.isArray(stored)) return undefined
+      return stored.flatMap((each) => {
+        const parsed = ResumeSchema.safeParse(each)
+        return parsed.success ? [parsed.data] : []
+      })
+    } catch {
+      return undefined
+    }
+  }
+
+  #show(entries: UsageResume[]): void {
+    if (JSON.stringify(entries) === JSON.stringify(this.#entries)) return
     this.#entries = entries
     for (const listener of this.#listeners) listener()
   }
+}
+
+function sameRequest(left: UsageResume, right: UsageResume): boolean {
+  return left.threadId === right.threadId && left.userItemId === right.userItemId
 }
