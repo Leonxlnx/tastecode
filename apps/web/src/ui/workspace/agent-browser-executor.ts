@@ -27,7 +27,7 @@ export type AgentBrowserGuest = {
 /** The tab's console, newest last, as the tab recorded it. */
 export type AgentBrowserConsole = () => readonly BrowserConsoleEntry[]
 
-/** A screenshot is scaled down to this width before it is sent. */
+/** A screenshot is scaled down to the page's width in CSS pixels, and never past this. */
 export const AGENT_SCREENSHOT_WIDTH = 1600
 
 /** Scales a PNG data URL to at most AGENT_SCREENSHOT_WIDTH and returns its base64. */
@@ -86,7 +86,15 @@ export async function runAgentBrowserCommand(
         return { commandId: command.commandId, ok: true, ...page() }
       }
       case 'screenshot': {
-        const png = await scale(await guest.capturePng(), AGENT_SCREENSHOT_WIDTH)
+        // A capture is in device pixels, twice the page's CSS pixels on a Retina screen, and a
+        // click takes CSS pixels. Drawn at the page's CSS width, a point read off the picture
+        // is the point to click.
+        const cssWidth = await guest.executeIsolated('window.innerWidth')
+        const width =
+          typeof cssWidth === 'number' && cssWidth >= 1
+            ? Math.min(AGENT_SCREENSHOT_WIDTH, Math.round(cssWidth))
+            : AGENT_SCREENSHOT_WIDTH
+        const png = await scale(await guest.capturePng(), width)
         if (png.length > BROWSER_PNG_MAX) return refuse('The screenshot is too large to send.')
         return { commandId: command.commandId, ok: true, ...page(), png }
       }

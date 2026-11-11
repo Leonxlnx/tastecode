@@ -124,14 +124,25 @@ describe('agent browser commands', () => {
     expect(hostile.ok).toBe(false)
   })
 
-  it('sends a scaled screenshot and the console since a time', async () => {
+  it('sends a screenshot at the page’s CSS width, bounded, and the console since a time', async () => {
     const scale = vi.fn(async () => 'iVBORw0K')
-    const { page } = guest()
+    let cssWidth: number | undefined = 800
+    const { page } = guest({
+      // eslint-disable-next-line no-eval -- the test document stands in for the isolated world
+      executeIsolated: async (code) => (code === 'window.innerWidth' ? cssWidth : (0, eval)(code)),
+    })
     expect(await run({ action: 'screenshot' }, page, scale)).toMatchObject({
       ok: true,
       png: 'iVBORw0K',
     })
-    expect(scale).toHaveBeenCalledWith('data:image/png;base64,AAAA', 1600)
+    // An 800 px wide page on a Retina screen captures 1600 px wide; the agent gets 800.
+    expect(scale).toHaveBeenLastCalledWith('data:image/png;base64,AAAA', 800)
+    cssWidth = 2400
+    await run({ action: 'screenshot' }, page, scale)
+    expect(scale).toHaveBeenLastCalledWith('data:image/png;base64,AAAA', 1600)
+    cssWidth = undefined
+    await run({ action: 'screenshot' }, page, scale)
+    expect(scale).toHaveBeenLastCalledWith('data:image/png;base64,AAAA', 1600)
     expect(await run({ action: 'console', since: 2 }, page)).toMatchObject({
       ok: true,
       console: [{ level: 'error', text: 'new', at: 5 }],

@@ -163,7 +163,7 @@ const BROWSER_TOOLS = [
   },
   {
     name: 'browser_screenshot',
-    description: `A PNG of the visible page, at most 1600 px wide. ${BROWSER_FRAME}`,
+    description: `A PNG of the visible page, one image pixel per CSS pixel, so a point on it is a point browser_click takes. A page wider than 1600 CSS pixels is scaled down to 1600 px. ${BROWSER_FRAME}`,
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
