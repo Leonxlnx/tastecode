@@ -658,6 +658,34 @@ describe('OpenCode adapter', () => {
       }
     })
 
+    it('reports an answer once when its step arrives after it or twice', async () => {
+      const { mock, adapter, events, thread, completed } = await capturedTurn('full')
+      try {
+        await adapter.sendTurn(thread.id, 'Reply with only OK')
+        await mock.waitFor('/session/session-1/prompt_async')
+        const frames = CAPTURED_1_18_31.text
+        const step = frames.findIndex(
+          (event) =>
+            event.type === 'message.part.updated' && event.properties.part.type === 'step-finish',
+        )
+        const finished = frames.findLastIndex(
+          (event) =>
+            event.type === 'message.updated' &&
+            event.properties.info.role === 'assistant' &&
+            event.properties.info.time.completed !== undefined,
+        )
+        // The step after the finished answer, and once more after that.
+        const reordered = frames.filter((_, index) => index !== step)
+        reordered.splice(finished, 0, frames[step]!, frames[step]!)
+        for (const event of reordered) mock.broadcast(event)
+
+        expect(await completed).toMatchObject({ status: 'completed' })
+        expect(events.filter((event) => event.type === 'usage.updated')).toHaveLength(1)
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
     it('asks a captured permission and resolves it once', async () => {
       const { mock, adapter, events, thread, completed } = await capturedTurn('ask')
       try {
