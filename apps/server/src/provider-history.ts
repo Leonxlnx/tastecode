@@ -127,16 +127,19 @@ export class ProviderHistory {
 
   /**
    * Makes a saved session a chat now, without waiting for a scan. `title`
-   * replaces the provider's own for this chat; later scans keep it.
+   * replaces the provider's own for this chat; later scans keep it. `created`
+   * is false when the session was a chat already, so a caller undoing a failed
+   * import knows the chat is not its own to remove.
    */
   adopt(
     provider: ProviderId,
     session: ProviderHistorySession,
     projectPath: string,
     title?: string,
-  ): string {
+  ) {
     const threadId = `external:${provider}:${session.id}`
-    if (!this.store.thread(threadId)) {
+    const created = !this.store.thread(threadId)
+    if (created) {
       this.store.addProviderThread(
         threadId,
         provider,
@@ -149,7 +152,7 @@ export class ProviderHistory {
       this.store.setThreadApproval(threadId, session.approval)
     this.store.saveProviderHistory(provider, threadId, session)
     this.#remember({ provider, threadId, session, loadedRevision: null })
-    return threadId
+    return { threadId, created }
   }
 
   /**
