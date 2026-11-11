@@ -259,6 +259,38 @@ describe('resume at usage reset', () => {
     expect(controller.snapshot().map(({ threadId }) => threadId)).toEqual(['second'])
   })
 
+  it('keeps every stored resume when the list is long or holds one bad entry', async () => {
+    const { transport, storage, report } = setup()
+    const entry = (index: number) => ({
+      threadId: `chat-${index}`,
+      provider: 'codex',
+      userItemId: 'ask',
+      resetsAt: NOW + 1000,
+    })
+    storage.write(
+      JSON.stringify([...Array.from({ length: 101 }, (_, index) => entry(index)), { bad: true }]),
+    )
+    const restored = new UsageResetController(transport, storage, report)
+    expect(restored.snapshot()).toHaveLength(101)
+  })
+
+  it('refuses a resume past the limit before it snoozes the chat', async () => {
+    const { controller, request, storage } = setup()
+    storage.write(
+      JSON.stringify(
+        Array.from({ length: 100 }, (_, index) => ({
+          threadId: `chat-${index}`,
+          provider: 'codex',
+          userItemId: 'ask',
+          resetsAt: NOW + 1000,
+        })),
+      ),
+    )
+    await expect(controller.schedule(session, 'ask', NOW + 1000)).rejects.toThrow()
+    expect(request.mock.calls.some(([method]) => method === 'thread.snooze')).toBe(false)
+    expect(JSON.parse(storage.read())).toHaveLength(100)
+  })
+
   it('undoes the snooze if the schedule cannot be saved', async () => {
     const { controller, storage, request } = setup()
     vi.spyOn(storage, 'write').mockImplementation(() => {

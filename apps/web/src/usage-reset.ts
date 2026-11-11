@@ -28,6 +28,8 @@ const ResumeSchema = z.object({
 export type UsageResume = z.infer<typeof ResumeSchema>
 type Session = ResultOf<'projects.list'>['projects'][number]['sessions'][number]
 type Storage = { read: () => string | null; write: (value: string) => void }
+/** A bound for the stored list, enforced when a chat is scheduled rather than when it is read. */
+const MAX_RESUMES = 100
 
 /** Renderer-owned, opt-in continuations. No prompts or credentials are stored. */
 export class UsageResetController {
@@ -55,6 +57,9 @@ export class UsageResetController {
     userItemId: string,
     resetsAt: number,
   ): Promise<void> {
+    const others = (this.#stored() ?? this.#entries).filter((each) => each.threadId !== session.id)
+    // Refused before the snooze, so a chat is never hidden without its resume.
+    if (others.length >= MAX_RESUMES) throw new Error('Too many chats are waiting to resume.')
     const settings = await this.transport.request('thread.settings', { threadId: session.id })
     await this.transport.request('thread.snooze', { threadId: session.id, wakeAt: resetsAt })
     const entry = ResumeSchema.parse({
@@ -263,13 +268,18 @@ export class UsageResetController {
     this.#show(next)
   }
 
-  /** Undefined when the stored list cannot be read at all. */
+  /**
+   * Undefined when the stored list cannot be read at all. An entry that does
+   * not parse is dropped on its own; it never takes the other chats with it.
+   */
   #stored(): UsageResume[] | undefined {
     try {
-      return z
-        .array(ResumeSchema)
-        .max(100)
-        .parse(JSON.parse(this.storage.read() ?? '[]'))
+      const stored: unknown = JSON.parse(this.storage.read() ?? '[]')
+      if (!Array.isArray(stored)) return undefined
+      return stored.flatMap((each) => {
+        const parsed = ResumeSchema.safeParse(each)
+        return parsed.success ? [parsed.data] : []
+      })
     } catch {
       return undefined
     }
