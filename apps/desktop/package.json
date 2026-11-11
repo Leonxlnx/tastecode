@@ -22,7 +22,8 @@
     "dist": "pnpm -w licenses:verify && pnpm --filter @harness/default-skills sync && pnpm -w build && node scripts/build-preload.js && electron-builder -c.extraMetadata.tastecodeEdition=dev",
     "dist:dir": "pnpm -w licenses:verify && pnpm --filter @harness/default-skills sync && pnpm -w build && node scripts/build-preload.js && electron-builder --dir -c.extraMetadata.tastecodeEdition=dev",
     "dist:release": "pnpm -w licenses:verify && pnpm --filter @harness/default-skills sync && pnpm -w build && node scripts/build-preload.js && electron-builder",
-    "verify:native-bindings": "node scripts/run-native-binding-proof.js"
+    "verify:native-bindings": "node scripts/run-native-binding-proof.js",
+    "build:linux": "electron-builder --linux AppImage"
   },
   "dependencies": {
     "@harness/contracts": "workspace:*",
@@ -181,6 +182,15 @@
       },
       "entitlements": "entitlements.mac.plist",
       "entitlementsInherit": "entitlements.mac.plist"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development",
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
+      "executableName": "tastecode"
     }
-  }
+  },
+  "desktopName": "tastecode.desktop"
 }
