@@ -2,6 +2,8 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
   browserVisitAddress,
+  clearBrowserHistory,
+  forgetBrowserVisit,
   readBrowserHistory,
   rememberBrowserVisit,
   subscribeBrowserHistory,
@@ -187,4 +189,23 @@ it.each([
   ['not a url', 'not a url'],
 ])('shows %s as %s', (url, address) => {
   expect(browserVisitAddress(url)).toBe(address)
+})
+
+it('forgets one page, or all of them, and tells subscribers', () => {
+  rememberBrowserVisit('https://one.example/', 'One', 1_000)
+  rememberBrowserVisit('https://two.example/', 'Two', 2_000)
+  rememberBrowserVisit('https://three.example/', 'Three', 3_000)
+  const onChange = vi.fn()
+  const unsubscribe = subscribeBrowserHistory(onChange)
+
+  forgetBrowserVisit('https://two.example/')
+  expect(urls()).toEqual(['https://three.example/', 'https://one.example/'])
+  forgetBrowserVisit('https://not-listed.example/')
+  expect(onChange).toHaveBeenCalledTimes(1)
+
+  clearBrowserHistory()
+  expect(readBrowserHistory()).toEqual([])
+  expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
+  expect(onChange).toHaveBeenCalledTimes(2)
+  unsubscribe()
 })
