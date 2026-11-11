@@ -41,14 +41,7 @@ export class UsageResetController {
     private readonly storage: Storage,
     private readonly report: (message: string) => void,
   ) {
-    try {
-      this.#entries = z
-        .array(ResumeSchema)
-        .max(100)
-        .parse(JSON.parse(storage.read() ?? '[]'))
-    } catch {
-      this.#entries = []
-    }
+    this.#entries = this.#stored() ?? []
   }
 
   snapshot = (): readonly UsageResume[] => this.#entries
@@ -72,7 +65,10 @@ export class UsageResetController {
       model: settings.model,
     })
     try {
-      this.#save([...this.#entries.filter((each) => each.threadId !== entry.threadId), entry])
+      this.#update((entries) => [
+        ...entries.filter((each) => each.threadId !== entry.threadId),
+        entry,
+      ])
     } catch (error) {
       await this.transport
         .request('thread.unsnooze', { threadId: session.id })
@@ -82,8 +78,11 @@ export class UsageResetController {
   }
 
   cancel = (threadId: string): void => {
-    if (!this.#entries.some((entry) => entry.threadId === threadId)) return
-    this.#save(this.#entries.filter((entry) => entry.threadId !== threadId))
+    this.#update((entries) =>
+      entries.some((entry) => entry.threadId === threadId)
+        ? entries.filter((entry) => entry.threadId !== threadId)
+        : entries,
+    )
   }
 
   start(): () => void {
@@ -127,6 +126,8 @@ export class UsageResetController {
   /** Revalidate after sleep, reconnect or a reload before consuming the one-shot request. */
   async check(): Promise<void> {
     if (!this.#running || this.#checking || this.transport.state !== 'open') return
+    // Another window may have scheduled a chat since this one last read the list.
+    this.#show(this.#stored() ?? this.#entries)
     if (!this.#entries.some((entry) => entry.resetsAt <= Date.now())) return
     this.#checking = true
     try {
@@ -205,8 +206,8 @@ export class UsageResetController {
       : summary.limits
     const later = usageResetAt(limits, Date.now())
     if (later !== undefined) {
-      this.#save(
-        this.#entries.map((each) => (each === entry ? { ...entry, resetsAt: later } : each)),
+      this.#update((entries) =>
+        entries.map((each) => (sameRequest(each, entry) ? { ...each, resetsAt: later } : each)),
       )
       await this.transport.request('thread.snooze', { threadId: entry.threadId, wakeAt: later })
       return
@@ -220,15 +221,12 @@ export class UsageResetController {
       )
     )
       return
-    if (!this.#running || !this.#entries.includes(entry)) return
+    if (!this.#running) return
     // The shared storage check and lock stop a second window from sending the same request.
-    const saved = z.array(ResumeSchema).parse(JSON.parse(this.storage.read() ?? '[]'))
-    if (
-      !saved.some(
-        (each) => each.threadId === entry.threadId && each.userItemId === entry.userItemId,
-      )
-    ) {
-      this.cancel(entry.threadId)
+    const saved = this.#stored()
+    if (!saved) return
+    if (!saved.some((each) => sameRequest(each, entry))) {
+      this.#show(saved)
       return
     }
     this.cancel(entry.threadId)
@@ -246,9 +244,37 @@ export class UsageResetController {
     }
   }
 
-  #save(entries: UsageResume[]): void {
-    this.storage.write(JSON.stringify(entries))
+  /**
+   * Every window keeps its own copy of the shared list. A change starts from
+   * what is stored now, so one window never writes back a list that is
+   * missing what another window scheduled.
+   */
+  #update(change: (entries: UsageResume[]) => UsageResume[]): void {
+    const current = this.#stored() ?? this.#entries
+    const next = change(current)
+    if (next !== current) this.storage.write(JSON.stringify(next))
+    this.#show(next)
+  }
+
+  /** Undefined when the stored list cannot be read at all. */
+  #stored(): UsageResume[] | undefined {
+    try {
+      return z
+        .array(ResumeSchema)
+        .max(100)
+        .parse(JSON.parse(this.storage.read() ?? '[]'))
+    } catch {
+      return undefined
+    }
+  }
+
+  #show(entries: UsageResume[]): void {
+    if (JSON.stringify(entries) === JSON.stringify(this.#entries)) return
     this.#entries = entries
     for (const listener of this.#listeners) listener()
   }
+}
+
+function sameRequest(left: UsageResume, right: UsageResume): boolean {
+  return left.threadId === right.threadId && left.userItemId === right.userItemId
 }

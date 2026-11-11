@@ -201,6 +201,23 @@ describe('resume at usage reset', () => {
     expect(request.mock.calls.filter(([method]) => method === 'thread.sendTurn')).toHaveLength(1)
   })
 
+  it('keeps what another window scheduled when this one schedules a chat', async () => {
+    const { controller, transport, storage, report } = setup()
+    const other = new UsageResetController(transport, storage, report)
+    stops.push(other.start())
+    await controller.schedule(session, 'ask', NOW + 1000)
+    await other.schedule({ ...session, id: 'second' }, 'ask', NOW + 2000)
+    const stored = () =>
+      (JSON.parse(storage.read()) as Array<{ threadId: string }>).map(({ threadId }) => threadId)
+    expect(stored()).toEqual(['limited', 'second'])
+
+    // A cancel in the first window leaves the second window's chat scheduled.
+    controller.cancel('limited')
+    expect(stored()).toEqual(['second'])
+    await controller.check()
+    expect(controller.snapshot().map(({ threadId }) => threadId)).toEqual(['second'])
+  })
+
   it('undoes the snooze if the schedule cannot be saved', async () => {
     const { controller, storage, request } = setup()
     vi.spyOn(storage, 'write').mockImplementation(() => {
