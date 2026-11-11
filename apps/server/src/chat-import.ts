@@ -281,7 +281,7 @@ export class ChatImportService {
     const { store } = this.deps
     const projectPath = new ProjectFolders(store).project(chat.folder) ?? chat.folder
     if (session) {
-      const threadId = history.adopt(
+      const { threadId, created } = history.adopt(
         chat.provider,
         session,
         projectPath,
@@ -291,7 +291,9 @@ export class ChatImportService {
         // Read now, so a transcript that cannot be read fails here and not on opening.
         await history.load(threadId)
       } catch (error) {
-        store.deleteThread(threadId)
+        // A list from an earlier scan can offer a session that became a chat since.
+        // That chat, and what it holds, is not this import's to remove.
+        if (created) store.deleteThread(threadId)
         throw error
       }
       this.deps.changed([threadId])
