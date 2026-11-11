@@ -199,11 +199,16 @@ export class UsageResetController {
       this.cancel(entry.threadId)
       return
     }
-    const limits = summary.limitSource
-      ? summary.limitSource.status === 'ready'
-        ? summary.limitSource.limits
-        : []
-      : summary.limits
+    const source = summary.limitSource
+    // Limits that could not be read say nothing about whether they reset. Keep
+    // the one-shot request for the next check rather than spend it on a guess.
+    if (
+      source?.status === 'unavailable' &&
+      source.reason !== 'unsupported' &&
+      source.reason !== 'noPlan'
+    )
+      return
+    const limits = source ? (source.status === 'ready' ? source.limits : []) : summary.limits
     const later = usageResetAt(limits, Date.now())
     if (later !== undefined) {
       this.#update((entries) =>

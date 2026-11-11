@@ -190,6 +190,28 @@ describe('resume at usage reset', () => {
     expect(request.mock.calls.some(([method]) => method === 'thread.sendTurn')).toBe(false)
   })
 
+  it.each([
+    ['could not be read', { status: 'unavailable', reason: 'failed' }, 0],
+    ['were not read yet by an older server', { status: 'unavailable' }, 0],
+    ['are not reported by the provider', { status: 'unavailable', reason: 'unsupported' }, 1],
+    ['do not exist for the plan', { status: 'unavailable', reason: 'noPlan' }, 1],
+  ])('waits or continues at the reset when limits %s', async (_, limitSource, sends) => {
+    const { controller, request } = setup()
+    await controller.schedule(session, 'ask', NOW + 1000)
+    const original = request.getMockImplementation()!
+    request.mockImplementation(async (method) =>
+      method === 'usage.summary'
+        ? { limits: [], limitSource: { provider: 'codex', ...limitSource } }
+        : original(method),
+    )
+    vi.setSystemTime(NOW + 1000)
+    await controller.check()
+    expect(request.mock.calls.filter(([method]) => method === 'thread.sendTurn')).toHaveLength(
+      sends,
+    )
+    expect(controller.snapshot()).toHaveLength(sends ? 0 : 1)
+  })
+
   it('does not duplicate a continuation claimed by another window', async () => {
     const { controller, transport, storage, report, request } = setup()
     await controller.schedule(session, 'ask', NOW + 1000)
