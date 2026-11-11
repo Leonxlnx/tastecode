@@ -36,6 +36,8 @@ export type ScaleScreenshot = (dataUrl: string, width: number) => Promise<string
 /**
  * A field an agent never types into: passwords and payment details. Checked in the page itself,
  * on the element the selector names, by type, autocomplete hint and the words that label it.
+ * "card" counts as a word of its own (card_number, cardNumber, Card holder), not as part of
+ * another word such as "postcards" or "scorecard".
  */
 const SENSITIVE_FIELD_CHECK = `(element) => {
   if (!element) return 'missing'
@@ -44,7 +46,7 @@ const SENSITIVE_FIELD_CHECK = `(element) => {
     element.labels ? [...element.labels].map((label) => label.textContent).join(' ') : '']
     .filter(Boolean).join(' ').toLowerCase()
   if (element.type === 'password') return 'password'
-  if (/\\bcc-|card|cvc|cvv|csc|security code|expir|iban|routing number|account number/.test(words)) return 'payment'
+  if (/\\bcc-|(^|[^a-z])card(holder|number|num|no|name|code|s)?([^a-z]|$)|(credit|debit|gift)card|cvc|cvv|csc|security code|expir|iban|routing number|account number/.test(words)) return 'payment'
   if (/password|passcode|passwort|\\bpin\\b|one-time-code/.test(words)) return 'password'
   return 'ok'
 }`

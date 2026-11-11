@@ -84,6 +84,26 @@ describe('agent browser commands', () => {
   })
 
   // A page can replace its own querySelector or value setter; the check must not run there.
+  it('reads "card" as a word of its own, so a search for postcards is typed into', async () => {
+    document.body.innerHTML = `
+      <input id="search" placeholder="Search postcards">
+      <input id="snake" name="card_number">
+      <input id="camel" name="cardNumber">
+      <input id="billing" name="billing_card">
+      <label for="holder">Card holder</label><input id="holder">
+      <input id="credit" aria-label="creditcard">`
+    const { page } = guest()
+    for (const selector of ['#snake', '#camel', '#billing', '#holder', '#credit'])
+      expect(await run({ action: 'type', selector, text: '4242' }, page), selector).toMatchObject({
+        ok: false,
+        error: expect.stringMatching(/payment/),
+      })
+    expect(await run({ action: 'type', selector: '#search', text: 'Paris' }, page)).toMatchObject({
+      ok: true,
+    })
+    expect(document.querySelector<HTMLInputElement>('#search')!.value).toBe('Paris')
+  })
+
   it('checks and types in its own world, never in the page’s', async () => {
     document.body.innerHTML = '<input id="pw" type="password">'
     const pageWorld = vi.fn(async () => 'ok')
