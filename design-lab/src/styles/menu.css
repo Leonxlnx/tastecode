@@ -1,0 +1,760 @@
+/*
+ * Menus for the copy of the current app, ported from the app's own rules:
+ * apps/web/src/styles/app.css (.menu*), model-selector-menu.css and
+ * model-search.css. Values and tokens are the app's; the only change is
+ * positioning: the app places menus with script (position: fixed), here
+ * they sit absolutely under or over their trigger.
+ */
+
+/* ---------- Anchor and placement ---------- */
+
+.menuanchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.menu {
+  position: absolute;
+  /* Menus must sit above their modal owners. */
+  z-index: 80;
+  min-width: min(260px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: min(340px, calc(100vh - 16px));
+  display: grid;
+  gap: 0;
+  overflow-y: auto;
+  padding: 3px;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-popup);
+  box-shadow: var(--shadow-flyout);
+  text-align: left;
+  animation: menu-in var(--dur-popup-in) var(--ease-popup);
+}
+
+.menu--down {
+  top: calc(100% + 6px);
+  left: 0;
+  transform-origin: top left;
+}
+
+.menu--up {
+  bottom: calc(100% + 6px);
+  left: 0;
+  transform-origin: bottom left;
+}
+
+.menu--end {
+  left: auto;
+  right: 0;
+}
+
+.menu--up.menu--end {
+  transform-origin: bottom right;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    scale: 0.97;
+  }
+}
+
+/* ---------- Variants ---------- */
+
+.menu--compact {
+  gap: 0;
+  padding: 3px;
+  border-radius: var(--r-lg);
+}
+
+/* Local / Isolated are two short labels. The shared .menu floor is 260px. */
+.menu.menu--mode {
+  min-width: max-content;
+  width: max-content;
+}
+
+.menu--project-picker,
+.menu--permissions {
+  min-width: 0;
+  width: min(240px, calc(100vw - 16px));
+}
+
+.menu.branch-menu {
+  width: min(260px, calc(100vw - 16px));
+}
+
+.branch-menu__search {
+  margin: 2px 2px 4px;
+}
+
+.branch-menu__results {
+  display: grid;
+  gap: 2px;
+}
+
+.branch-menu__empty {
+  margin: 0;
+  padding: 20px 8px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  text-align: center;
+}
+
+.menu--compact .menu__item {
+  padding: 4px 7px;
+  border-radius: var(--r-md);
+}
+
+.menu--compact .menu__name {
+  font-size: var(--t-sm);
+  line-height: 1.25;
+}
+
+.menu--compact .menu__label {
+  gap: 6px;
+}
+
+.menu--compact .menu__label > svg {
+  width: 13px;
+  height: 13px;
+}
+
+.menu--compact .menu__desc {
+  margin-top: 1px;
+  line-height: 1.25;
+}
+
+/* ---------- Items ---------- */
+
+.menu__rule {
+  height: 1px;
+  background: var(--menu-line);
+  margin: 4px 2px;
+}
+
+.menu__group {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  margin: 2px 0;
+  padding: 0 9px;
+}
+
+.menu__item {
+  display: block;
+  width: 100%;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-popup-item);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  padding: 4px 7px;
+  text-align: left;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.menu__item:hover {
+  background: var(--menu-hover);
+}
+
+.menu__item:focus-visible {
+  background: var(--menu-hover);
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.menu__name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: var(--t-sm);
+  line-height: 1.25;
+}
+
+.menu__name svg {
+  color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+/* Icons light up with their row: on hover, keyboard focus, and on the
+   selected row, instead of staying a dark grey next to bright text. */
+.menu__item:is(:hover, :focus-visible, .is-active) .menu__name svg {
+  color: var(--text);
+}
+
+.menu__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.menu__label > svg {
+  flex: none;
+}
+
+.menu--project-picker .menu__label > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer__permission-option--auto-review .menu__label,
+.composer__permission-option--auto-review .menu__label > svg {
+  color: var(--composer-review);
+}
+
+.composer__permission-option--full .menu__label,
+.composer__permission-option--full .menu__label > svg {
+  color: var(--composer-danger);
+}
+
+.menu__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.menu__desc {
+  display: block;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Triggers ---------- */
+
+.menutrigger.is-open {
+  background: var(--composer-chip-bg-open);
+  color: var(--text);
+}
+
+/* Trigger icons brighten with their label on hover and while open. */
+.shelf-control svg,
+.navitem svg {
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.shelf-control:is(:hover, .is-open) svg,
+.navitem:hover svg {
+  color: var(--text);
+}
+
+.chip--danger,
+.chip--danger:hover {
+  color: var(--composer-danger);
+}
+
+.chip.is-on {
+  background: var(--composer-design-active-bg);
+  color: var(--text);
+}
+
+.chip svg.is-flipped {
+  rotate: 180deg;
+}
+
+/* ---------- Model picker ---------- */
+
+.menu.model-selector__menu {
+  width: 300px;
+  min-width: 0;
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+  background: var(--model-picker-bg);
+}
+
+.model-selector {
+  width: 100%;
+  min-width: 0;
+}
+
+.model-selector__models {
+  max-height: min(246px, 42vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.model-selector__flat-head {
+  position: sticky;
+  z-index: 2;
+  top: -4px;
+  padding: 4px 4px 3px;
+  background: var(--model-picker-bg);
+}
+
+.model-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-xl);
+  color: var(--text-3);
+}
+
+.model-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-md);
+}
+
+.model-search input::placeholder {
+  color: var(--text-3);
+}
+
+.model-selector__search {
+  height: 24px;
+  gap: 6px;
+  padding-inline: 6px;
+  border-color: transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+}
+
+.model-selector__search:focus-within {
+  border-color: var(--menu-line);
+}
+
+.model-selector__search input {
+  font-size: var(--t-sm);
+}
+
+.model-selector__group + .model-selector__group {
+  margin-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  padding-top: 4px;
+}
+
+.model-selector__group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 3px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 450;
+  white-space: nowrap;
+}
+
+.model-selector__model {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  padding: 4px 8px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-popup-item);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.model-selector__model:hover {
+  background: var(--model-picker-hover-bg);
+}
+
+.model-selector__model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-sm);
+}
+
+.model-selector__model > svg {
+  flex: none;
+  color: var(--text);
+}
+
+.model-selector__empty {
+  margin: 0;
+  padding: 24px 8px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  text-align: center;
+}
+
+.model-selector__controls {
+  display: grid;
+  gap: 6px;
+  padding: 6px 10px 10px;
+  background: var(--model-picker-controls-bg);
+  border-top: 1px solid var(--menu-line);
+}
+
+.model-selector__controls-head {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  padding-left: 2px;
+}
+
+.model-selector__effort-title {
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 450;
+  white-space: nowrap;
+}
+
+.model-selector__effort-value {
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 560;
+}
+
+/* The effort track: a recessed pill, a fill up to the chosen level, five
+   dots and a thumb in the text colour, as in the app. */
+.model-selector__slider {
+  --effort-inset: 3px;
+  --effort-thumb: 24px;
+  position: relative;
+  width: 100%;
+  height: calc(var(--effort-thumb) + 2 * var(--effort-inset));
+  border-radius: var(--r-pill);
+  background: var(--effort-track);
+  box-shadow: inset 0 0 0 1px var(--effort-track-line);
+}
+
+.model-selector__slider-rail {
+  position: absolute;
+  inset: var(--effort-inset);
+}
+
+.model-selector__slider-clip {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  border-radius: var(--r-pill);
+}
+
+.model-selector__slider-fill {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: calc(var(--effort-thumb) + var(--effort-p) * (100% - var(--effort-thumb)));
+  border-radius: var(--r-pill);
+  background: var(--effort-fill);
+  transition: width 240ms var(--ease-overshoot);
+}
+
+.model-selector__slider-dot {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--effort-thumb) / 2 + var(--effort-stop) * (100% - var(--effort-thumb)));
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  translate: -50% -50%;
+}
+
+.model-selector__slider-dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 4px;
+  height: 4px;
+  margin: auto;
+  border-radius: var(--r-circle);
+  background: var(--effort-dot);
+}
+
+.model-selector__slider-dot.is-lit::before {
+  background: var(--effort-dot-lit);
+}
+
+.model-selector__slider-thumb {
+  position: absolute;
+  top: 0;
+  left: calc(var(--effort-p) * (100% - var(--effort-thumb)));
+  width: var(--effort-thumb);
+  height: var(--effort-thumb);
+  border-radius: var(--r-circle);
+  background: var(--effort-thumb-bg);
+  box-shadow: var(--effort-thumb-shadow);
+  pointer-events: none;
+  transition: left 240ms var(--ease-overshoot);
+}
+
+.model-selector__slider-thumb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 6px;
+  height: 6px;
+  margin: auto;
+  border-radius: var(--r-circle);
+  background: var(--effort-thumb-dot);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu,
+  .model-selector__slider-fill,
+  .model-selector__slider-thumb {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* ---------- Profile menu (account card) ----------
+   Ported from account-limits.css and app.css (.account-menu__*). */
+
+.account-card > .menuanchor {
+  display: flex;
+  width: 100%;
+}
+
+.menu.menu--account {
+  left: 0;
+  width: 100%;
+  min-width: 0;
+  max-height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+}
+
+.menu--settings .menu__item {
+  padding: 7px 6px;
+}
+
+.account-menu__usage {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  margin-bottom: 4px;
+  padding: 10px 10px 12px;
+  max-height: 50vh;
+  overflow-y: auto;
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--text) 4%, var(--menu-bg));
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  line-height: 1.3;
+}
+
+.account-menu__source {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.account-menu__source.is-closed {
+  gap: 4px;
+}
+
+.account-menu__source-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 18px;
+}
+
+.account-menu__source h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-xs);
+  font-weight: 560;
+  line-height: 1.3;
+}
+
+.account-menu__source h3 svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+
+.account-menu__source-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: -3px -5px;
+  padding: 3px 5px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__source-toggle:hover {
+  background: var(--menu-hover);
+}
+
+.account-menu__source-toggle > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__source .account-menu__source-chevron {
+  width: 12px;
+  height: 12px;
+  margin-left: -2px;
+  color: var(--text-3);
+  transition: rotate var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__source-toggle[aria-expanded='true'] > .account-menu__source-chevron {
+  rotate: 90deg;
+}
+
+.account-menu__source-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.account-menu__refresh {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin: -1px -4px -1px auto;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__refresh:hover {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+.account-menu__refresh.is-busy svg {
+  animation: account-menu-refresh 1.2s linear infinite;
+}
+
+@keyframes account-menu-refresh {
+  to {
+    rotate: 360deg;
+  }
+}
+
+.account-menu__limit {
+  display: grid;
+  gap: 5px;
+}
+
+.account-menu__limit-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 16px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+
+.account-menu__limit-label {
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.account-menu__limit-value {
+  flex: none;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.account-menu__limit.is-inline .account-menu__limit-row {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.account-menu__limit.is-inline .account-menu__limit-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__limit.is-inline .account-menu__limit-bar {
+  flex: 0 100 48px;
+  min-width: 24px;
+  margin-left: auto;
+}
+
+.account-menu__limit-note {
+  color: var(--text-3);
+}
+
+.account-menu__limit-bar {
+  position: relative;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.account-menu__limit-bar > span:first-child {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--text) 52%, transparent);
+  clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0 round var(--r-pill));
+}
+
+/* Even pace: a hairline tick a little taller than the bar. */
+.account-menu__limit-bar > .account-menu__limit-pace {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--text) 62%, transparent);
+  translate: -0.5px 0;
+  pointer-events: none;
+}
+
+.account-menu__actions {
+  display: grid;
+  flex: none;
+  gap: 0;
+}
+
+.menu__shortcut {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}

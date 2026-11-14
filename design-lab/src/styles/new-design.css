@@ -1,0 +1,743 @@
+/*
+ * The new design. Light and dark, with colours and separators sampled from
+ * the reference screenshots.
+ */
+
+.nd {
+  /* Sidebar width: one value to tune. 240px sits between cramped (~200)
+     and the current app's 256. */
+  --nd-rail-w: 240px;
+  --nd-head-h: 48px;
+
+  /* Light. The dashboard is the reference's off-white; the sidebar a step
+     darker. */
+  --nd-main-bg: #fcfcfc;
+  --nd-rail-bg: #f6f6f6;
+  --nd-surface: #ffffff;
+  --nd-text: #1f1f22;
+  --nd-text-2: #6b6b70;
+  --nd-accent: #297efc;
+  /* Etched separators: a 1px line with a 1px highlight on its lower / right
+     side, so the line reads as pressed into the surface. */
+  --nd-line: #f0f0f0;
+  --nd-line-highlight: #ffffff;
+
+  display: grid;
+  /* --nd-rail-now is set from script while the sidebar slides (NewDesign.tsx). */
+  grid-template-columns: var(--nd-rail-now, var(--nd-rail-w)) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  color: var(--nd-text);
+}
+
+/* The highlight is 2px and fades, as in the reference: full strength next
+   to the line, half strength one pixel further out. */
+.nd {
+  --nd-line-highlight-soft: color-mix(in srgb, var(--nd-line-highlight) 50%, transparent);
+}
+
+/* Dark, sampled from the reference: the sidebar a step darker than the
+   dashboard, near-black etched lines with a faint lighter highlight. */
+:root[data-theme='dark'] .nd {
+  --nd-main-bg: #161618;
+  --nd-rail-bg: #0a0a0a;
+  --nd-surface: #19191b;
+  --nd-text: #ffffff;
+  --nd-text-2: #9c9c9e;
+  --nd-accent: #297efc;
+  --nd-line: #070707;
+  --nd-line-highlight: #1d1d1f;
+}
+
+/* The column clips; its content keeps full width, pinned to the right edge,
+   so closing slides it out to the left rather than squashing it. */
+.nd-rail {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--nd-rail-bg);
+}
+
+.nd-rail__inner {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: var(--nd-rail-w);
+  min-height: 0;
+}
+
+/* The top bar and modules stay put; the chat list below them scrolls. */
+.nd-top,
+.nd-nav {
+  flex: none;
+}
+
+/* The chat list keeps one permanent drawing layer. A row that fades is
+   otherwise lifted onto a temporary layer whose text is drawn with
+   different smoothing, then dropped back when the fade ends, and the text
+   visibly snaps. On a permanent layer it's drawn the same way before,
+   during and after. */
+.nd-chats {
+  will-change: transform;
+}
+
+/* ---------- Sidebar ---------- */
+
+.nd {
+  /* Rows */
+  --nd-row-text: var(--nd-text-2);
+  --nd-row-text-hover: var(--nd-text);
+  --nd-row-hover: rgb(0 0 0 / 4%);
+
+  /* The card under the module you're on. Light: on a pale sidebar a flat
+     fill barely separates, so the pill is crisp white with a hairline edge
+     and a soft lift beneath it. */
+  --nd-active-bg: #ffffff;
+  --nd-active-edge: rgb(0 0 0 / 6%);
+  --nd-active-text: #18181b;
+  --nd-active-shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 2px 8px -3px rgb(0 0 0 / 8%);
+
+  /* The bar on its left. */
+  --nd-bar: #18181b;
+
+  /* A spring: runs past its mark and settles. */
+  --nd-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* The way back: a gentler spring, so returns read as motion, not a snap. */
+  --nd-spring-soft: cubic-bezier(0.3, 1.3, 0.55, 1);
+  /* Switching modules: a clean ease-out slide, no overshoot. */
+  --nd-glide: cubic-bezier(0.25, 1, 0.5, 1);
+  --nd-glide-dur: 360ms;
+}
+
+/* Dark, measured 1:1 from the reference: a flat #262626 pill, an even
+   #2c2c2c edge, a #fafafa bar with light around it peaking near #3c3c3c,
+   a muted #7e7e7e icon and #fafafa text. */
+:root[data-theme='dark'] .nd {
+  --nd-row-hover: rgb(255 255 255 / 4%);
+  --nd-active-bg: #262626;
+  --nd-active-edge: #2b2b2b;
+  --nd-active-text: #fafafa;
+  --nd-active-shadow: none;
+  --nd-bar: #fafafa;
+}
+
+/* The sidebar's content starts below the dashboard header's line. */
+.nd-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 8px 12px;
+}
+
+/* ---------- Sidebar top bar ----------
+   Measured from the reference: a 20px avatar 16px from the edge, the name
+   at 14px semibold, a small chevron; on the right a 16px search icon and a
+   28px round button, 12px from the sidebar's edge. It fills the same 48px
+   as the dashboard header, so the two line up. */
+.nd {
+  --nd-top-name: #1f1f22;
+  --nd-top-chevron: #8a8a90;
+}
+
+:root[data-theme='dark'] .nd {
+  --nd-top-name: #e2e3e5;
+  --nd-top-chevron: #7e7e80;
+}
+
+.nd-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--nd-head-h);
+  padding: 0 12px 0 10px;
+}
+
+.nd-workspace {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 7px 0 6px;
+  border-radius: 9px;
+  /* Hover: a quiet card behind it, nothing else moves (the chevron stays put). */
+  transition: background-color var(--dur-hover) ease;
+}
+
+@supports (corner-shape: squircle) {
+  .nd-workspace {
+    border-radius: 13px;
+    corner-shape: squircle;
+  }
+}
+
+.nd-workspace:hover {
+  background-color: var(--nd-row-hover);
+}
+
+.nd-workspace__avatar {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-circle);
+  /* The logo (set inline), the whole image fitted to the circle. */
+  background-color: #23262c;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 10%);
+}
+
+.nd-workspace__name {
+  color: var(--nd-top-name);
+  font: 600 14px / 1 var(--font-ui);
+  letter-spacing: -0.005em;
+}
+
+.nd-workspace__chevron {
+  flex: none;
+  fill: none;
+  stroke: var(--nd-top-chevron);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.nd-top__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Plain icon buttons: no card, the icon in the muted text colour, full
+   colour on hover. */
+.nd-top__icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--nd-text-2);
+  transition: color var(--dur-fast) ease;
+}
+
+.nd-top__icon:hover {
+  color: var(--nd-text);
+}
+
+/* ---------- Header icons ----------
+   One colour (currentColor). Hover motion is plain transitions, each
+   property on one element, on one clean ease-out, the same both ways, so
+   nothing can jump or snap when it finishes. */
+.nd-hicon {
+  overflow: visible;
+  fill: currentColor;
+}
+
+.nd-hicon__strip,
+.nd-hicon__chevron {
+  transform-box: view-box;
+}
+
+/* Search: four corner brackets around a solid magnifier, one colour.
+   Hover, "autofocus": the corners spring in one after another to frame the
+   lens, while the magnifier gives a quick twist and settles a touch smaller
+   and up-left, like a camera framing its subject.
+   Nothing ever touches: each corner closes in only as far as its clearance
+   to the lens and handle allows (overshoot included), which is why the
+   top-left travels further than the bottom-right.
+   Held states are transitions on `transform`; the twist is a keyframe on
+   the separate `rotate` property that ends at rest, so they never fight. */
+.nd-frame__c,
+.nd-hicon__glass,
+.nd-lens {
+  transform-box: view-box;
+}
+
+.nd-frame__c {
+  transition: transform 520ms var(--nd-spring-soft);
+}
+
+.nd-hicon__glass,
+.nd-lens {
+  transform-origin: 47.5% 47.5%; /* the lens centre: (7.6, 7.6) */
+}
+
+.nd-hicon__glass {
+  transition: transform 520ms var(--nd-spring-soft);
+}
+
+.nd-top__icon:hover .nd-frame__c {
+  transition: transform 440ms var(--nd-spring);
+}
+
+.nd-top__icon:hover .nd-frame__c--tl {
+  transform: translate(0.9px, 0.9px);
+}
+
+.nd-top__icon:hover .nd-frame__c--tr {
+  transform: translate(-0.6px, 0.7px);
+  transition-delay: 45ms;
+}
+
+.nd-top__icon:hover .nd-frame__c--br {
+  transform: translate(-0.45px, -0.45px);
+  transition-delay: 90ms;
+}
+
+.nd-top__icon:hover .nd-frame__c--bl {
+  transform: translate(0.7px, -0.6px);
+  transition-delay: 135ms;
+}
+
+.nd-top__icon:hover .nd-hicon__glass {
+  transform: translate(-0.4px, -0.4px) scale(0.94);
+  transition: transform 420ms var(--nd-spring);
+}
+
+/* Starts a beat after the lens begins to settle smaller, so the swinging
+   handle always has room. */
+.nd-top__icon:hover .nd-lens {
+  animation: nd-twist 560ms var(--ease-out) 110ms both;
+}
+
+@keyframes nd-twist {
+  0% {
+    rotate: 0deg;
+  }
+  35% {
+    rotate: -12deg;
+  }
+  70% {
+    rotate: 5deg;
+  }
+  100% {
+    rotate: 0deg;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nd-hicon--search *,
+  .nd-top__icon:hover .nd-hicon--search * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Close sidebar: the bar slides to the left edge, and the chevron slides
+   into the room it leaves, pointing left. */
+.nd-hicon__strip {
+  transition: transform var(--nd-glide-dur) var(--nd-glide);
+}
+
+.nd-hicon__chevron {
+  opacity: 0;
+  transform: translateX(2.2px);
+  transition:
+    transform var(--nd-glide-dur) var(--nd-glide),
+    opacity var(--nd-glide-dur) var(--nd-glide);
+}
+
+.nd-top__icon:hover .nd-hicon__strip {
+  transform: translateX(-5px);
+}
+
+.nd-top__icon:hover .nd-hicon__chevron {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* A row. Plain rows have no bar space: the icon sits 10px from the row's
+   edge and the label 9px after it. On the module you're on, the card fades
+   in and the bar grows in on the left (4px wide, 10px from the edge),
+   pushing the icon and label 14px to the right. Everything moves on one
+   clean ease-out. */
+.nd-nav__item {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 14px 0 9px;
+  border: 1px solid transparent;
+  /* Small squircle corners. A squircle reads tighter than a circular arc of
+     the same radius, so it takes 12px to look like a normal small corner;
+     browsers without corner-shape fall back to a plain 8px. */
+  border-radius: 8px;
+  overflow: hidden;
+  color: var(--nd-row-text);
+  font: 400 14px / 1 var(--font-ui);
+  text-align: left;
+  transition:
+    background-color var(--nd-glide-dur) var(--nd-glide),
+    border-color var(--nd-glide-dur) var(--nd-glide),
+    box-shadow var(--nd-glide-dur) var(--nd-glide),
+    color var(--nd-glide-dur) var(--nd-glide);
+}
+
+@supports (corner-shape: squircle) {
+  .nd-nav__item {
+    border-radius: 12px;
+    corner-shape: squircle;
+  }
+}
+
+.nd-nav__item:hover {
+  background-color: var(--nd-row-hover);
+  color: var(--nd-row-text-hover);
+  transition-duration: var(--dur-hover);
+}
+
+.nd-nav__item[aria-current='page'],
+.nd-nav__item[aria-current='page']:hover {
+  color: var(--nd-active-text);
+  background-color: var(--nd-active-bg);
+  border-color: var(--nd-active-edge);
+  box-shadow: var(--nd-active-shadow);
+  transition-duration: var(--nd-glide-dur);
+}
+
+/* Icon and label travel together. Plain rows: the icon 10px from the row's
+   edge. The row you're on: shifted 14px right to make room for the bar.
+   Moved by transform only, so the row's layout never changes mid-animation
+   and the text glides with sub-pixel smoothness instead of stepping. */
+.nd-nav__content {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  transition: translate var(--nd-glide-dur) var(--nd-glide);
+}
+
+.nd-nav__item .nd-icon {
+  margin-right: 9px;
+}
+
+.nd-nav__item[aria-current='page'] .nd-nav__content {
+  translate: 14px 0;
+}
+
+/* The bar sits at a fixed spot (10px from the row's edge). It moves on the
+   GPU (translate, scale, opacity) and differently each way:
+   - in: shoots in from the left while snapping open from a sliver to full
+     height on a spring, so it overshoots a little and settles; it starts a
+     beat after the icon so it lands as the room opens up.
+   - out: quick and tidy, collapsing vertically and sliding back out left. */
+.nd-nav__item {
+  position: relative;
+}
+
+.nd-nav__bar {
+  position: absolute;
+  left: 9px; /* + the row's 1px border = 10px from its outer edge */
+  top: 50%;
+  width: 4px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: var(--r-pill);
+  background: var(--nd-bar);
+  transform-origin: 50% 50%;
+  opacity: 0;
+  translate: -5px 0;
+  scale: 1 0;
+  /* The way out. */
+  transition:
+    scale 200ms cubic-bezier(0.55, 0, 0.75, 0.2),
+    translate 220ms cubic-bezier(0.55, 0, 0.75, 0.2),
+    opacity 160ms ease-in 40ms;
+}
+
+.nd-nav__item[aria-current='page'] .nd-nav__bar {
+  opacity: 1;
+  translate: 0 0;
+  scale: 1 1;
+  /* The way in. */
+  transition:
+    translate 320ms var(--nd-glide) 50ms,
+    scale 520ms var(--nd-spring) 70ms,
+    opacity 140ms ease-out 50ms;
+}
+
+/* ---------- Icons ---------- */
+
+/* Normal filled style: one colour, following the row's text. */
+.nd-icon {
+  flex: none;
+  overflow: visible;
+  fill: currentColor;
+}
+
+/* New chat. Rest: one bubble, the second hidden behind it.
+   Hover: the second bubble (solid, separated by a cut gap, so it stays
+   crisp) springs out to the top right, the front bubble tilts back from its
+   tail, and the cut-out plus turns a quarter.
+   Transitions, not keyframes, so leaving springs it all back. */
+.nd-icon--new-chat .nd-icon__back,
+.nd-icon--new-chat .nd-icon__front,
+.nd-icon--new-chat .nd-icon__cut {
+  transform-box: view-box;
+}
+
+/* Base rules carry the way back (slower, sequenced); hover rules carry the
+   way in (snappy). The back bubble travels home before it fades. */
+.nd-icon--new-chat .nd-icon__back {
+  transform-origin: 70% 30%;
+  opacity: 0;
+  transform: translate(-2px, 2.5px) scale(0.6);
+  transition:
+    transform 560ms var(--ease-in-out),
+    opacity 240ms ease 320ms;
+}
+
+.nd-icon--new-chat .nd-icon__front {
+  transform-origin: 25% 90%;
+  transition: transform 640ms var(--nd-spring-soft);
+}
+
+.nd-icon--new-chat .nd-icon__cut {
+  transform-origin: 50% 43.75%; /* the plus's centre: (8, 7) in a 16-unit box */
+  transition: transform 680ms var(--nd-spring-soft);
+}
+
+.nd-nav__item:hover .nd-icon--new-chat .nd-icon__back {
+  opacity: 1;
+  transform: translate(1.5px, -1.5px) rotate(10deg) scale(1);
+  transition:
+    transform 460ms var(--nd-spring) 40ms,
+    opacity 120ms ease 40ms;
+}
+
+.nd-nav__item:hover .nd-icon--new-chat .nd-icon__front {
+  transform: translate(-0.5px, 0.5px) rotate(-8deg);
+  transition: transform 460ms var(--nd-spring);
+}
+
+/* A clean quarter turn: lands on the same plus, no scaling to soften it. */
+.nd-nav__item:hover .nd-icon--new-chat .nd-icon__cut {
+  transform: rotate(90deg);
+  transition: transform 420ms var(--nd-glide);
+}
+
+.nd-nav__item:active .nd-icon--new-chat .nd-icon__front {
+  transform: translate(-0.5px, 0.5px) rotate(-8deg) scale(0.88);
+  transition-duration: 120ms;
+}
+
+/* Every animated part transforms within the icon's own 16-unit box. */
+.nd-icon--new-project .nd-icon__front,
+.nd-icon--new-project .nd-icon__cut,
+.nd-icon--new-project .nd-folder__badge,
+.nd-icon--new-project .nd-folder__clearance,
+.nd-icon--pr .nd-inbox__card,
+.nd-icon--pr .nd-inbox {
+  transform-box: view-box;
+}
+
+/* New project. Rest: a folder with a plus cut out.
+   Hover: the cut-out closes up, a solid plus badge springs out of the
+   folder to its top-right corner (with a ring of clearance opening around
+   it), and the folder dips under the launch. Leaving reverses it. */
+/* Way back: the badge travels home into the folder and only then fades,
+   the clearance closes behind it, the folder un-squashes, and the cut-out
+   plus reopens last. */
+.nd-icon--new-project .nd-icon__front {
+  transform-origin: 50% 100%;
+  transition: transform 620ms var(--nd-spring-soft) 120ms;
+}
+
+.nd-icon--new-project .nd-icon__cut {
+  transform-origin: 50% 54%; /* the plus's centre: (8, 8.7) */
+  transition: transform 380ms var(--ease-out) 380ms;
+}
+
+.nd-icon--new-project .nd-folder__badge {
+  transform-origin: 81.25% 18.75%; /* the badge's centre: (13, 3) */
+  opacity: 0;
+  transform: translate(-5px, 5.7px) scale(0.3);
+  transition:
+    transform 540ms var(--ease-in-out),
+    opacity 200ms ease 360ms;
+}
+
+.nd-icon--new-project .nd-folder__clearance {
+  transform-origin: 81.25% 18.75%;
+  transform: scale(0);
+  transition: transform 420ms var(--ease-in-out) 200ms;
+}
+
+.nd-nav__item:hover .nd-icon--new-project .nd-icon__front {
+  transform: scale(1.04, 0.92);
+  transition: transform 420ms var(--nd-spring);
+}
+
+.nd-nav__item:hover .nd-icon--new-project .nd-icon__cut {
+  transform: scale(0);
+  transition: transform 260ms var(--ease-out);
+}
+
+.nd-nav__item:hover .nd-icon--new-project .nd-folder__badge {
+  opacity: 1;
+  transform: translate(0, 0) scale(1) rotate(90deg);
+  transition:
+    transform 520ms var(--nd-spring) 60ms,
+    opacity 140ms ease 60ms;
+}
+
+.nd-nav__item:hover .nd-icon--new-project .nd-folder__clearance {
+  transform: scale(1);
+  transition: transform 420ms var(--nd-spring) 60ms;
+}
+
+/* Pull requests (inbox tray). Hover, instantly: the card drops into the
+   tray, its lower half vanishing behind the lip, and the tray squashes as
+   it lands. Held while hovered; on leave the card springs back out on the
+   softer spring. */
+.nd-icon--pr .nd-inbox__card {
+  transition: transform 600ms var(--nd-spring-soft);
+}
+
+.nd-icon--pr .nd-inbox {
+  transform-origin: 50% 90%; /* squashes onto its base */
+}
+
+.nd-nav__item:hover .nd-icon--pr .nd-inbox__card {
+  transform: translateY(2.6px);
+  transition: transform 300ms var(--ease-in-out);
+}
+
+/* The landing: fires as the card reaches the tray, then settles at rest. */
+.nd-nav__item:hover .nd-icon--pr .nd-inbox {
+  animation: nd-tray-catch 420ms var(--nd-spring) 180ms both;
+}
+
+@keyframes nd-tray-catch {
+  0% {
+    transform: scale(1, 1);
+  }
+  35% {
+    transform: scale(1.06, 0.88);
+  }
+  70% {
+    transform: scale(0.98, 1.03);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nd-icon *,
+  .nd-hicon *,
+  .nd-nav__bar,
+  .nd-nav__content,
+  .nd-nav__item {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  .nd-top__icon:hover .nd-hicon * {
+    transform: none !important;
+  }
+
+  .nd-nav__item:hover .nd-icon * {
+    transform: none !important;
+    animation: none !important;
+  }
+}
+
+/* The dashboard. The vertical separator is its left edge: the line, then the
+   highlight just inside it. The highlight is drawn above the header's line
+   (z-index) so it cuts through where the two cross, as in the reference. */
+.nd-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--nd-main-bg);
+  border-left: 1px solid var(--nd-line);
+}
+
+.nd-main::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(
+    to right,
+    var(--nd-line-highlight) 50%,
+    var(--nd-line-highlight-soft) 50%
+  );
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* The header's horizontal separator: line, highlight below. */
+.nd-head {
+  flex: none;
+  height: var(--nd-head-h);
+  border-bottom: 1px solid var(--nd-line);
+  box-shadow:
+    0 1px 0 var(--nd-line-highlight),
+    0 2px 0 var(--nd-line-highlight-soft);
+}
+
+/* The sidebar toggle. It floats over the layout, centred in the 48px bars,
+   at the close button's spot in the top bar (40px in from the sidebar's
+   edge). While the sidebar slides, script moves it along the edge in
+   whole-pixel steps (--nd-toggle-x) until it parks 10px from the window's
+   edge, in the header. */
+.nd {
+  position: relative;
+}
+
+.nd-toggle {
+  position: absolute;
+  z-index: 5;
+  top: 10px;
+  left: var(--nd-toggle-x, calc(var(--nd-rail-w) - 40px));
+}
+
+/* It turns round as the sidebar starts to close, so its bar and chevron
+   point the way back to open it. */
+.nd-toggle .nd-hicon--panel {
+  transition: scale 380ms var(--nd-spring-soft);
+}
+
+.nd[data-rail='closed'] .nd-toggle .nd-hicon--panel {
+  scale: -1 1;
+}
+
+/* Keeps the top bar's layout: the toggle floats over this spot. */
+.nd-top__slot {
+  width: 28px;
+  height: 28px;
+}
+
+/* With the sidebar gone, the separator on the dashboard's left edge would sit
+   on the window's edge: it fades out. */
+.nd-main,
+.nd-main::before {
+  transition:
+    border-color 300ms ease,
+    opacity 300ms ease;
+}
+
+.nd[data-rail='closed'] .nd-main {
+  border-left-color: transparent;
+}
+
+.nd[data-rail='closed'] .nd-main::before {
+  opacity: 0;
+}
+
+/* ---------- Main content ---------- */
+
+.nd-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 32px 32px 96px;
+}
+
+/* The lab pill sits at the bottom on this page so it doesn't cover the design. */
+.lab-float.lab-float--bottom {
+  inset: auto 0 14px;
+}

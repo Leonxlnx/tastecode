@@ -1,0 +1,871 @@
+/*
+ * The new design's chat list (ChatList.tsx, OrganizeMenu.tsx). Built on the
+ * .nd tokens in new-design.css: rows share the modules' metrics, hover and
+ * selected card, so a chat you open looks like the module you're on.
+ *
+ * Inside a project (all x in the project's own box):
+ *   folder icon 10–26, its centre 18   -> the guide line sits at 18
+ *   project name 35                    -> chat rows start at 26, their
+ *                                         status hangs at 30–40, their
+ *                                         title at 45; the open chat's
+ *                                         marker sits on the line (17–18,
+ *                                         widened 1px each side)
+ */
+
+.nd {
+  /* Quietest text: section labels, times. */
+  --nd-text-3: #8a8a90;
+  /* Row markers: blue = ready to review, amber = waiting on you (approval or
+     an answer), red = failed. */
+  --nd-unread: var(--nd-accent);
+  --nd-waiting: #e0950f;
+
+  /* Project guide lines. */
+  --nd-guide: rgb(0 0 0 / 9%);
+
+  /* A row being pinned or moved, lifted for the trip. */
+  --nd-carry-shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 8px 20px -8px rgb(0 0 0 / 24%);
+
+  /* Menus: a white sheet with a hairline edge and a soft drop. */
+  --nd-menu-bg: #ffffff;
+  --nd-menu-edge: rgb(0 0 0 / 8%);
+  --nd-menu-shadow: 0 1px 2px rgb(0 0 0 / 5%), 0 14px 36px -14px rgb(0 0 0 / 22%);
+
+  /* Segmented controls: a quiet recessed track and a plain white thumb with
+     one hairline and a faint lift: no ring, no glow. */
+  --nd-seg-track: #f0f0f2;
+  --nd-seg-thumb: #ffffff;
+  --nd-seg-thumb-shadow: 0 0 0 0.5px rgb(0 0 0 / 7%), 0 1px 2px rgb(0 0 0 / 7%);
+}
+
+:root[data-theme='dark'] .nd {
+  --nd-text-3: #7e7e80;
+  --nd-waiting: #f2b13c;
+  --nd-guide: rgb(255 255 255 / 9%);
+  --nd-carry-shadow: 0 0 0 1px rgb(0 0 0 / 60%), 0 10px 24px -8px rgb(0 0 0 / 80%);
+  --nd-menu-bg: #1c1c1e;
+  --nd-menu-edge: #2b2b2b;
+  --nd-menu-shadow: 0 16px 40px -16px rgb(0 0 0 / 80%);
+  --nd-seg-track: #131315;
+  --nd-seg-thumb: #2b2b2e;
+  --nd-seg-thumb-shadow: none;
+}
+
+/* ---------- The scrolling list ---------- */
+
+.nd-chats {
+  position: relative;
+  /* Its own stacking context: a row lifted for a pin or move flies above
+     the others without escaping the list. */
+  isolation: isolate;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* The scrollbar's room is always kept, so the rows don't shift sideways
+     when a regroup makes the list long enough (or short enough) to scroll. */
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  padding: 0 8px 24px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--nd-text) 16%, transparent) transparent;
+}
+
+/* The list, and a layer over it where parts a reorganize removed fade out
+   in place (useMorph in ChatList.tsx). */
+.nd-chats-area {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.nd-ghosts {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.nd-sect + .nd-sect {
+  margin-top: 10px;
+}
+
+/* Rows and labels that move are stepped by whole pixels from script
+   (glide() in ChatList.tsx), so text and its card always land on the same
+   pixel; positioned so a lifted row can sit above the others. */
+.nd-chats [data-flip] {
+  position: relative;
+}
+
+/* Section labels sit on the module icons' line (10px into a row). */
+.nd-sect__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  padding: 0 2px 0 10px;
+  color: var(--nd-text-3);
+  font: 500 12px / 1 var(--font-ui);
+  letter-spacing: 0.01em;
+}
+
+.nd-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nd-rows--more {
+  padding-top: 1px;
+}
+
+/* Date groups: a quieter label above each run of rows. */
+.nd-group {
+  /* 11 + 12 + 5 = 28px: whole pixels, so the rows under it never sit on a
+     half pixel (and can't drop one when an animation hands them back). */
+  padding: 11px 10px 5px;
+  color: var(--nd-text-3);
+  font: 400 11.5px / 12px var(--font-ui);
+}
+
+.nd-datagroup:first-of-type .nd-group {
+  padding-top: 4px;
+}
+
+/* ---------- Rows: chats, project heads, "Show more" ----------
+   Same 28px height, corners and hover as the modules. */
+.nd-chat__btn,
+.nd-proj__head,
+.nd-more {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 28px;
+  padding: 0 10px 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--nd-row-text);
+  text-align: left;
+  transition:
+    background-color var(--nd-glide-dur) var(--nd-glide),
+    border-color var(--nd-glide-dur) var(--nd-glide),
+    box-shadow var(--nd-glide-dur) var(--nd-glide),
+    color var(--nd-glide-dur) var(--nd-glide);
+}
+
+@supports (corner-shape: squircle) {
+  .nd-chat__btn,
+  .nd-proj__head,
+  .nd-more {
+    border-radius: 12px;
+    corner-shape: squircle;
+  }
+}
+
+.nd-chat__btn:hover,
+.nd-chat.is-menu-open .nd-chat__btn,
+.nd-proj__head:hover,
+.nd-more:hover {
+  background-color: var(--nd-row-hover);
+  color: var(--nd-row-text-hover);
+  transition-duration: var(--dur-hover);
+}
+
+/* ---------- Chat rows ---------- */
+
+.nd-chat {
+  position: relative;
+}
+
+/* A one-row grid (status, title, time) whose items sit on one text
+   baseline, centred in the 28px row. Aligning on the baseline, not on box
+   middles, is what lets the status line up with the letters themselves.
+   The 18px left padding is the room the status hangs in. */
+.nd-chat__btn {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  /* A fixed 18px line, centred in the 26px inside the border: the text
+     sits 4px down, a whole pixel, in every row. */
+  grid-template-rows: 18px;
+  align-items: baseline;
+  align-content: center;
+  padding-left: 18px;
+  font: 400 13.5px / 18px var(--font-ui);
+}
+
+/* The chat you're on: the modules' selected card, and it arrives the same
+   way theirs does: fading in where it is (and out of the one you left). */
+.nd-chat__btn[aria-current='page'],
+.nd-chat__btn[aria-current='page']:hover,
+.nd-chat.is-menu-open .nd-chat__btn[aria-current='page'] {
+  color: var(--nd-active-text);
+  background-color: var(--nd-active-bg);
+  border-color: var(--nd-active-edge);
+  box-shadow: var(--nd-active-shadow);
+  transition-duration: var(--nd-glide-dur);
+}
+
+/* Pinned or moved: lifted into a card for the trip, settling on landing. */
+.nd-chat__btn.is-carried,
+.nd-chat__btn.is-carried:hover {
+  color: var(--nd-active-text);
+  background-color: var(--nd-active-bg);
+  border-color: var(--nd-active-edge);
+  box-shadow: var(--nd-carry-shadow);
+  transition-duration: 120ms;
+}
+
+/* Anything new or waiting on you: full-strength title and a dot. */
+.nd-chat:is([data-status='unread'], [data-status='approval'], [data-status='input'], [data-status='failed'])
+  .nd-chat__btn {
+  color: var(--nd-text);
+}
+
+/* Status hangs in the card's left padding (4–14px in), so every title
+   starts at the same place whether or not there's a dot. Its margins cancel
+   out (-14 + 10 + 4 = 0), so it takes no room in the row.
+   Vertically: as an empty box its bottom sits on the text baseline; the
+   nudge lifts its centre to 0.62ex above the baseline, between the
+   lowercase and capital heights, where the letters' visual middle is, and
+   it scales with the font (ex), so it holds for any of the lab's fonts. */
+.nd-chat__status {
+  position: relative;
+  display: block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  margin-left: -14px;
+  translate: 0 calc(5px - 0.62ex);
+  color: var(--nd-text);
+}
+
+/* The dot or spinner is centred in the box out of flow, so the box has no
+   content baseline of its own and always aligns by its bottom edge: a dot
+   and a spinner land at exactly the same height. */
+.nd-chat__status > .nd-chat__dot,
+.nd-chat__status > .nd-spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+
+/* The dot is always there; it springs in when a chat turns unread and
+   shrinks away when you open it. */
+.nd-chat__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-circle);
+  background: var(--nd-unread);
+  opacity: 0;
+  scale: 0;
+  transition:
+    scale 420ms var(--nd-spring),
+    opacity 200ms ease;
+}
+
+.nd-chat:is([data-status='unread'], [data-status='approval'], [data-status='input'], [data-status='failed'])
+  .nd-chat__dot {
+  opacity: 1;
+  scale: 1;
+}
+
+.nd-chat:is([data-status='approval'], [data-status='input']) .nd-chat__dot {
+  background: var(--nd-waiting);
+}
+
+.nd-chat[data-status='failed'] .nd-chat__dot {
+  background: var(--nd-danger);
+}
+
+.nd-spinner {
+  animation: nd-spin 900ms linear infinite;
+}
+
+.nd-spinner__track {
+  opacity: 0.2;
+}
+
+@keyframes nd-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+.nd-chat__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A fixed-width, right-aligned time column (fits "20h", "3w", "1mo"), so
+   titles get the same room whatever the time says. */
+.nd-chat__time {
+  flex: none;
+  min-width: 25px;
+  margin-left: 8px;
+  color: var(--nd-text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  transition: opacity var(--dur-fast) ease;
+}
+
+/* Inside a project: the row starts past the guide line, so its card is only
+   as wide as the chat, and its title sits one step in from the project's
+   name. */
+.nd-chat--nested {
+  margin-left: 26px;
+}
+
+/* The open chat's marker: a short bar sitting on the guide line beside it,
+   a little wider than the line so it reads as on top of it, in the
+   modules' bar colour. It slides along the line, in step with the selected
+   card, when you open another chat in the same project; it shrinks away
+   from a project you leave and grows in at the one you open. Placed by
+   LineMark (ChatList.tsx). */
+/* Built on the line's exact box (left 17px, 1px wide) and widened by a 1px
+   spread on each side, not as its own 3px box: the browser snaps every box
+   to screen pixels on its own, so at 125% or 150% display scaling a
+   separate box can land half a pixel off the line. This way it's centred
+   on the line at any scaling. 3 x 14px in all. */
+.nd-proj__mark {
+  position: absolute;
+  z-index: 1;
+  top: -6px;
+  left: 17px;
+  width: 1px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--nd-bar);
+  box-shadow: 0 0 0 1px var(--nd-bar);
+  pointer-events: none;
+  transform-origin: center;
+  transition:
+    transform 420ms cubic-bezier(0.25, 1, 0.5, 1),
+    opacity 200ms ease,
+    scale 360ms var(--nd-spring);
+}
+
+.nd-proj__mark[data-on='false'] {
+  opacity: 0;
+  scale: 1 0.3;
+  transition:
+    opacity 160ms ease,
+    scale 200ms ease;
+}
+
+/* More (…): hidden in the time's place until the row is hovered (or its
+   menu is open), then the time fades out and the dots spring in. */
+.nd-chat__more {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: -11px;
+  border-radius: 7px;
+  color: var(--nd-text-3);
+  opacity: 0;
+  scale: 0.8;
+  transition:
+    opacity var(--dur-fast) ease,
+    scale 360ms var(--nd-spring),
+    color var(--dur-fast) ease,
+    background-color var(--dur-fast) ease;
+}
+
+/* Shown on hover, while its menu is open, and always on the chat you're on
+   (where it takes the time's place for good). */
+.nd-chat:hover .nd-chat__more,
+.nd-chat.is-menu-open .nd-chat__more,
+.nd-chat:has(> [aria-current='page']) .nd-chat__more,
+.nd-chat__more:focus-visible {
+  opacity: 1;
+  scale: 1;
+}
+
+.nd-chat:hover .nd-chat__time,
+.nd-chat:focus-within .nd-chat__time,
+.nd-chat.is-menu-open .nd-chat__time,
+.nd-chat:has(> [aria-current='page']) .nd-chat__time {
+  opacity: 0;
+}
+
+.nd-chat__more:hover,
+.nd-chat__more[aria-expanded='true'] {
+  color: var(--nd-text);
+  background-color: var(--nd-row-hover);
+}
+
+.nd-dots__dot {
+  transform-box: fill-box;
+}
+
+.nd-chat__more:hover .nd-dots__dot {
+  animation: nd-dot-hop 520ms var(--nd-spring) both;
+}
+
+.nd-chat__more:hover .nd-dots__dot:nth-child(2) {
+  animation-delay: 60ms;
+}
+
+.nd-chat__more:hover .nd-dots__dot:nth-child(3) {
+  animation-delay: 120ms;
+}
+
+@keyframes nd-dot-hop {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  40% {
+    translate: 0 -1.6px;
+  }
+}
+
+/* Renaming in place: the row becomes a field with a soft focus ring. */
+.nd-chat__btn.is-renaming,
+.nd-chat__btn.is-renaming[aria-current='page'] {
+  color: var(--nd-text);
+  background-color: var(--nd-active-bg);
+  border-color: var(--nd-active-edge);
+  box-shadow:
+    var(--nd-active-shadow),
+    0 0 0 3px color-mix(in srgb, var(--nd-accent) 22%, transparent);
+  cursor: text;
+}
+
+.nd-chat__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+/* Archive and delete: the row slides out to the left and the list closes
+   up behind it. */
+.nd-chat[data-leaving] {
+  overflow: hidden;
+  pointer-events: none;
+  animation: nd-row-out 340ms var(--nd-glide) forwards;
+}
+
+@keyframes nd-row-out {
+  from {
+    height: 28px;
+    opacity: 1;
+    left: 0;
+  }
+  45% {
+    opacity: 0;
+  }
+  to {
+    height: 0;
+    margin-bottom: -1px;
+    opacity: 0;
+    left: -10px;
+  }
+}
+
+.nd-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------- Project folders ---------- */
+
+.nd-proj__head {
+  font: 500 13.5px / 18px var(--font-ui);
+}
+
+/* Folder at rest; on hover it morphs into a chevron showing which way the
+   project will go: down when open, right when closed. */
+.nd-proj__icon {
+  position: relative;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-right: 9px;
+}
+
+/* The row icons are drawn 1.5 units in from their box, which puts their
+   edges on half pixels and their centre half a pixel right of the guide
+   line. Half a pixel left lands the edges on whole pixels (crisper) and
+   centres modules and folders exactly over the line and its marker. */
+.nd-proj__icon,
+.nd-nav__item .nd-icon {
+  translate: -0.5px 0;
+}
+
+.nd-proj__icon > svg {
+  position: absolute;
+  inset: 0;
+  transition:
+    opacity 200ms ease,
+    scale 380ms var(--nd-spring-soft),
+    rotate var(--nd-glide-dur) var(--nd-glide);
+}
+
+.nd-proj__chevron {
+  opacity: 0;
+  scale: 0.5;
+  rotate: -90deg;
+}
+
+.nd-proj__head[aria-expanded='true'] .nd-proj__chevron {
+  rotate: 0deg;
+}
+
+.nd-proj__head:hover .nd-proj__folder,
+.nd-proj__head:focus-visible .nd-proj__folder {
+  opacity: 0;
+  scale: 0.5;
+}
+
+.nd-proj__head:hover .nd-proj__chevron,
+.nd-proj__head:focus-visible .nd-proj__chevron {
+  opacity: 1;
+  scale: 1;
+}
+
+.nd-proj__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nd-proj + .nd-proj {
+  margin-top: 1px;
+}
+
+/* The body starts 3px higher (and pads it back) so the guide line begins
+   right under the folder icon without poking out of the collapse. */
+.nd-proj__body {
+  position: relative;
+  margin-top: -3px;
+  padding: 3px 0 2px;
+}
+
+/* The guide line: down from the folder, beside its chats, to the last row.
+   It draws itself down whenever the project opens. */
+.nd-proj__body::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 11px;
+  /* On a whole pixel (17–18) so it, and the open chat's branch, stay crisp. */
+  left: 17px;
+  width: 1px;
+  border-radius: 1px;
+  background: var(--nd-guide);
+  transform-origin: top;
+  transition: background-color var(--nd-glide-dur) var(--nd-glide);
+}
+
+.nd-collapse[data-open='true'] > .nd-collapse__inner > .nd-proj__body::before {
+  animation: nd-guide-draw 560ms var(--nd-glide) both;
+}
+
+@keyframes nd-guide-draw {
+  from {
+    scale: 1 0;
+  }
+}
+
+/* "Show more" lines its label up with the chat titles above it. */
+.nd-more {
+  width: calc(100% - 26px);
+  height: 26px;
+  margin-left: 26px;
+  padding-left: 18px;
+  color: var(--nd-text-3);
+  font: 400 12.5px / 16px var(--font-ui);
+}
+
+/* Outside a project (Inbox's Done): flush with the rows. */
+.nd-more--flat {
+  width: 100%;
+  margin-left: 0;
+}
+
+.nd-more__chevron {
+  flex: none;
+  margin-left: 3px;
+  transition: rotate var(--nd-glide-dur) var(--nd-glide);
+}
+
+.nd-more[aria-expanded='true'] .nd-more__chevron {
+  rotate: 180deg;
+}
+
+.nd-note {
+  margin: 0;
+  padding: 6px 10px 9px 45px;
+  color: var(--nd-text-3);
+  font: 400 12.5px / 16px var(--font-ui);
+}
+
+.nd-note--empty {
+  padding: 20px 10px;
+  text-align: center;
+}
+
+/* ---------- Collapse: height eases, content fades ---------- */
+
+/* minmax(0, 1fr) columns: without it the grid sizes itself to the longest
+   unwrapped title and pushes the rows past the rail. */
+.nd-collapse {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--nd-glide-dur) var(--nd-glide);
+}
+
+.nd-collapse[data-open='false'] {
+  grid-template-rows: 0fr;
+}
+
+.nd-collapse__inner {
+  min-width: 0;
+  min-height: 0;
+  transition: opacity 260ms var(--nd-glide);
+}
+
+.nd-collapse[data-open='false'] > .nd-collapse__inner {
+  opacity: 0;
+  transition-duration: 180ms;
+}
+
+.nd-collapse.is-moving > .nd-collapse__inner,
+.nd-collapse[data-open='false'] > .nd-collapse__inner {
+  overflow: hidden;
+}
+
+/* ---------- Organize trigger ---------- */
+
+.nd-sect__action {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--nd-text-3);
+  transition:
+    color var(--dur-fast) ease,
+    background-color var(--dur-fast) ease;
+}
+
+.nd-sect__action:hover,
+.nd-sect__action[aria-expanded='true'] {
+  color: var(--nd-text);
+}
+
+.nd-sect__action[aria-expanded='true'] {
+  background-color: var(--nd-row-hover);
+}
+
+.nd-sort__bar {
+  transition: width 460ms var(--nd-spring-soft);
+}
+
+.nd-sect__action:is(:hover, [aria-expanded='true']) .nd-sort__bar--1 {
+  width: 5px;
+}
+
+.nd-sect__action:is(:hover, [aria-expanded='true']) .nd-sort__bar--3 {
+  width: 12px;
+  transition-delay: 50ms;
+}
+
+/* ---------- Organize menu ----------
+   Opens beside the sidebar. One type scale: 13px title, 12px labels,
+   12.5px options. */
+
+.nd-menu {
+  position: fixed;
+  z-index: 50;
+  /* Its own permanent layer, so its text doesn't snap when the entrance
+     animation ends (see .nd-chats in new-design.css). */
+  will-change: transform;
+  display: grid;
+  gap: 14px;
+  width: 268px;
+  padding: 12px;
+  background: var(--nd-menu-bg);
+  border: 1px solid var(--nd-menu-edge);
+  border-radius: 14px;
+  box-shadow: var(--nd-menu-shadow);
+  color: var(--nd-text);
+  font: 400 12.5px / 1 var(--font-ui);
+  transform-origin: left top;
+  animation: nd-menu-in 200ms var(--nd-glide);
+}
+
+.nd-menu[data-flipped='true'] {
+  transform-origin: right top;
+}
+
+@supports (corner-shape: squircle) {
+  .nd-menu {
+    border-radius: 22px;
+    corner-shape: squircle;
+  }
+}
+
+/* Slides in by its margin, not a transform, so its text stays crisp while
+   it moves. */
+@keyframes nd-menu-in {
+  from {
+    opacity: 0;
+    margin-left: -4px;
+  }
+}
+
+/* Title and Reset share one line box and one baseline, so they sit level. */
+.nd-menu__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 2px;
+  font: 600 13px / 20px var(--font-ui);
+  letter-spacing: -0.005em;
+}
+
+.nd-menu__reset {
+  margin-right: -6px;
+  padding: 0 6px;
+  border-radius: 6px;
+  color: var(--nd-text-3);
+  font: 500 12.5px / 20px var(--font-ui);
+  letter-spacing: 0;
+  transition:
+    color var(--dur-fast) ease,
+    background-color var(--dur-fast) ease,
+    opacity var(--dur-fast) ease;
+}
+
+.nd-menu__reset:hover {
+  color: var(--nd-text);
+  background-color: var(--nd-dd-hover);
+}
+
+.nd-menu__reset[data-hidden='true'] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.nd-menu__rule {
+  height: 1px;
+  margin: 0 -12px;
+  background: var(--nd-menu-edge);
+}
+
+.nd-field {
+  display: grid;
+  gap: 7px;
+}
+
+.nd-field__label {
+  padding: 0 2px;
+  color: var(--nd-text-3);
+  font: 500 12px / 1 var(--font-ui);
+}
+
+/* The thumb glides between options (a clean ease, no overshoot past its
+   cell). Plain rounded corners: the thumb's radius is the track's minus
+   its 2px inset, so the two curves run parallel. */
+.nd-seg {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--n), minmax(0, 1fr));
+  height: 30px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--nd-seg-track);
+}
+
+.nd-seg__thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / var(--n));
+  border-radius: 6px;
+  background: var(--nd-seg-thumb);
+  box-shadow: var(--nd-seg-thumb-shadow);
+  translate: calc(var(--i) * 100%) 0;
+  transition: translate 320ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.nd-seg__opt {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0 4px;
+  color: var(--nd-text-3);
+  font: 400 12.5px / 14px var(--font-ui);
+  white-space: nowrap;
+  transition: color var(--dur-fast) ease;
+}
+
+.nd-seg__opt:hover {
+  color: var(--nd-text-2);
+}
+
+/* Chosen: real semibold, with the letters drawn in by the ~0.19px each one
+   grows (measured on the UI font), so the word stays the same width
+   (within half a pixel) and just gets bolder. */
+.nd-seg__opt[aria-checked='true'] {
+  color: var(--nd-text);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.nd-seg__opt:focus-visible,
+.nd-sect__action:focus-visible,
+.nd-chat__more:focus-visible,
+.nd-chat__btn:focus-visible,
+.nd-proj__head:focus-visible,
+.nd-more:focus-visible,
+.nd-menu__reset:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--nd-accent) 70%, transparent);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nd-chats *,
+  .nd-chats *::before,
+  .nd-menu,
+  .nd-menu * {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .nd-spinner {
+    animation: nd-spin 2s linear infinite !important;
+  }
+}

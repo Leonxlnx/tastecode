@@ -1,0 +1,846 @@
+/*
+ * Component styles for the design lab. Every value comes from tokens.css
+ * (copied from apps/web/src/styles/tokens.css) so a redesign here can be
+ * carried back by porting tokens first, then these rules.
+ * Class names follow the real app where it has them (.rail, .sessrow,
+ * .stagehead, .composer, .said, .reply) to make that mapping obvious.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-rail);
+  color: var(--text);
+  font: 400 var(--t-md) / 1.55 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ---------- Shell ---------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: 256px minmax(0, 1fr);
+  grid-template-rows: var(--titlebar-h) minmax(0, 1fr);
+  height: 100%;
+  background: var(--bg-rail);
+}
+
+.shell.is-rail-closed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.titlebar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 12px;
+  background: var(--titlebar-bg);
+  position: relative;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  border-top-left-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.is-rail-closed .stage {
+  border-left: 0;
+  border-top-left-radius: 0;
+}
+
+/* ---------- Shared controls ---------- */
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  transition:
+    background-color var(--dur-hover) ease,
+    color var(--dur-hover) ease;
+}
+
+.icon-btn:hover {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.icon-btn--sm {
+  width: 28px;
+  height: 28px;
+}
+
+.icon-btn--xs {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+}
+
+/* ---------- Design lab pill (not part of the app) ---------- */
+
+.lab-bar {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 3px 0 10px;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.lab-bar__label {
+  margin-right: 4px;
+  color: var(--text-3);
+}
+
+.lab-seg {
+  display: flex;
+  gap: 2px;
+}
+
+.lab-seg button,
+.lab-icon,
+.lab-select {
+  height: 18px;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  color: var(--text-3);
+}
+
+.lab-seg__divider {
+  align-self: center;
+  width: 1px;
+  height: 12px;
+  margin: 0 3px;
+  background: var(--line-strong);
+}
+
+/* On the new design page the pill floats above the blank canvas. */
+.lab-float {
+  position: fixed;
+  inset: 12px 0 auto;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.lab-float .lab-bar {
+  position: static;
+  translate: none;
+  pointer-events: auto;
+}
+
+.lab-bar {
+  white-space: nowrap;
+}
+
+.lab-seg button[aria-pressed='true'] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.lab-select {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.lab-select option {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.lab-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  padding: 0;
+}
+
+.lab-icon:hover,
+.lab-seg button:hover,
+.lab-select:hover {
+  color: var(--text);
+}
+
+/* ---------- Rail ---------- */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 0 8px;
+  background: color-mix(in srgb, var(--bg-rail-tint) 55%, transparent);
+  font-size: 14px;
+}
+
+.rail__top {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 10px;
+}
+
+.rail__row {
+  display: flex;
+  align-items: center;
+}
+
+.rail__row .navitem {
+  flex: 1;
+}
+
+.navitem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 7px;
+  border-radius: var(--r-md);
+  color: color-mix(in srgb, var(--text) 92%, var(--text-2));
+  text-align: left;
+}
+
+.navitem svg {
+  color: var(--text-2);
+}
+
+.navitem:hover {
+  background: var(--control-hover);
+}
+
+.rail__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 14px 12px 10px;
+}
+
+.section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 20px;
+  margin: 0 0 4px;
+  padding: 0 3px 0 7px;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.sesslist + .section,
+.sesslist + .section--row {
+  margin-top: 14px;
+}
+
+.sesslist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sesslist--nested {
+  margin: 2px 0 6px;
+}
+
+.sessrow__button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding: 0 7px;
+  border-radius: var(--r-md);
+  text-align: left;
+  font-size: 14px;
+  color: color-mix(in srgb, var(--text) 92%, var(--text-2));
+}
+
+.sesslist--nested .sessrow__button {
+  padding-left: 12px;
+}
+
+.sessrow__button:hover {
+  background: var(--control-hover);
+}
+
+.sessrow.is-active .sessrow__button {
+  background: var(--chrome-raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--text);
+}
+
+.sessrow__dot {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+}
+
+.sessrow__dot::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: var(--r-circle);
+  background: var(--line-strong);
+}
+
+.sessrow__spinner {
+  flex: none;
+  color: var(--running);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+.sessrow__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sessrow__time {
+  flex: none;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.project__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding: 0 7px;
+  border-radius: var(--r-md);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.project__head:hover {
+  background: var(--control-hover);
+}
+
+.project__icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-2);
+}
+
+.project__icon > * {
+  grid-area: 1 / 1;
+  transition: opacity var(--dur-hover) ease;
+}
+
+.project__chevron {
+  opacity: 0;
+}
+
+.project__head:hover .project__chevron {
+  opacity: 1;
+}
+
+.project__head:hover .project__folder {
+  opacity: 0;
+}
+
+.account-card {
+  position: relative;
+  margin: 8px 8px 0;
+  border-radius: var(--r-card);
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+
+.account-card__trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 44px 7px 7px;
+  border-radius: var(--r-card);
+  text-align: left;
+}
+
+.account-card__trigger:hover {
+  background: var(--control-hover);
+}
+
+.account__avatar {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-circle);
+  background:
+    radial-gradient(circle at 30% 30%, color-mix(in srgb, var(--success) 70%, white) 0 18%, transparent 19%),
+    radial-gradient(circle at 70% 65%, color-mix(in srgb, var(--success) 60%, black) 0 22%, transparent 23%),
+    var(--success);
+}
+
+.account__identity {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.account__name {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.account__limit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.limit-bar {
+  width: 48px;
+  height: 3px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.limit-bar__fill {
+  display: block;
+  height: 100%;
+  background: var(--text-2);
+}
+
+.account-card__settings {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  translate: 0 -50%;
+}
+
+/* ---------- Stage header ---------- */
+
+.stagehead {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 42px;
+  padding: 0 8px 0 14px;
+  background: var(--bg);
+}
+
+.stagehead__title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 14px;
+}
+
+.stagehead__actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* ---------- Empty state (new chat) ---------- */
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 40px;
+}
+
+.empty__title {
+  margin: 0 0 22px;
+  font-size: 30px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+
+.empty .composer {
+  width: 100%;
+}
+
+/* ---------- Chat ---------- */
+
+.chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px var(--chat-gutter) 24px;
+}
+
+.thread__runway {
+  max-width: calc(var(--chat-w) - 2 * var(--chat-gutter));
+  margin: 0 auto;
+  padding: 0 var(--chat-text-inset);
+}
+
+.thread__row {
+  padding: 0 0 12px;
+}
+
+.thread__row--user {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0 27px;
+}
+
+.said {
+  max-width: 80%;
+  padding: 7px 11px;
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  color: var(--response-text);
+}
+
+.said__text {
+  margin: 0;
+  font-size: var(--t-md);
+  line-height: 1.45;
+}
+
+.activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  margin: 0 0 4px -2px;
+  padding: 0 2px 4px;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+
+.activity svg {
+  color: var(--text-3);
+  transition: translate var(--dur-hover) var(--ease-out);
+}
+
+.activity:hover {
+  color: var(--text);
+}
+
+.activity:hover svg {
+  translate: 2px 0;
+}
+
+.reply {
+  color: var(--response-text);
+  font-size: var(--t-md);
+  line-height: 1.6;
+}
+
+.reply p {
+  margin: 0 0 10px;
+}
+
+.reply ul {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.reply li {
+  margin: 2px 0;
+}
+
+.reply code {
+  padding: 1px 5px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+.response-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: -4px;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+/* ---------- Composer ---------- */
+
+.composer {
+  flex: none;
+  padding: 4px var(--chat-gutter) 8px;
+}
+
+.composer__box {
+  max-width: var(--chat-w);
+  margin: 0 auto;
+  border-radius: var(--r-composer);
+  box-shadow: var(--composer-shadow);
+}
+
+.composer__shelf {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 35px;
+  padding: 1px 10px;
+  background: var(--composer-surface);
+  border: 1px solid var(--composer-hairline);
+  border-bottom: 0;
+  border-radius: var(--r-composer) var(--r-composer) 0 0;
+}
+
+.shelf-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--r-md);
+  font-size: var(--t-sm);
+}
+
+.shelf-control svg {
+  color: var(--text-2);
+}
+
+.shelf-control:hover {
+  background: var(--composer-chip-bg-hover);
+}
+
+.composer__prompt {
+  background: var(--composer-surface);
+  border: 1px solid var(--composer-hairline);
+  border-radius: var(--r-composer);
+  transition: border-color var(--dur-hover) ease;
+}
+
+.composer--new .composer__prompt {
+  border-radius: 0 0 var(--r-composer) var(--r-composer);
+}
+
+.composer__prompt:focus-within {
+  border-color: var(--composer-hairline-focus);
+}
+
+.composer__field {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  max-height: 240px;
+  padding: 13px 16px 6px;
+  border: 0;
+  background: transparent;
+  resize: none;
+  outline: none;
+  font-size: var(--t-md);
+  line-height: 1.5;
+  field-sizing: content;
+}
+
+.composer__field::placeholder {
+  color: var(--composer-placeholder);
+}
+
+.composer__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 8px;
+}
+
+.composer__left,
+.composer__right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: var(--r-xl);
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  transition: background-color var(--dur-hover) ease;
+}
+
+.chip:hover {
+  background: var(--composer-chip-bg-hover);
+  color: var(--text);
+}
+
+.chip--icon {
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+
+.chip--review,
+.chip--review:hover {
+  color: var(--composer-review);
+}
+
+.chip--model {
+  color: var(--text);
+}
+
+.chip__model {
+  font-weight: 500;
+}
+
+.chip__effort {
+  color: var(--text-3);
+}
+
+.context-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 6px 0 4px;
+  margin-right: 4px;
+  border-radius: var(--r-md);
+  font-size: var(--t-xs);
+  color: var(--text-2);
+}
+
+.context-usage circle {
+  fill: none;
+  stroke-width: 2;
+}
+
+.context-usage__track {
+  stroke: var(--surface-3);
+}
+
+.context-usage__fill {
+  stroke: var(--text-2);
+  stroke-linecap: round;
+}
+
+.orb {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-left: 4px;
+  border-radius: var(--r-circle);
+  background: var(--surface-3);
+  color: var(--text-3);
+  transition:
+    background-color var(--dur-fast) ease,
+    color var(--dur-fast) ease;
+}
+
+.orb.is-ready {
+  background: var(--composer-orb);
+  color: var(--composer-on-orb);
+  box-shadow: var(--composer-orb-shadow);
+}
+
+/* ---------- Narrow widths ---------- */
+
+@media (max-width: 760px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rail {
+    display: none;
+  }
+
+  .stage {
+    border-left: 0;
+    border-top-left-radius: 0;
+  }
+
+  .lab-bar__label {
+    display: none;
+  }
+
+  .empty__title {
+    font-size: var(--t-xl);
+    padding: 0 16px;
+  }
+
+  .composer,
+  .thread {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}

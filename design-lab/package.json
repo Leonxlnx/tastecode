@@ -1,0 +1,26 @@
+{
+  "name": "tastecode-design",
+  "private": true,
+  "type": "module",
+  "description": "Standalone web playground for redesigning the TasteCode UI. Not wired to any server; static mock data only.",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5480 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 5480"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@tabler/icons-react": "^3.46.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.4",
+    "typescript": "5.9.3",
+    "vite": "^8.1.5"
+  }
+}

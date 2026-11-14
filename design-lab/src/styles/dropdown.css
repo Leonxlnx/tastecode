@@ -1,0 +1,159 @@
+/*
+ * The new design's dropdown (Dropdown.tsx): a sheet beside its trigger with a
+ * highlight that glides between rows. Shares the organize menu's surface
+ * tokens (chat-list.css).
+ */
+
+.nd {
+  --nd-dd-hover: rgb(0 0 0 / 5%);
+  --nd-danger: #d4343a;
+  --nd-danger-hover: rgb(212 52 58 / 9%);
+}
+
+:root[data-theme='dark'] .nd {
+  --nd-dd-hover: rgb(255 255 255 / 7%);
+  --nd-danger: #ff6b6b;
+  --nd-danger-hover: rgb(255 107 107 / 12%);
+}
+
+.nd-dd {
+  position: fixed;
+  z-index: 60;
+  /* Its own permanent layer, so its text doesn't snap when the entrance
+     animation ends. */
+  will-change: transform;
+  display: flex;
+  flex-direction: column;
+  min-width: 204px;
+  padding: 4px;
+  background: var(--nd-menu-bg);
+  border: 1px solid var(--nd-menu-edge);
+  border-radius: 12px;
+  box-shadow: var(--nd-menu-shadow);
+  color: var(--nd-text);
+  font: 400 13px / 14px var(--font-ui);
+  outline: none;
+  user-select: none;
+  transform-origin: left top;
+  animation: nd-dd-in 180ms var(--nd-glide);
+}
+
+.nd-dd[data-flipped='true'] {
+  transform-origin: right top;
+  animation-name: nd-dd-in-left;
+}
+
+@supports (corner-shape: squircle) {
+  .nd-dd {
+    border-radius: 18px;
+    corner-shape: squircle;
+  }
+}
+
+/* Slides in by its margin, not a transform, so its text stays crisp while
+   it moves. */
+@keyframes nd-dd-in {
+  from {
+    opacity: 0;
+    margin-left: -4px;
+  }
+}
+
+@keyframes nd-dd-in-left {
+  from {
+    opacity: 0;
+    margin-left: 4px;
+  }
+}
+
+/* One highlight for the whole sheet: it slides to the row under the pointer
+   (or the keyboard) instead of each row lighting up on its own. */
+.nd-dd__hl {
+  position: absolute;
+  top: 0;
+  left: 4px;
+  right: 4px;
+  border-radius: 8px;
+  background: var(--nd-dd-hover);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 180ms cubic-bezier(0.25, 1, 0.5, 1),
+    height 180ms cubic-bezier(0.25, 1, 0.5, 1),
+    opacity 120ms ease,
+    background-color 140ms ease;
+}
+
+.nd-dd__hl[data-danger='true'] {
+  background: var(--nd-danger-hover);
+}
+
+@supports (corner-shape: squircle) {
+  .nd-dd__hl {
+    border-radius: 12px;
+    corner-shape: squircle;
+  }
+}
+
+.nd-dd__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.nd-dd__label {
+  flex: 1;
+  min-width: 0;
+}
+
+.nd-dd__item.is-danger {
+  color: var(--nd-danger);
+}
+
+.nd-dd__item[aria-disabled='true'] {
+  color: var(--nd-text-2);
+}
+
+.nd-dd__key {
+  min-width: 12px;
+  color: var(--nd-text-3);
+  font: 500 11.5px / 14px var(--font-ui);
+  text-align: center;
+}
+
+.nd-dd__chevron {
+  flex: none;
+  margin-right: -3px;
+  color: var(--nd-text-3);
+  rotate: -90deg;
+  transition: color 120ms ease;
+}
+
+.nd-dd__item[aria-expanded='true'] .nd-dd__chevron {
+  color: var(--nd-text);
+}
+
+.nd-dd .nd-check {
+  flex: none;
+  color: var(--nd-text-2);
+}
+
+.nd-dd__sep {
+  flex: none;
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--nd-menu-edge);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nd-dd,
+  .nd-dd__hl {
+    animation: none;
+    transition: none;
+  }
+}
