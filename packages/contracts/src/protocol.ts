@@ -1735,6 +1735,24 @@ export const methods = {
       content: z.string().optional(),
     }),
   },
+  /** Start an isolated browser preview of a public HTML file in this workspace. */
+  'workspace.previewHtml': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      /** Path relative to the selected project or thread checkout. */
+      path: z.string().min(1).max(4096),
+    }),
+    result: z.object({
+      previewId: z.uuid(),
+      url: LoopbackPreviewUrlSchema,
+    }),
+  },
+  /** Stop a preview owned by the requesting client. */
+  'workspace.stopHtmlPreview': {
+    params: z.object({ previewId: z.uuid() }),
+    result: z.object({}),
+  },
   /** `accountId` asks as that account, whose plan may offer other models. Absent means default. */
   'models.list': {
     params: z.object({

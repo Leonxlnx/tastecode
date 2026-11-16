@@ -139,6 +139,27 @@ describe('workspace listing', () => {
   })
 })
 
+describe('workspace HTML preview', () => {
+  it('validates preview requests, loopback results, and stop identifiers', () => {
+    const start = methods['workspace.previewHtml']
+    const previewId = '217b92e8-4a22-4ee7-901f-76a336efb32e'
+    expect(
+      start.params.parse({ projectPath: '/project', threadId: 'thread', path: 'ui/a.html' }),
+    ).toMatchObject({ path: 'ui/a.html' })
+    expect(start.params.safeParse({ projectPath: '/project', path: '' }).success).toBe(false)
+    expect(
+      start.result.safeParse({ previewId, url: 'http://127.0.0.1:41234/ui/a.html' }).success,
+    ).toBe(true)
+    expect(start.result.safeParse({ previewId, url: 'https://example.com/a.html' }).success).toBe(
+      false,
+    )
+    expect(methods['workspace.stopHtmlPreview'].params.safeParse({ previewId }).success).toBe(true)
+    expect(
+      methods['workspace.stopHtmlPreview'].params.safeParse({ previewId: 'bad' }).success,
+    ).toBe(false)
+  })
+})
+
 describe('audit recovery contracts', () => {
   it('preserves a named base branch and rejects empty or excessive refs', () => {
     const start = {
