@@ -1,5 +1,6 @@
 import { ProviderIdSchema, SubagentSchema } from '@harness/contracts'
 import type { Item, ProviderId, Subagent } from '@harness/contracts'
+import { sliceCodeUnits } from './slice-code-units.js'
 import type { DatabaseSync, StatementSync } from './sqlite.js'
 
 /** The task as the row's tool call shows it, sent with every update. */
@@ -276,8 +277,11 @@ export function shorten(text: string, limit: number): string {
   if (text.length <= limit) return text
   const marker = '\n\n[… shortened by TasteCode …]\n\n'
   const keep = limit - marker.length
-  const head = Math.ceil(keep / 2)
-  return `${text.slice(0, head)}${marker}${text.slice(text.length - (keep - head))}`
+  const head = sliceCodeUnits(text, Math.ceil(keep / 2))
+  let tail = text.slice(text.length - (keep - head.length))
+  // Neither cut may split an emoji: the tail must not start on a low surrogate.
+  if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1)
+  return `${head}${marker}${tail}`
 }
 
 function toRun(row: RunRow): StoredSubagentRun | undefined {
