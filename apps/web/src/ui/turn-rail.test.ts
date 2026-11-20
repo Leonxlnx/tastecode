@@ -48,6 +48,12 @@ describe('turn rail entries', () => {
     expect(entries[0]?.prompt).toBe('Attachment')
   })
 
+  it('cuts a label before an emoji across the limit, not through it', () => {
+    const [entry] = entriesOf([message('p1', 't1', 'user', `${'a'.repeat(239)}🎉 and more`)])
+
+    expect(entry!.prompt).toBe(`${'a'.repeat(239)}…`)
+  })
+
   it('cuts a pasted wall of text down to a label', () => {
     const [entry] = entriesOf([message('p1', 't1', 'user', 'word '.repeat(2000))])
 
