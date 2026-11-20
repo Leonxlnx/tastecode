@@ -1566,7 +1566,13 @@ export class Orchestrator {
   }
 
   #backgroundSourceLoaders(): BackgroundModelSourceLoader[] {
-    const builtIns = BACKGROUND_PROVIDERS.map(([provider, displayName]) => ({
+    // The desktop starts only the providers the user added; background writing
+    // is no exception. Custom harnesses are not part of the roster.
+    const roster = this.#store.providerRoster()
+    const added = BACKGROUND_PROVIDERS.filter(
+      ([provider]) => roster === null || roster.includes(provider),
+    )
+    const builtIns = added.map(([provider, displayName]) => ({
       provider,
       load: () =>
         this.#backgroundSource(provider, () => this.#discoverProviderSource(provider, displayName)),
