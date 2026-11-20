@@ -1,3 +1,4 @@
+import './zod-jitless.js'
 import { StrictMode, useLayoutEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App.js'
