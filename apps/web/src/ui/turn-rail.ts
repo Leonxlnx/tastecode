@@ -1,3 +1,4 @@
+import { sliceCodeUnits } from '../slice-code-units.js'
 import type { TurnMark, TurnPresentation } from './turns.js'
 
 /** A turn the user started with a prompt: one tick on the turn rail. */
@@ -105,9 +106,8 @@ export function replyPreview(markdown: string): string {
 }
 
 function oneLine(text: string, limit: number): string {
-  const line = text
-    .slice(0, limit * 4)
+  const line = sliceCodeUnits(text, limit * 4)
     .replace(/\s+/g, ' ')
     .trim()
-  return line.length > limit ? `${line.slice(0, limit).trimEnd()}…` : line
+  return line.length > limit ? `${sliceCodeUnits(line, limit).trimEnd()}…` : line
 }
