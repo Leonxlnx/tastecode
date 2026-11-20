@@ -727,6 +727,46 @@ describe('native Codex history', () => {
     })
   })
 
+  it('reads web searches and sleeps that Codex records as extensions, and skips its tool list and settings', async () => {
+    // Shapes captured from Codex 0.166 rollouts.
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      response({
+        type: 'additional_tools',
+        id: 'at_1',
+        role: 'developer',
+        tools: [{ type: 'namespace', name: 'functions', description: '', tools: [] }],
+      }),
+      response({ type: 'configuration_update', reasoning: { effort: 'low' } }),
+      rich({
+        type: 'Extension',
+        kind: 'web.search',
+        id: 'exec-search',
+        query: 'Yosemite Horsetail Fall February',
+        action: { type: 'search', query: 'Yosemite Horsetail Fall February', queries: null },
+        results: [{ type: 'text_result', title: 'Horsetail Fall', url: 'https://www.nps.gov/' }],
+      }),
+      rich({ type: 'Extension', kind: 'clock.sleep', id: 'call_sleep', durationMs: 45_000 }),
+      rich({ type: 'Extension', kind: 'future.tool', id: 'exec-future', detail: 'Keep me' }),
+      response({
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'Done' }],
+      }),
+    ])
+    const read = items(await source.read((await source.list())[0]!))
+
+    expect(read.map((entry) => [entry.type, entry.text.split('\n')[0]])).toEqual([
+      ['tool_call', 'Web search'],
+      ['tool_call', 'Sleep'],
+      ['unknown', expect.stringContaining('{')],
+      ['message', 'Done'],
+    ])
+    expect(read[0]?.text).toBe('Web search\nYosemite Horsetail Fall February')
+    expect(read[1]).toMatchObject({ durationMs: 45_000 })
+    expect(read[2]?.text).toContain('Keep me')
+  })
+
   it('joins the file patches of an imported turn without a blank line between them', async () => {
     const edit = (id: string, file: string, from: string, to: string) =>
       rich({
