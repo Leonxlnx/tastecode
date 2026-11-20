@@ -30,6 +30,8 @@ describe('model prices', () => {
       pricing: 'exact',
     })
     expect(modelRate('claude-sonnet-5', '2026-09-01')).toMatchObject({ input: 2, output: 10 })
+    expect(modelRate('gemini-3.6-flash-high', '2026-12-31')).toMatchObject({ input: 0.75 })
+    expect(modelRate('gemini-3.6-flash-high', '2027-01-01')).toMatchObject({ input: 1.5 })
     expect(modelRate('gpt-6.2-astra', '2026-11-18')).toMatchObject({
       input: 8,
       cachedInput: 0.4,
@@ -37,8 +39,6 @@ describe('model prices', () => {
       pricing: 'exact',
       longContext: { input: 16, cachedInput: 0.8, output: 60 },
     })
-    expect(modelRate('gemini-3.6-flash-high', '2026-12-31')).toMatchObject({ input: 0.75 })
-    expect(modelRate('gemini-3.6-flash-high', '2027-01-01')).toMatchObject({ input: 1.5 })
   })
 
   it('prices every model in current local histories exactly', () => {
