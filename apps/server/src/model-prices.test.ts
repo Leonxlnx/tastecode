@@ -30,6 +30,12 @@ describe('model prices', () => {
       pricing: 'exact',
     })
     expect(modelRate('claude-sonnet-5', '2026-09-01')).toMatchObject({ input: 2, output: 10 })
+    expect(modelRate('claude-fable-5-2', '2026-11-20')).toMatchObject({
+      input: 8,
+      cachedInput: 0.2,
+      output: 40,
+      pricing: 'exact',
+    })
     expect(modelRate('gemini-3.6-flash-high', '2026-12-31')).toMatchObject({ input: 0.75 })
     expect(modelRate('gemini-3.6-flash-high', '2027-01-01')).toMatchObject({ input: 1.5 })
   })
@@ -39,6 +45,7 @@ describe('model prices', () => {
       'claude-opus-5-5',
       'claude-opus-5',
       'claude-sonnet-5-5',
+      'claude-fable-5-2',
       'claude-fable-5-1',
       'claude-fable-5',
       'claude-opus-4-8',

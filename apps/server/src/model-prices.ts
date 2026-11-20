@@ -125,6 +125,7 @@ export const MODEL_PRICES: readonly ModelPrice[] = [
   openAi(['gpt-5-2-pro'], usd(21, 21, 168)),
   openAi(['gpt-5-pro'], usd(15, 15, 120)),
 
+  listedOn(ANTHROPIC_PRICING, '2026-11-20')(['claude-fable-5-2'], usd(8, 0.2, 40)),
   anthropic(['claude-fable-5-1'], usd(10, 0.25, 50)),
   anthropic(['claude-fable-5'], usd(10, 1, 50)),
   anthropic(['claude-opus-5-5'], usd(4, 0.2, 20)),
