@@ -10,6 +10,7 @@ import type {
   ProviderHistorySource,
   ProviderId,
 } from '@harness/contracts'
+import { isBackgroundWorkspace } from './background-workspace.js'
 import { Store, type ProviderHistoryListing } from './store.js'
 import { projectHistoryItems, withoutContinuationContext } from './side-chat.js'
 import {
@@ -295,7 +296,12 @@ export class ProviderHistory {
           const sessions = await history.list(listing.options).then(
             (sessions) => {
               listing.save(true)
-              return sessions
+              // The app's own background writing, saved by a provider that saves everything.
+              return sessions.map((session) =>
+                !session.internal && isBackgroundWorkspace(session.workspacePath)
+                  ? { ...session, internal: true }
+                  : session,
+              )
             },
             (error: unknown) => {
               listing.save(false)
