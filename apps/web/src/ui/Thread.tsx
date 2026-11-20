@@ -3310,7 +3310,9 @@ function toolCallRowLabel(item: Item): string {
     const query = webSearchQuery(item)
     return query ? `Searched the web for “${query}”` : 'Searched the web'
   }
-  if (headline === 'Tool call' || !looksLikeIdentifier(headline)) return headline
+  // A read or search tool's name already became a verb ("Searched"), not an identifier.
+  const asVerb = headline !== parseToolCall(item.text).name
+  if (headline === 'Tool call' || asVerb || !looksLikeIdentifier(headline)) return headline
   const verb =
     item.status === 'failed' ? 'Failed' : item.status === 'started' ? 'Interrupted' : 'Used'
   const snippet = toolCallSnippet(item, headline)

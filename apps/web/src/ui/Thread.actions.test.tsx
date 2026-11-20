@@ -964,7 +964,12 @@ describe('completed activity disclosure', () => {
         type: 'tool_call',
         text: 'Grep\n{"pattern":"focus-ring","path":"apps/web/src"}',
       }),
-      turnItem('answer-1', 6, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+      // A snake_case search tool reads as the verb alone.
+      turnItem('tool-5', 6, {
+        type: 'tool_call',
+        text: 'codebase_search\n{"query":"focus ring"}',
+      }),
+      turnItem('answer-1', 7, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
     ])
 
     fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
@@ -977,6 +982,7 @@ describe('completed activity disclosure', () => {
       'Searched the web for “vite hmr css”',
       'Failed github.search_issues · is:open',
       'Used Grep · apps/web/src',
+      'Searched',
     ])
     expect(container.querySelector('code.activity__tool')?.textContent).toBe('cua_repl.js')
     // Each call keeps its arguments and output behind its own reveal.
