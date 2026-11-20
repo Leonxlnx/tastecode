@@ -1025,12 +1025,28 @@ describe('completed activity disclosure', () => {
       turnItem('prompt-1', 1, { role: 'user', text: 'Look' }),
       turnItem('command-1', 2, { type: 'command', command: "/bin/zsh -lc 'cat src/motion.js'" }),
       turnItem('command-2', 3, { type: 'command', command: 'bash -c "pnpm test"', exitCode: 1 }),
-      turnItem('answer-1', 4, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+      // The joined line quotes POSIX-style, as on Windows: both ways around a quote inside.
+      turnItem('command-3', 4, {
+        type: 'command',
+        command: `/bin/zsh -lc 'rg -n '"'"'focus ring'"'"' src'`,
+      }),
+      turnItem('command-4', 5, {
+        type: 'command',
+        command: `/bin/bash -lc "git commit -m \\"fix: don't drop \\$HOME\\""`,
+      }),
+      turnItem('command-5', 6, {
+        type: 'command',
+        command: `/bin/zsh -lc 'echo '\\''done'\\'''`,
+      }),
+      turnItem('answer-1', 7, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
     ])
 
     fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
     expect(screen.getByText('cat src/motion.js')).toBeTruthy()
     expect(screen.getByText('Command failed: pnpm test')).toBeTruthy()
+    expect(screen.getByText("rg -n 'focus ring' src")).toBeTruthy()
+    expect(screen.getByText(`git commit -m "fix: don't drop $HOME"`)).toBeTruthy()
+    expect(screen.getByText("echo 'done'")).toBeTruthy()
   })
 
   it('names a command without the PowerShell that wrapped it on Windows', () => {
