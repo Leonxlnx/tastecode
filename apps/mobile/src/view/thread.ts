@@ -440,7 +440,7 @@ function argumentTarget(rest: string): string | undefined {
   const line = value.replace(/\s+/g, ' ').trim()
   // A path reads as the file it names; the folders are in the approval and the diff.
   const shown = /^[^\s]*[\\/][^\s]*$/.test(line) ? basename(line) : line
-  return shown.length > 60 ? `${shown.slice(0, 59).trimEnd()}…` : shown
+  return shown.length > 60 ? `${cutText(shown, 59).trimEnd()}…` : shown
 }
 
 /** Where the JSON object opening at `start` closes, minding strings. */
@@ -561,7 +561,13 @@ export function basename(path: string): string {
 
 export function firstLine(text: string): string {
   const line = text.trim().split('\n')[0] ?? ''
-  return line.length > 120 ? `${line.slice(0, 120)}…` : line
+  return line.length > 120 ? `${cutText(line, 120)}…` : line
+}
+
+/** A cut must not end on the first half of a surrogate pair, or it splits an emoji. */
+function cutText(text: string, limit: number): string {
+  const cut = text.slice(0, limit)
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut
 }
 
 export function duration(ms: number): string {
