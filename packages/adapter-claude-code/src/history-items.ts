@@ -78,6 +78,24 @@ export function slashCommandOutput(row: SavedRecord): string | undefined {
   return text === undefined ? undefined : COMMAND_OUTPUT.exec(text)?.[2]
 }
 
+// The Claude desktop app opens a prompt with what it tells the model about the session
+// (the scratch folder it made for it, for one), as system-reminder elements in a text
+// block of their own or ahead of the prompt's text. Claude never shows them. Captured
+// from claude-desktop rows of claude 2.1.295 to 2.1.308.
+const LEADING_REMINDERS = /^\s*(?:<system-reminder>[\s\S]*?<\/system-reminder>\s*)+/
+
+/**
+ * A prompt's text blocks joined as the user wrote them: reminders a client put in front
+ * of a block are left out, and so is a block that held nothing else. A prompt of only
+ * reminders keeps them, so it does not turn into an empty message.
+ */
+export function promptText(parts: readonly string[], separator = '\n'): string {
+  const written = parts
+    .map((part) => part.replace(LEADING_REMINDERS, ''))
+    .filter((part, index) => part !== '' || parts[index] === '')
+  return (written.join('').trim() ? written : parts).join(separator)
+}
+
 export function isPrompt(row: SavedRecord): boolean {
   return (
     row.type === 'user' &&
@@ -135,10 +153,11 @@ export function historyItems(
     })
     const text =
       slashCommandPrompt(row) ??
-      blocks
-        .filter((block) => block.type !== 'tool_result' && !attachment(block))
-        .map((block) => string(block.text) ?? JSON.stringify(block))
-        .join('\n')
+      promptText(
+        blocks
+          .filter((block) => block.type !== 'tool_result' && !attachment(block))
+          .map((block) => string(block.text) ?? JSON.stringify(block)),
+      )
     rowItems.push({
       ...base,
       id: rowId,

@@ -840,6 +840,44 @@ describe('Claude Code saved history', { timeout: 20_000 }, () => {
     expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(2)
   })
 
+  it('leaves out the reminders the Claude desktop app puts ahead of a prompt', async () => {
+    // Shapes of claude-desktop rows (claude 2.1.295 to 2.1.308): a block of reminders,
+    // then the prompt; or one string that starts with the reminder.
+    const reminder =
+      '<system-reminder>\nThe user started this session without choosing a project folder, so your working directory is a scratch workspace the app created for it.\n</system-reminder>'
+    const answer = row('a1', 'assistant', [{ type: 'text', text: 'Hello.' }], 'u1')
+    answer.message = { ...answer.message, stop_reason: 'end_turn' } as typeof answer.message
+    const f = await fixture([
+      row(
+        'u1',
+        'user',
+        [
+          { type: 'text', text: reminder },
+          { type: 'text', text: 'Where did the team move in 2026?' },
+        ],
+        null,
+        { entrypoint: 'claude-desktop' },
+      ),
+      answer,
+      row('u2', 'user', `${reminder}\n\nAnd before that?`, 'a1'),
+      row('u3', 'user', 'Quote it: <system-reminder>x</system-reminder> stays', 'u2'),
+      row('u4', 'user', reminder, 'u3'),
+    ])
+    const session = (await f.source.list())[0]!
+    expect(session.title).toBe('Where did the team move in 2026?')
+    const events = await f.source.read(session)
+    expect(
+      items(events)
+        .filter((item) => item.role === 'user')
+        .map(({ text }) => text),
+    ).toEqual([
+      'Where did the team move in 2026?',
+      'And before that?',
+      'Quote it: <system-reminder>x</system-reminder> stays',
+      reminder,
+    ])
+  })
+
   it('hides SDK task notifications while preserving identical text pasted by the user', async () => {
     // Captured Claude 2.1.273 records use origin.kind, without isMeta or isSidechain.
     const notification =
