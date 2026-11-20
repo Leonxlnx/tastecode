@@ -1330,6 +1330,38 @@ describe('web client', () => {
     ).toBe(signedIn ? 'ready' : 'setup-required')
   })
 
+  it('lets a custom ACP harness send while a stock ACP agent still needs its sign-in', () => {
+    const providers = [
+      ...contractValidServerProviders(),
+      { ...contractValidServerProviders()[0]!, id: 'acp' as const, displayName: 'ACP' },
+    ]
+    const choice = (agent: string, harness: boolean) => ({
+      key: `acp:${agent}:automatic`,
+      provider: 'acp' as const,
+      sourceName: agent,
+      mark: 'acp' as const,
+      agent: { id: agent, name: agent },
+      ...(harness ? { harness: true as const } : {}),
+      model: {
+        id: '',
+        displayName: 'Default',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    })
+    const resolve = (selectedChoice: ReturnType<typeof choice>) =>
+      resolveSendAvailability({
+        catalog: 'ready',
+        serverBoundSession: false,
+        selectedChoice,
+        providerStatuses: providers,
+        accountCheck: { provider: 'acp', state: 'ready', account: { signedIn: false } },
+      })
+    expect(resolve(choice('design-replay', true))).toBe('ready')
+    expect(resolve(choice('devin', false))).toBe('setup-required')
+  })
+
   it('keeps Send available when the account could not be confirmed', () => {
     type SendInput = Parameters<typeof resolveSendAvailability>[0]
     const resolve = (
@@ -3989,6 +4021,69 @@ describe('web client', () => {
           model: 'openrouter/deepseek-v3.2',
           effort: 'high',
         }),
+      ),
+    )
+  })
+
+  it('offers a custom ACP harness, which the provider roster does not list, and starts sessions on it', async () => {
+    serverProviders = [
+      ...serverProviders,
+      { ...serverProviders[0]!, id: 'acp', displayName: 'ACP' },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'harnesses.list') {
+        return Promise.resolve({
+          harnesses: [
+            {
+              id: 'design-replay',
+              displayName: 'Design replay',
+              provider: 'acp',
+              command: 'node',
+              args: ['agent.mjs'],
+            },
+          ],
+        })
+      }
+      if (
+        method === 'models.list' &&
+        methods['models.list'].params.parse(params).agent === 'design-replay'
+      ) {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'replay',
+              displayName: 'Replay',
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'acp',
+        agent: 'design-replay',
+      }),
+    )
+    expect(
+      (await screen.findByRole('button', { name: 'Model and reasoning' })).textContent,
+    ).toContain('Replay')
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use my own ACP agent' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ provider: 'acp', agent: 'design-replay', model: 'replay' }),
       ),
     )
   })

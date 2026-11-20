@@ -590,7 +590,12 @@ export function resolveSendAvailability(input: {
       : 'unavailable'
   }
 
-  if (input.selectedChoice?.agent && input.selectedChoice.provider !== 'acp') return 'ready'
+  // A harness runs with a sign-in of its own; only a stock ACP agent's account is checked below.
+  if (
+    input.selectedChoice?.agent &&
+    (input.selectedChoice.provider !== 'acp' || input.selectedChoice.harness === true)
+  )
+    return 'ready'
 
   const status = input.providerStatuses.find((entry) => entry.id === provider)
   if (!status) return 'unavailable'
@@ -1387,7 +1392,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     () =>
       mergeCustomModels(catalogModels, customModels).filter(
         (choice) =>
-          rosterAllows(providerRoster, modelSource(choice)) &&
+          // A user's own harness is added in custom-harnesses.json, not on the roster.
+          (choice.harness === true || rosterAllows(providerRoster, modelSource(choice))) &&
           // Once the server has answered, a cached or custom row for a provider
           // this build does not offer is left out.
           (providerStatuses.length === 0 ||
@@ -1729,7 +1735,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     implicitChoice &&
     (activeModelSource
       ? modelSource(implicitChoice) === activeModelSource
-      : rosterAllows(providerRoster, modelSource(implicitChoice))) &&
+      : implicitChoice.harness === true ||
+        rosterAllows(providerRoster, modelSource(implicitChoice))) &&
     (models.length === 0 ||
       preferredSourcePending ||
       (activeModelSource && !sourceHasCatalogModels))
@@ -3027,6 +3034,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           sourceName: harness.displayName,
           mark: providerMark(harness.provider),
           agent: { id: harness.id, name: harness.displayName },
+          harness: true as const,
         }
         try {
           const result = await transport.request('models.list', {
