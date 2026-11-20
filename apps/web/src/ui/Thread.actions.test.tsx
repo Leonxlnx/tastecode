@@ -452,6 +452,46 @@ describe('provider activity labels', () => {
   })
 })
 
+describe('find in chat', () => {
+  it('opens from the message field, which usually has focus, and gives its focus back', async () => {
+    render(
+      <>
+        <div className="composer">
+          <textarea aria-label="Message" />
+        </div>
+        <input aria-label="Search settings" />
+        <Thread
+          frameStore={
+            new ThreadFrameStore({
+              ...emptyThread,
+              items: [turnItem('prompt-1', 1, { role: 'user', text: 'Find the needle' })],
+            })
+          }
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />
+      </>,
+    )
+    const field = screen.getByRole('textbox', { name: 'Message' })
+
+    // Another text field keeps the key.
+    screen.getByRole('textbox', { name: 'Search settings' }).focus()
+    fireEvent.keyDown(document.activeElement!, { key: 'f', metaKey: true })
+    expect(screen.queryByRole('textbox', { name: 'Find in thread' })).toBeNull()
+
+    field.focus()
+    fireEvent.keyDown(field, { key: 'f', metaKey: true })
+    const find = await screen.findByRole('textbox', { name: 'Find in thread' })
+    await waitFor(() => expect(document.activeElement).toBe(find))
+
+    fireEvent.keyDown(find, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Find in thread' })).toBeNull(),
+    )
+    expect(document.activeElement).toBe(field)
+  })
+})
+
 describe('empty thread', () => {
   it('explains how to start an idle thread', () => {
     const rendered = renderCompleted([])
