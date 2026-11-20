@@ -3273,11 +3273,13 @@ function toolCallHeadline(item: Item): string {
 /**
  * Tool names some agents use for reading and searching read as verbs. Any
  * other identifier stays exactly as the agent named it: `cua_repl.js` is a
- * tool, not "Cua repl.js".
+ * tool, not "Cua repl.js". The match is exact: Claude's `Grep` is an
+ * identifier like its `Read` and `Glob`, and a bare "Searched" would then be
+ * taken for one too and read "Used Searched".
  */
 function humanToolHeadline(raw: string): string {
   const space = raw.indexOf(' ')
-  const token = (space === -1 ? raw : raw.slice(0, space)).toLowerCase()
+  const token = space === -1 ? raw : raw.slice(0, space)
   const rest = space === -1 ? '' : raw.slice(space + 1)
   if (token === 'read_file') return rest ? `Read ${rest}` : 'Read file'
   if (token === 'grep' || token === 'codebase_search') {
@@ -3308,7 +3310,9 @@ function toolCallRowLabel(item: Item): string {
     const query = webSearchQuery(item)
     return query ? `Searched the web for “${query}”` : 'Searched the web'
   }
-  if (headline === 'Tool call' || !looksLikeIdentifier(headline)) return headline
+  // A read or search tool's name already became a verb ("Searched"), not an identifier.
+  const asVerb = headline !== parseToolCall(item.text).name
+  if (headline === 'Tool call' || asVerb || !looksLikeIdentifier(headline)) return headline
   const verb =
     item.status === 'failed' ? 'Failed' : item.status === 'started' ? 'Interrupted' : 'Used'
   const snippet = toolCallSnippet(item, headline)
