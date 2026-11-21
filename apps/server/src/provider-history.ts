@@ -10,7 +10,7 @@ import type {
   ProviderHistorySource,
   ProviderId,
 } from '@harness/contracts'
-import { Store, type ProviderHistoryListing } from './store.js'
+import { Store, type ProviderHistoryListing, type StoredProject } from './store.js'
 import { projectHistoryItems, withoutContinuationContext } from './side-chat.js'
 import {
   DESIGN_FOLLOW_UP_NOTICE,
@@ -616,6 +616,14 @@ export class ProjectFolders {
     this.#known.set(folder, project)
     return project
   }
+}
+
+/**
+ * Adds a folder as a project. Another spelling of a folder already listed
+ * (`E:/site`, `e:\site\`) is that project, not a second one.
+ */
+export function addProjectFolder(store: Store, folder: string, name?: string): StoredProject {
+  return store.addProject(new ProjectFolders(store).project(folder) ?? folder, name)
 }
 
 function folderSpelling(folder: string): string {
