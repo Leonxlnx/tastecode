@@ -193,10 +193,13 @@ export function historyItems(
               ? result.code
               : undefined
         const text = blockText(block.content)
+        // The transcript never shows a tool's attachments, and the live item carries
+        // none. An inline image here was only stored and sent on every open: a
+        // screenshot is about 0.7 MB. File and URL references stay.
         const attachments = Array.isArray(block.content)
           ? block.content.flatMap((part) => {
               const ref = attachment(object(part))
-              return ref ? [ref] : []
+              return ref && !ref.startsWith('data:') ? [ref] : []
             })
           : []
         // A finished edit keeps its diff alone, as the live item does: the diff view
