@@ -72,7 +72,7 @@ describe('shared release grammars', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
-    // A real Vite build of every shipped grammar: about 15 s alone, and more than 30 s
+    // A real Vite build of every shipped grammar: 4 to 15 s alone, and more than 30 s
     // while a full `pnpm test` runs every package's suite beside it.
   }, 120_000)
 })
