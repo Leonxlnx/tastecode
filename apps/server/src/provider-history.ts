@@ -618,6 +618,14 @@ export class ProjectFolders {
   }
 }
 
+/**
+ * Adds a folder as a project. Another spelling of a folder already listed
+ * (`E:/site`, `e:\site\`) is that project, not a second one.
+ */
+export function addProjectFolder(store: Store, folder: string, name?: string) {
+  return store.addProject(new ProjectFolders(store).project(folder) ?? folder, name)
+}
+
 function folderSpelling(folder: string): string {
   return path.resolve(savedFolder(folder)).toLowerCase()
 }

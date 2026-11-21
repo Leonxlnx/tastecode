@@ -3491,6 +3491,31 @@ describe('web client', () => {
     ).toBeTruthy()
   })
 
+  it('opens the listed project when the folder was added under another spelling', async () => {
+    serverProjects = [
+      { path: '/work/site', name: 'site', pinned: false, createdAt: 0, sessions: [] },
+      { path: '/work/other', name: 'other', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    pickFolder.mockResolvedValue('/work/site/')
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      // The server answers with the project it already lists for this folder.
+      if (method === 'projects.add')
+        return Promise.resolve({ path: '/work/site', name: 'site', pinned: false, createdAt: 0 })
+      return request(method, params)
+    })
+
+    render(<App />)
+    await waitFor(() => expect(sidebarProps().projects).toHaveLength(2))
+    act(() => sidebarProps().onAddProject())
+
+    expect(
+      await screen.findByRole('heading', { name: 'What should we build in site?' }),
+    ).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('projects.add', { path: '/work/site/' })
+    expect(sidebarProps().activeProjectPath).toBe('/work/site')
+  })
+
   it.each(['projects.add', 'projects.list'])(
     'reports a failed %s when adding a project',
     async (failedMethod) => {

@@ -4396,7 +4396,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       const results = await Promise.allSettled(
         uniquePaths.map((path) => transport.request('projects.add', { path })),
       )
-      const added = uniquePaths.filter((_, index) => results[index]?.status === 'fulfilled')
+      // The project the server answers with: another spelling of a folder it
+      // already lists is that project, under the path it was saved with.
+      const added = results.flatMap((result) =>
+        result.status === 'fulfilled' ? [result.value.path] : [],
+      )
       const failed = uniquePaths.filter((_, index) => results[index]?.status === 'rejected')
       const failure = results.find((result) => result.status === 'rejected')
       const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
