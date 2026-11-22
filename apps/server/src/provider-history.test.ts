@@ -10,6 +10,7 @@ import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
+import { creatifyNote } from './creatify.js'
 import {
   DESIGN_PHASE_MARKER,
   DESIGN_PHASE_NOTICE,
@@ -2274,6 +2275,24 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     expect(
       imported(`${RESTORE_CONTEXT_NOTICE}${unreadResults}${DESIGN_FOLLOW_UP_NOTICE}${words}`)[0],
     ).toEqual(['user', words])
+  })
+
+  it('shows the user’s words without the creative skills note of a Creatify prompt', () => {
+    const note = creatifyNote([
+      { name: 'cinetic', summary: 'motion design made in code', file: '/skills/cinetic/SKILL.md' },
+    ])
+    expect(imported(`${note}${words}`)).toEqual([
+      ['user', words],
+      ['assistant', 'pineapple'],
+    ])
+    expect(imported(`${RESTORE_CONTEXT_NOTICE}${unreadResults}${note}${words}`)[0]).toEqual([
+      'user',
+      words,
+    ])
+    // Run here, the local log shows the words already; the provider's copy is the same prompt.
+    expect(shown('local-thread', turn('native', `${note}${words}`, 'Done'), typed(words))).toEqual(
+      [],
+    )
   })
 
   it('takes off the earlier conversation a continued chat’s first prompt carried', () => {

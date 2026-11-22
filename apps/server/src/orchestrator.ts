@@ -14,6 +14,7 @@ import type {
   VisualReview,
 } from '@harness/design-agent'
 import { isDesignBriefAttachment } from '@harness/design-agent/attachment'
+import { isCreatifyAttachment } from './creatify.js'
 import {
   DEFAULT_ACCOUNT_ID,
   JsonValueSchema,
@@ -320,6 +321,9 @@ type AccountScope = {
 const accountScopeKey = (provider: ProviderId, accountId: AccountId) =>
   `${provider}\u0000${accountId}`
 const userTurnKey = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId])
+/** TasteCode's own markers among a prompt's attachments: Creatify's, and Design mode's before it. */
+const isModeMarker = (attachment: string): boolean =>
+  isCreatifyAttachment(attachment) || isDesignBriefAttachment(attachment)
 const composeInstructions = (instructions?: string): string =>
   instructions?.trim()
     ? `${REPLY_STYLE_INSTRUCTIONS}\n\n${instructions.trim()}`
@@ -1829,7 +1833,7 @@ export class Orchestrator {
     const root = this.#defaultSkillsRoot
     this.#defaultSkills ??= root
       ? loadDefaultSkills(root)
-      : { root: '', skills: [], commands: [], catalog: '' }
+      : { root: '', skills: [], commands: [], catalog: '', creatify: '' }
     return this.#defaultSkills
   }
 
@@ -3150,6 +3154,10 @@ export class Orchestrator {
   ): Promise<string> {
     // The words the user sent; whatever the prompt carries in front of them is not theirs.
     this.#latestUserPrompts.set(threadId, text)
+    // Creatify's marker is no file. It asks for the creative skills note in
+    // front of the words; without a skill installed the prompt goes as written.
+    const creatify = attachments.some(isCreatifyAttachment) ? this.#bundledSkills().creatify : ''
+    attachments = attachments.filter((attachment) => !isCreatifyAttachment(attachment))
     // A failed change leaves the session on its last applied mode, which is
     // the mode this turn runs under. Its error belongs to whoever changed it.
     const approvalChange = this.#approvalChanges.get(threadId)
@@ -3184,6 +3192,7 @@ export class Orchestrator {
       (handover ||
         continuation ||
         unreadSubagents ||
+        creatify ||
         this.#store.threadNeedsRestoreContext(threadId)) &&
       !submission
     ) {
@@ -3325,9 +3334,11 @@ export class Orchestrator {
           handover ||
           continuation ||
           unreadSubagents !== undefined ||
+          creatify !== '' ||
           this.#store.threadNeedsRestoreContext(threadId)) &&
         (await this.#isProviderCommand(threadId, entry, text))
-      const ownPrompt = brief ? `${DESIGN_FOLLOW_UP_NOTICE}${text}` : text
+      const words = `${creatify}${text}`
+      const ownPrompt = brief ? `${DESIGN_FOLLOW_UP_NOTICE}${words}` : words
       const prompt = unreadSubagents ? `${unreadSubagents.text}${ownPrompt}` : ownPrompt
       const sent = command
         ? text
@@ -3726,12 +3737,12 @@ export class Orchestrator {
     }
     try {
       this.#latestUserPrompts.set(threadId, item.text)
-      // A prompt queued with Design mode on carries TasteCode's brief marker. It is no
-      // file: an agent handed it as one tries to read tastecode://design-brief-v1.
+      // A prompt queued with Creatify on (or, before it, Design mode) carries TasteCode's
+      // marker. It is no file: an agent handed it as one tries to read tastecode://….
       await session.steer(
         threadId,
         item.text,
-        item.attachments.filter((attachment) => !isDesignBriefAttachment(attachment)),
+        item.attachments.filter((attachment) => !isModeMarker(attachment)),
       )
       if (!current()) return
       // An acknowledged steer belongs to the captured turn even when that turn
@@ -3979,7 +3990,7 @@ export class Orchestrator {
   #recordUserSubmission(threadId: string, turnId: string, submission: UserSubmission): void {
     this.#serverOwnedUserTurns.add(userTurnKey(threadId, turnId))
     const visibleAttachments = submission.attachments.filter(
-      (attachment) => !isDesignBriefAttachment(attachment),
+      (attachment) => !isModeMarker(attachment),
     )
     const event: DomainEvent = {
       type: 'item.completed',
@@ -4732,7 +4743,7 @@ export class Orchestrator {
     return {
       id: item.id,
       text: item.text,
-      attachments: item.attachments.filter((path) => !isDesignBriefAttachment(path)),
+      attachments: item.attachments.filter((path) => !isModeMarker(path)),
       createdAt: item.createdAt,
     }
   }

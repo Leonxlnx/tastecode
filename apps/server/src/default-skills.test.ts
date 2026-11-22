@@ -39,6 +39,10 @@ describe('default skills', () => {
     expect(loaded.catalog).toContain(`one folder each in ${path.join(root, 'skills')}.`)
     expect(loaded.catalog).toContain('- cinetic: cinematic videos and motion design made in code\n')
     expect(loaded.catalog).toContain('never in a Design mode run')
+    // The note for a Creatify prompt names each skill's file, so any provider can read it.
+    expect(loaded.creatify).toContain(
+      `- cook: long reference-matching loops for ambitious visual builds (${path.join(root, 'skills', 'cook', 'SKILL.md')})`,
+    )
     expect(loaded.skills.every((skill) => isDefaultSkillId(skill.id))).toBe(true)
     expect(loaded.commands).toEqual(
       ['cinetic', 'design-taste-frontend', 'cook'].map((name) => ({
@@ -145,7 +149,7 @@ describe('default skills', () => {
     expect(partial.catalog).not.toContain('cinetic')
 
     const missing = loadDefaultSkills(path.join(await tempDir(), 'no-bundle'))
-    expect(missing).toMatchObject({ skills: [], commands: [], catalog: '' })
+    expect(missing).toMatchObject({ skills: [], commands: [], catalog: '', creatify: '' })
   })
 
   it('reads the packaged folder from the environment and the workspace copy otherwise', () => {
