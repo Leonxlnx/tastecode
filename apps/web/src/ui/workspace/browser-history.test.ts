@@ -148,6 +148,18 @@ it('never stores a short sign-in code that also appears in the title', () => {
   expect(localStorage.getItem(STORAGE_KEY)).not.toContain('1234')
 })
 
+it('does not bring back a saved title that holds the secret just removed', () => {
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify([
+      { url: 'https://app.example/callback', title: 'Signed in as tok-SECRET-1', visitedAt: 1 },
+    ]),
+  )
+  rememberBrowserVisit('https://app.example/callback?token=tok-SECRET-1', '', 2)
+
+  expect(localStorage.getItem(STORAGE_KEY)).not.toContain('tok-SECRET-1')
+})
+
 it('keeps a title that shares a word with an anchor in the address', () => {
   rememberBrowserVisit('https://docs.example/guide#install', 'How to install')
 

@@ -115,9 +115,11 @@ export function rememberBrowserVisit(url: string, title: string, now = Date.now(
       (value) => value !== '' && (text.includes(value) || text.includes(encodeURIComponent(value))),
     )
   const ownTitle = untitled.includes(reported) || holdsSecret(reported) ? '' : reported
+  // A title saved earlier, before this rule, may hold the secret too.
+  const savedTitle = earlier && !holdsSecret(earlier.title) ? earlier.title : ''
   const visit: BrowserVisit = {
     url: page.href,
-    title: ownTitle.slice(0, MAX_TITLE_LENGTH) || (earlier?.title ?? ''),
+    title: ownTitle.slice(0, MAX_TITLE_LENGTH) || savedTitle,
     visitedAt: now,
   }
   const next = [visit, ...visits.filter((other) => other !== earlier)]
