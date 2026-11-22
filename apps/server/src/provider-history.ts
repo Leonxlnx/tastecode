@@ -10,6 +10,7 @@ import type {
   ProviderHistorySource,
   ProviderId,
 } from '@harness/contracts'
+import { isBackgroundWorkspace } from './background-workspace.js'
 import { Store, type ProviderHistoryListing } from './store.js'
 import { projectHistoryItems, withoutContinuationContext } from './side-chat.js'
 import {
@@ -298,7 +299,12 @@ export class ProviderHistory {
           const sessions = await history.list(listing.options).then(
             (sessions) => {
               listing.save(true)
-              return sessions
+              // The app's own background writing, saved by a provider that saves everything.
+              return sessions.map((session) =>
+                !session.internal && isBackgroundWorkspace(session.workspacePath)
+                  ? { ...session, internal: true }
+                  : session,
+              )
             },
             (error: unknown) => {
               listing.save(false)
@@ -619,6 +625,14 @@ export class ProjectFolders {
     this.#known.set(folder, project)
     return project
   }
+}
+
+/**
+ * Adds a folder as a project. Another spelling of a folder already listed
+ * (`E:/site`, `e:\site\`) is that project, not a second one.
+ */
+export function addProjectFolder(store: Store, folder: string, name?: string) {
+  return store.addProject(new ProjectFolders(store).project(folder) ?? folder, name)
 }
 
 function folderSpelling(folder: string): string {

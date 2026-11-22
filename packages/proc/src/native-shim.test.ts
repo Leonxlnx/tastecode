@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { invalidateCommandCache, nativeShimTarget } from './cli.js'
+import { cliPath } from './updates.js'
 
 // npm 10/11 cmd-shim output for a package whose bin is a Windows executable,
 // copied from the opencode.cmd that `npm i -g opencode-ai` wrote on Windows 11.
@@ -79,5 +80,36 @@ describe.runIf(process.platform === 'win32')('npm native shim target', () => {
     await expect(nativeShimTarget('edited', env)).resolves.toBeUndefined()
     await expect(nativeShimTarget('gone', env)).resolves.toBeUndefined()
     await expect(nativeShimTarget('missing', env)).resolves.toBeUndefined()
+  })
+})
+
+describe.runIf(process.platform === 'win32')('cli path behind an npm shim', () => {
+  it('follows a global npm shim into node_modules, as a POSIX symlink resolves', async () => {
+    const { folder, env } = await npmFolder({
+      // npm also writes an extension-less sh shim beside the .cmd one; the launcher never
+      // runs it, and its own path says nothing about the install.
+      'tc-test-native': '#!/bin/sh\nexec node "$basedir/x" "$@"\n',
+      'tc-test-native.cmd': NATIVE_SHIM.replace(
+        'opencode-ai\\bin\\opencode.exe',
+        '@anthropic-ai\\claude-code\\bin\\claude.exe',
+      ),
+      'node_modules/@anthropic-ai/claude-code/bin/claude.exe': 'MZ',
+      'tc-test-node': '#!/bin/sh\n',
+      'tc-test-node.cmd': NODE_SHIM,
+      'node_modules/@openai/codex/bin/codex.js': '',
+      'tc-test-gone.cmd': NODE_SHIM.replace('@openai\\codex', '@gone\\cli'),
+    })
+    const inside = (...parts: string[]) => realpath(path.join(folder, 'node_modules', ...parts))
+
+    await expect(cliPath('tc-test-native', env)).resolves.toBe(
+      await inside('@anthropic-ai', 'claude-code', 'bin', 'claude.exe'),
+    )
+    await expect(cliPath('tc-test-node', env)).resolves.toBe(
+      await inside('@openai', 'codex', 'bin', 'codex.js'),
+    )
+    // A shim whose target is gone is still the command that runs.
+    await expect(cliPath('tc-test-gone', env)).resolves.toBe(
+      await realpath(path.join(folder, 'tc-test-gone.cmd')),
+    )
   })
 })

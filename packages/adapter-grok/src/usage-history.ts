@@ -1,7 +1,14 @@
+import { readdir, readFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { LocalUsageRecord, ProviderId } from '@harness/contracts'
-import { discoverFileArchive, type UsageHistorySource } from '@harness/proc/usage-archive'
+import {
+  discoverFileArchive,
+  usageArchiveFile,
+  type UsageArchive,
+  type UsageArchiveFile,
+  type UsageHistorySource,
+} from '@harness/proc/usage-archive'
 import {
   readUsageLog,
   type UsageCheckpoint,
@@ -9,13 +16,118 @@ import {
   type UsageLogRead,
 } from '@harness/proc/usage-log'
 
-/** The Grok CLI appends every turn's token counts to `<GROK_HOME>/logs/unified.jsonl`. */
+/** Prompt tokens above which xAI charges its long-context rate. */
+const LONG_CONTEXT_TOKENS = 200_000
+
+/**
+ * The Grok CLI keeps each session's token counts, turn by turn, in
+ * `<GROK_HOME>/sessions/<folder>/<session>/usage.json`. CLIs before those files
+ * appended them to `<GROK_HOME>/logs/unified.jsonl` instead; 1.0.70 and later
+ * no longer do at the default log level. A home whose sessions have usage files
+ * is read from them alone, since a debug-level log can hold the same turns again.
+ */
 export const GROK_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord> = {
   provider: 'grok',
   label: 'Grok',
-  root: (home = process.env['GROK_HOME'] ?? path.join(os.homedir(), '.grok')) =>
+  root: (home = process.env['GROK_HOME'] ?? path.join(os.homedir(), '.grok')) => home,
+  discover: discoverGrokUsageHistory,
+}
+
+async function discoverGrokUsageHistory(home: string): Promise<UsageArchive<LocalUsageRecord>> {
+  const sessions = await sessionUsageFiles(path.join(home, 'sessions'))
+  if (sessions.length > 0) return { available: true, files: sessions }
+  return discoverFileArchive(
     path.join(home, 'logs', 'unified.jsonl'),
-  discover: (root) => discoverFileArchive(root, readGrokUsageHistory, resumeGrokUsageHistory),
+    readGrokUsageHistory,
+    resumeGrokUsageHistory,
+  )
+}
+
+/** Every `usage.json` one level below a working-folder directory of the session store. */
+async function sessionUsageFiles(
+  sessionsRoot: string,
+): Promise<UsageArchiveFile<LocalUsageRecord>[]> {
+  const files: UsageArchiveFile<LocalUsageRecord>[] = []
+  for (const folder of await directories(sessionsRoot)) {
+    const sessions = await directories(path.join(sessionsRoot, folder))
+    await Promise.all(
+      sessions.map(async (session) => {
+        try {
+          const file = await usageArchiveFile(
+            path.join(sessionsRoot, folder, session, 'usage.json'),
+            readGrokSessionUsage,
+          )
+          if (file) files.push(file)
+        } catch {
+          // Most sessions without a usage file are ones nobody wrote in.
+        }
+      }),
+    )
+  }
+  return files
+}
+
+async function directories(directory: string): Promise<string[]> {
+  try {
+    const entries = await readdir(directory, { withFileTypes: true })
+    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * One session's `usage.json`: a row per turn and model. Its input count holds
+ * the cached reads and its output count the reasoning, as the log's did once
+ * added up (`totalTokens` is input plus output).
+ */
+export async function readGrokSessionUsage(filePath: string): Promise<LocalUsageRecord[]> {
+  let usage: Record<string, unknown> | undefined
+  try {
+    usage = asRecord(JSON.parse(await readFile(filePath, 'utf8')))
+  } catch (error) {
+    // The CLI rewrites the file after each turn; a read mid-write waits for the next scan.
+    if (error instanceof SyntaxError) return []
+    throw error
+  }
+  const sessionId = stringValue(usage?.['sessionId']) ?? path.basename(path.dirname(filePath))
+  const entries = new Map<string, LocalUsageRecord>()
+  for (const value of Array.isArray(usage?.['turns']) ? usage['turns'] : []) {
+    const turn = asRecord(value)
+    const endedAt = dateValue(turn?.['endedAt'])
+    if (!turn || !endedAt) continue
+    const models = Object.entries(asRecord(turn['modelUsage']) ?? {})
+    const slices: [string, Record<string, unknown> | undefined][] = models.length
+      ? models.map(([model, counts]) => [model, asRecord(counts)])
+      : [[stringValue(turn['primaryModelId']) ?? 'Unknown model', turn]]
+    for (const [model, counts] of slices) {
+      const inputTokens = integerValue(counts?.['inputTokens']) ?? 0
+      const outputTokens = integerValue(counts?.['outputTokens']) ?? 0
+      if (inputTokens + outputTokens <= 0) continue
+      const cachedInputTokens = Math.min(
+        integerValue(counts?.['cachedReadTokens']) ?? 0,
+        inputTokens,
+      )
+      const modelCalls = Math.max(integerValue(counts?.['modelCalls']) ?? 1, 1)
+      mergeUsageRecord(entries, {
+        date: localDateKey(endedAt),
+        model,
+        sessionId,
+        // A turn adds up its model calls; their average stands in for each call's prompt.
+        longContext: inputTokens / modelCalls > LONG_CONTEXT_TOKENS,
+        tokens: {
+          uncachedInputTokens: inputTokens - cachedInputTokens,
+          cachedInputTokens,
+          cacheWrite5mInputTokens: 0,
+          cacheWrite1hInputTokens: 0,
+          outputTokens,
+          reasoningTokens: Math.min(integerValue(counts?.['reasoningTokens']) ?? 0, outputTokens),
+          providerReportedCostUsd: 0,
+        },
+      })
+    }
+  }
+  return [...entries.values()]
 }
 
 /** Reads the Grok CLI's append-only local token log in one streaming pass. */

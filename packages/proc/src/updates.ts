@@ -1,7 +1,7 @@
-import { realpath } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { desktopPath } from './desktop-path.js'
-import { commandOverride } from './cli.js'
+import { commandOverride, locateCommand } from './cli.js'
 
 export type CliUpdateSource = {
   command: string
@@ -103,19 +103,51 @@ async function releaseVersion(url: string): Promise<string> {
   return version
 }
 
-/** Resolve the binary actually used by the desktop, including Windows package-manager shims. */
-export async function cliPath(command: string): Promise<string | undefined> {
+/**
+ * Resolve the binary actually used by the desktop, including Windows package-manager shims.
+ * Callers read the install method from this path, as a POSIX global install's symlink
+ * resolves into `node_modules`.
+ */
+export async function cliPath(
+  command: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
   const override = commandOverride(command)
   if (override) return realpath(override).catch(() => undefined)
-  const extensions = process.platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : ['']
-  for (const directory of desktopPath(process.env['PATH'] ?? '').split(path.delimiter)) {
-    for (const extension of extensions) {
-      try {
-        return await realpath(path.join(directory, command + extension))
-      } catch {
-        // Continue in PATH order.
-      }
+  if (process.platform === 'win32') return windowsCliPath(command, environment)
+  for (const directory of desktopPath(environment['PATH'] ?? '').split(path.delimiter)) {
+    try {
+      return await realpath(path.join(directory, command))
+    } catch {
+      // Continue in PATH order.
     }
   }
   return undefined
+}
+
+/** The first quoted `%dp0%`-relative path into `node_modules` that a cmd shim starts. */
+const NPM_SHIM_TARGET = /"%~?dp0%?\\([^"%\r\n]*node_modules\\[^"%\r\n]+)"/i
+
+/**
+ * On Windows a package manager's global entry is a shim file, not a symlink, so its own
+ * path names only the bin folder (`%APPDATA%\npm\claude`) and says nothing about how the
+ * CLI was installed. The command is found as the launcher finds it (PATH × PATHEXT, so
+ * `claude.cmd` rather than the extension-less sh shim beside it), and an npm `.cmd` shim
+ * is followed to the file it starts inside `node_modules`.
+ */
+async function windowsCliPath(
+  command: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  const located = await locateCommand(command, environment)
+  if (!located) return undefined
+  if (/\.cmd$/i.test(located)) {
+    const text = await readFile(located, 'utf8').catch(() => '')
+    const target = NPM_SHIM_TARGET.exec(text)?.[1]
+    const resolved = target
+      ? await realpath(path.win32.join(path.win32.dirname(located), target)).catch(() => undefined)
+      : undefined
+    if (resolved) return resolved
+  }
+  return realpath(located).catch(() => undefined)
 }
