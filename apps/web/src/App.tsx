@@ -347,6 +347,8 @@ const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
 /** Last effort used per model of a source, whichever of its accounts ran it. */
 const EFFORT_BY_MODEL_KEY = 'harness.effortByModel'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
+/** Creatify for a chat without a saved model setup, which keeps the choice otherwise. */
+const CREATIFY_BY_THREAD_PREFIX = 'harness.creatifyByThread:'
 const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const EMPTY_PROVIDER_ROSTER: ProviderRoster = []
@@ -1302,12 +1304,14 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     () =>
       designModes[activeId ?? NEW_CHAT_DRAFT_KEY] ??
       readThreadModelSelection(activeId)?.creatify ??
-      false,
+      readThreadCreatify(activeId),
     [activeId, designModes],
   )
   const setThreadDesignMode = useCallback((threadId: string | undefined, enabled: boolean) => {
     const saved = readThreadModelSelection(threadId)
     if (threadId && saved) writeThreadModelSelection(threadId, { ...saved, creatify: enabled })
+    // A chat on its provider's automatic model has no saved setup to keep the choice in.
+    else if (threadId) writeThreadCreatify(threadId, enabled)
     setDesignModes((current) => ({ ...current, [threadId ?? NEW_CHAT_DRAFT_KEY]: enabled }))
   }, [])
   const changeDesignMode = useCallback(
@@ -5984,6 +5988,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       threadController.invalidateHistory(id)
       // Thread ids are never reused, so a saved setup outlives its chat forever.
       removeSetting(`${MODEL_BY_THREAD_PREFIX}${id}`)
+      removeSetting(`${CREATIFY_BY_THREAD_PREFIX}${id}`)
       setProjects((current) => removeSession(current, id))
       if (!splitRemovals.current.chats([id]) && activeIdRef.current === id) {
         activeIdRef.current = undefined
@@ -7605,13 +7610,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     provider,
     ...(sourceAgent ? { custom: true } : {}),
     ...(selectedModelChoice?.model.id ? { model: selectedModelChoice.model.id } : {}),
-    surface: settingsOpen
-      ? 'settings'
-      : surface === 'pull-requests'
-        ? 'pull_requests'
-        : designMode
-          ? 'design'
-          : 'chat',
+    surface: settingsOpen ? 'settings' : surface === 'pull-requests' ? 'pull_requests' : 'chat',
   }
   /** Lets the person send an error they saw to the team. Opening the dialog sends nothing. */
   const reportable = <T extends ComposerError>(
@@ -8826,6 +8825,15 @@ function readThreadModelSelection(threadId: string | undefined): ThreadSelection
 
 function writeThreadModelSelection(threadId: string, selection: ThreadSelection): void {
   writeSetting(`${MODEL_BY_THREAD_PREFIX}${threadId}`, JSON.stringify(selection))
+}
+
+function readThreadCreatify(threadId: string | undefined): boolean {
+  return threadId !== undefined && readSetting(`${CREATIFY_BY_THREAD_PREFIX}${threadId}`) === '1'
+}
+
+function writeThreadCreatify(threadId: string, enabled: boolean): void {
+  if (enabled) writeSetting(`${CREATIFY_BY_THREAD_PREFIX}${threadId}`, '1')
+  else removeSetting(`${CREATIFY_BY_THREAD_PREFIX}${threadId}`)
 }
 
 type ApprovalPreferences = Partial<Record<DefaultsScope, ApprovalMode>>

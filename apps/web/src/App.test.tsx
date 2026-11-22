@@ -8104,6 +8104,41 @@ describe('new chats', () => {
     )
   })
 
+  it('keeps Creatify for a chat that has no saved model setup', async () => {
+    const request = transport.request.getMockImplementation()!
+    // No model to choose, so the chat never gets a saved setup to keep the choice in.
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list' ? Promise.resolve({ models: [] }) : request(method, params),
+    )
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'bare-chat', title: 'Bare chat', provider: 'codex', createdAt: 1 }],
+      },
+    ]
+    const view = render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Bare chat,/ }))
+    await screen.findByTestId('thread')
+    fireEvent.click(screen.getByRole('button', { name: 'Creatify' }))
+    expect(localStorage.getItem('harness.modelByThread:bare-chat')).toBeNull()
+    expect(localStorage.getItem('harness.creatifyByThread:bare-chat')).toBe('1')
+
+    view.unmount()
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Bare chat,/ }))
+    await screen.findByTestId('thread')
+    expect(screen.getByRole('button', { name: 'Creatify' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
+
+    // Turned off again, nothing is left behind for the chat.
+    fireEvent.click(screen.getByRole('button', { name: 'Creatify' }))
+    expect(localStorage.getItem('harness.creatifyByThread:bare-chat')).toBeNull()
+  })
+
   it("does not carry a failed new chat prompt into another project's new chat", async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
