@@ -23,6 +23,7 @@ import {
   string,
   type SavedRecord,
 } from './history-items.js'
+import { splitAttachedFilePaths } from './attached-files.js'
 import { toUsage } from './events.js'
 import { withoutInlineData } from './inline-data.js'
 import { approvalFor } from './permission-mode.js'
@@ -552,7 +553,10 @@ function observe(digest: Digest, row: SavedRecord): void {
       digest.prompt = titleText(
         slashCommandPrompt(row) ??
           promptText(
-            contentBlocks(row).map((block) => string(block.text) ?? ''),
+            // The paths of attached files are not part of what the user wrote.
+            contentBlocks(row).map(
+              (block) => splitAttachedFilePaths(string(block.text) ?? '').text,
+            ),
             ' ',
           ),
       )

@@ -925,10 +925,23 @@ function sameUserMessage(left: Item, right: Item): boolean {
   )
 }
 
-/** A provider such as Claude saves an attached picture's bytes, not the path it came from. */
+/**
+ * A provider such as Claude saves an attached picture's bytes, not the path it came from,
+ * and may keep pictures apart from the other files, so the order is the provider's own:
+ * every saved path is one the prompt had, and each picture stands for one of the rest.
+ */
 function sameAttachments(local: readonly string[], native: readonly string[]): boolean {
-  return (
-    local.length === native.length &&
-    local.every((path, index) => path === native[index] || native[index]?.startsWith('data:'))
-  )
+  if (local.length !== native.length) return false
+  const unmatched = [...local]
+  let pictures = 0
+  for (const saved of native) {
+    if (saved.startsWith('data:')) {
+      pictures += 1
+      continue
+    }
+    const at = unmatched.indexOf(saved)
+    if (at === -1) return false
+    unmatched.splice(at, 1)
+  }
+  return unmatched.length === pictures
 }

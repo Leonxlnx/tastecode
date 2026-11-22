@@ -29,6 +29,7 @@ import type {
 import { JsonRpcValueSchema, killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
 import { CLAUDE_ACCOUNT_HOME, withClaudeAccount } from './account-home.js'
+import { withAttachedFilePaths } from './attached-files.js'
 import { CLAUDE_CAPABILITIES, type ClaudeRuntime } from './capabilities.js'
 import { createClaudeCliQuery } from './cli-runtime.js'
 import { mapClaudeCommands, mapClaudeMcpServers } from './inventory.js'
@@ -505,9 +506,7 @@ export function claudeUserMessage(
   const files = attachments.filter(
     (file) => !IMAGE_MIME_TYPES.has(path.extname(file).toLowerCase()),
   )
-  const prompt = files.length
-    ? `${text}\n\nAttached file paths:\n${files.map((file) => `- ${JSON.stringify(file)}`).join('\n')}`
-    : text
+  const prompt = withAttachedFilePaths(text, files)
 
   return {
     type: 'user',
