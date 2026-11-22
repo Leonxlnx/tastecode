@@ -3152,6 +3152,25 @@ export class Store {
             write({ table, row })
         }
       }
+      // A sub-agent run keeps its full task and result here, and the parent's transcript
+      // only a shortened card. The rows a prune deletes with a chat, as subagents.deleteFor
+      // finds them, go in once each.
+      if (ids) {
+        const query = this.#db.prepare(
+          'SELECT * FROM subagent_runs WHERE parent_thread_id = ? OR thread_id = ?',
+        )
+        const written = new Set<string>()
+        for (const id of ids)
+          for (const row of query.iterate(id, id)) {
+            const itemId = String((row as { item_id: unknown }).item_id)
+            if (written.has(itemId)) continue
+            written.add(itemId)
+            write({ table: 'subagent_runs', row })
+          }
+      } else {
+        for (const row of this.#db.prepare('SELECT * FROM subagent_runs').iterate())
+          write({ table: 'subagent_runs', row })
+      }
       fsyncSync(descriptor)
       complete = true
     } finally {
