@@ -160,6 +160,13 @@ it('does not bring back a saved title that holds the secret just removed', () =>
   expect(localStorage.getItem(STORAGE_KEY)).not.toContain('tok-SECRET-1')
 })
 
+it("drops a second fragment after an app's route", () => {
+  rememberBrowserVisit('https://app.example/#/callback#access_token=ABCDEF', 'App')
+
+  expect(urls()).toEqual(['https://app.example/#/callback'])
+  expect(localStorage.getItem(STORAGE_KEY)).not.toContain('ABCDEF')
+})
+
 it('keeps a title that shares a word with an anchor in the address', () => {
   rememberBrowserVisit('https://docs.example/guide#install', 'How to install')
 

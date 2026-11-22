@@ -150,8 +150,14 @@ export function browserVisitAddress(url: string): string {
  * with its secret parameters taken out. Any other fragment is an anchor or a
  * sign-in response, and becomes empty. The values taken out go to `removed`.
  */
-function appRoute(hash: string, removed: string[] = []): string {
-  if (!/^#!?\//.test(hash)) return ''
+function appRoute(fragment: string, removed: string[] = []): string {
+  if (!/^#!?\//.test(fragment)) return ''
+  // A second fragment after the route, as in #/callback#access_token=..., is never kept.
+  const secondAt = fragment.indexOf('#', 1)
+  if (secondAt !== -1)
+    for (const [name, value] of new URLSearchParams(fragment.slice(secondAt + 1)))
+      if (secretParam(name)) removed.push(value)
+  const hash = secondAt === -1 ? fragment : fragment.slice(0, secondAt)
   const queryAt = hash.indexOf('?')
   if (queryAt === -1) return hash
   const query = new URLSearchParams(hash.slice(queryAt + 1))
