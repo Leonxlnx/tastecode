@@ -57,6 +57,7 @@ import {
   droppedProjectFolderPaths,
   isDesktop,
   revealPath,
+  openInFileManagerTitle,
 } from '../bridge.js'
 import {
   appHapticsSupported,
@@ -1473,7 +1474,7 @@ const ProjectRow = memo(function ProjectRow(props: {
                   />
                   {isDesktop ? (
                     <MenuItem
-                      title="Open in Explorer"
+                      title={openInFileManagerTitle()}
                       icon={<FolderOpen size={14} aria-hidden />}
                       onClick={() => {
                         void revealPath(props.project.path)
@@ -1932,7 +1933,7 @@ function SessionRow(props: {
             ) : null}
             {isDesktop ? (
               <MenuItem
-                title="Open in Explorer"
+                title={openInFileManagerTitle()}
                 icon={<FolderOpen size={14} aria-hidden />}
                 onClick={() => {
                   props.onOpenInExplorer()

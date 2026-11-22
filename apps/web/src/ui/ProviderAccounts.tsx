@@ -31,7 +31,7 @@ import {
 } from '@tabler/icons-react'
 import { errorMessage } from '../boundary.js'
 import { ignoreSignIn, unignoreSignIn } from '../ignored-sign-ins.js'
-import { isDesktop, pickFolder, revealPath } from '../bridge.js'
+import { isDesktop, pickFolder, revealPath, openInFileManagerTitle } from '../bridge.js'
 import { providerMark } from '../model-catalog.js'
 import { accountsOf, activeAccountOf, useProviderAccounts } from '../provider-accounts-state.js'
 import {
@@ -530,7 +530,7 @@ function AccountRow(props: {
               />
               {isDesktop && account.home ? (
                 <MenuItem
-                  title="Open in Explorer"
+                  title={openInFileManagerTitle()}
                   icon={<FolderOpen size={14} aria-hidden />}
                   onClick={() => {
                     close()
