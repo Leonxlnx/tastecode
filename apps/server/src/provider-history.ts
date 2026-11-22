@@ -928,7 +928,9 @@ function sameUserMessage(left: Item, right: Item): boolean {
 /**
  * A provider such as Claude saves an attached picture's bytes, not the path it came from,
  * and may keep pictures apart from the other files, so the order is the provider's own:
- * every saved path is one the prompt had, and each picture stands for one of the rest.
+ * every saved path is one the prompt had, and each picture stands for one of the rest,
+ * which has to be a picture too. Otherwise two prompts with the same words, one with a
+ * text file and one with an image, would be taken for one and a turn would be dropped.
  */
 function sameAttachments(local: readonly string[], native: readonly string[]): boolean {
   if (local.length !== native.length) return false
@@ -943,5 +945,11 @@ function sameAttachments(local: readonly string[], native: readonly string[]): b
     if (at === -1) return false
     unmatched.splice(at, 1)
   }
-  return unmatched.length === pictures
+  return unmatched.length === pictures && unmatched.every(isPicture)
+}
+
+const PICTURE = /\.(?:png|jpe?g|gif|webp|bmp|heic|heif|avif|tiff?)$/i
+
+function isPicture(attachment: string): boolean {
+  return attachment.startsWith('data:image/') || PICTURE.test(attachment)
 }

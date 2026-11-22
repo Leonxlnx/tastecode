@@ -2392,6 +2392,21 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     expect(shown('local-thread', fewer, local)).toHaveLength(2)
   })
 
+  it('keeps a turn whose picture stands where a prompt of its own had a text file', () => {
+    const withFiles = (events: DomainEvent[], attachments: string[]) =>
+      events.map((event): DomainEvent =>
+        event.type === 'item.completed' && event.item.role === 'user'
+          ? { ...event, item: { ...event.item, attachments } }
+          : event,
+      )
+    // The same words sent here with a text file, and in the provider with an image.
+    const local = withFiles(typed(words), ['/work/notes.md'])
+    const native = withFiles(turn('native', words, 'The image shows a diagram'), [
+      'data:image/png;base64,AA==',
+    ])
+    expect(shown('local-thread', native, local)).toHaveLength(2)
+  })
+
   it('leaves the provider rows of a chat run here as they were saved', () => {
     const native = turn('outside', `${DESIGN_FOLLOW_UP_NOTICE}${words}`, 'pineapple', 900_000)
     expect(shown('local-thread', native, typed('Something else', 500_000))).toEqual([
