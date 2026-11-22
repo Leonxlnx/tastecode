@@ -10,9 +10,21 @@ It is not a live ownership tracker. Before changing code, read `AGENTS.md`, the 
 
 > **Status, 2026-11-22.** The Design button is gone from the prompt bar. Creatify took its place:
 > it lets the agent apply the bundled creative skill that fits instead of running this workflow
-> (see `apps/server/src/creatify.ts`). The workflow described below is still in the tree and a
-> suspended run still resumes with `continue`, but no new run starts from the composer. Its removal
-> is planned in stages; until then this document describes what the code does, not what users reach.
+> (see `apps/server/src/creatify.ts`). The server's Design workflow is removed: no prompt starts,
+> resumes or restores a run. A prompt that still carries the old Design marker is an ordinary
+> turn with the marker taken off, `continue` in a chat with a saved run is an ordinary prompt,
+> and saved `design_runs` rows are left in place unread. What remains:
+>
+> - `packages/design-agent`, unchanged, including the reference library and its loader, kept for a
+>   later feature and for the release packaging checks.
+> - In the server, the follow-up notice for projects with `.taste/brief.json`
+>   (`DESIGN_FOLLOW_UP_NOTICE`) and the provider-history filters that hide Design phase prompts of
+>   old and imported chats.
+> - The `preview.*` capture protocol, the `previewCapture` capability and the desktop capture
+>   window. Nothing uses them any more; they go with a later contracts change.
+>
+> The rest of this document describes the workflow as it was, for that history and for the later
+> feature, not what the code does.
 
 ## Product goal
 

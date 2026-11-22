@@ -91,11 +91,12 @@ Windows and macOS CI.
 ### M4 — Design agent
 
 TasteSkill integrated, preview pane, screenshot + critique loop, direction gallery, token
-editor, reference board. The provider-neutral Design mode entry point is already in the
-prompt bar; TasteSkill v2 runtime work continues separately.
+editor, reference board. TasteSkill v2 runtime work continues separately.
 Since 2026-11-22 the prompt bar has Creatify in place of the Design button: the agent applies
-the bundled creative skill that fits (TasteSkill, Cinetic, Cook) in an ordinary turn. The Design
-workflow is no longer started from the composer and is being removed in stages.
+the bundled creative skill that fits (TasteSkill, Cinetic, Cook) in an ordinary turn. The
+server's multi-phase Design workflow is removed; `packages/design-agent` and its reference
+library stay for a later feature, and the unused preview-capture protocol goes with a later
+contracts change.
 → _It builds our own landing page. If it can't, it isn't done._
 
 ### M5 — Visual pass

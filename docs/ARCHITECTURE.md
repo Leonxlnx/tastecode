@@ -450,10 +450,10 @@ and stops an idle runtime after two minutes. An idle Claude Code process holds a
 Viewing a thread refreshes its recency; an evicted thread resumes on its next submission. Running,
 queued, Side chat, provider-operation, and non-resumable runtimes are never evicted.
 
-**Large optional feature engines load only when their feature starts.** The server keeps Design
-mode's tiny attachment marker on the normal turn path, but defers its full prompts, parsers, and
-validators until a design run starts or resumes. An unused optional feature must not add to every
-startup or idle process merely because its routes exist.
+**Large optional feature engines load only when their feature starts.** The removed Design
+workflow kept only its tiny attachment marker on the normal turn path and deferred its full
+prompts, parsers, and validators until a run started or resumed. An unused optional feature must
+not add to every startup or idle process merely because its routes exist.
 
 **Startup readiness uses the lightest provider-owned check.** Codex sign-in readiness comes from
 its short `login status` command, so opening TasteCode does not start a full `app-server` merely to
@@ -848,6 +848,10 @@ manual.
 
 ## Dashboard design references (nightly)
 
+> Since 2026-11-22 the server's Design workflow is removed (owner decision), so nothing deals these
+> references to a run. This section and the next record how the workflow used them; the library
+> and its loader stay in `packages/design-agent` for a later feature.
+
 **Dashboards run as tasteskill app screens since 2026-10-25 (owner request).** A dashboard brief
 is dealt an app sheet from the tasteskill v2.5 app library bundled in
 `packages/design-agent/references/app-screens/` (styles, shells and screen patterns as data, no
@@ -1059,3 +1063,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-31 | Phone access became dev-only: offered only with `HARNESS_PHONE_ACCESS=1` (set by `pnpm dev`); other builds never open the phone port.                                          |
 | 2026-11-01 | Each build offers its edition's providers: release offers Claude Code, Codex, Grok, Cursor and Antigravity, dev every provider; missing means release.                         |
 | 2026-11-06 | Kept the Browser's recently used pages in renderer storage, recorded only from tabs the user opened.                                                                           |
+| 2026-11-22 | Removed the server's Design workflow: the old marker gives an ordinary turn and saved runs stay unread. `packages/design-agent` stays for a later feature.                     |
