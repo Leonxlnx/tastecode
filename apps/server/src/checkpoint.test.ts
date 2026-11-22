@@ -775,6 +775,64 @@ describe('nested repositories', () => {
 
     expect(await changedSince(repo, checkpoint.commit)).toEqual(['tracked.txt'])
   })
+
+  it('refuses to restore a file where a nested repository now has its folder', async () => {
+    write('app', 'a file at the checkpoint\n')
+    const checkpoint = await takeSnapshot(repo)
+    rmSync(path.join(repo, 'app'))
+    initNested(true)
+    write('tracked.txt', 'agent edit\n')
+
+    await expect(restoreSnapshot(repo, checkpoint.commit)).rejects.toThrow('"app" is a folder now')
+
+    expect(nestedGit('log', '--format=%s')).toBe('scaffold\n')
+    expect(read(path.join('app', 'index.js'))).toBe('x\n')
+    expect(read('tracked.txt')).toBe('agent edit\n')
+  })
+
+  it('refuses to restore a file where a committed submodule now has its folder', async () => {
+    write('app', 'a file at the checkpoint\n')
+    git('add', 'app')
+    git('commit', '-q', '-m', 'app file')
+    const checkpoint = await takeSnapshot(repo)
+    git('rm', '-q', 'app')
+    initNested(true)
+    git('add', 'app')
+    git('commit', '-q', '-m', 'app repository')
+
+    await expect(restoreSnapshot(repo, checkpoint.commit)).rejects.toThrow('"app" is a folder now')
+
+    expect(nestedGit('log', '--format=%s')).toBe('scaffold\n')
+  })
+
+  it('refuses to restore a file where a folder now holds ignored files', async () => {
+    write('.gitignore', '*.log\n')
+    git('add', '.gitignore')
+    git('commit', '-q', '-m', 'ignore logs')
+    write('tool', 'a file at the checkpoint\n')
+    const checkpoint = await takeSnapshot(repo)
+    rmSync(path.join(repo, 'tool'))
+    mkdirSync(path.join(repo, 'tool'))
+    write(path.join('tool', 'run.log'), 'ignored\n')
+
+    await expect(restoreSnapshot(repo, checkpoint.commit)).rejects.toThrow('"tool" is a folder now')
+
+    expect(read(path.join('tool', 'run.log'))).toBe('ignored\n')
+  })
+
+  it('restores a file over a folder whose files the undo brings back', async () => {
+    write('tool', 'a file at the checkpoint\n')
+    const checkpoint = await takeSnapshot(repo)
+    rmSync(path.join(repo, 'tool'))
+    mkdirSync(path.join(repo, 'tool'))
+    write(path.join('tool', 'main.js'), 'agent\n')
+
+    const replaced = await restoreSnapshot(repo, checkpoint.commit)
+    expect(read('tool')).toBe('a file at the checkpoint\n')
+
+    await restoreSnapshot(repo, replaced.commit)
+    expect(read(path.join('tool', 'main.js'))).toBe('agent\n')
+  })
 })
 
 it('resolves checkpoint storage from checkout, nested directory, and saved Git directory', async () => {
