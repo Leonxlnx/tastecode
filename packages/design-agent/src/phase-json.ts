@@ -2,13 +2,16 @@
 const MAX_EARLY_CLOSES = 3
 /** How many opening braces to try when prose before the JSON contains braces of its own. */
 const MAX_STARTS = 20
+/** How many closing brackets an answer may leave out at its very end before it counts as cut off. */
+const MAX_MISSING_CLOSES = 2
 
 /**
  * A phase's final answer as JSON. Models wrap it in a Markdown fence, talk before or after it,
- * or close an object one brace too early and then carry on with its remaining members (a real
- * Codex Brand answer closed the root after designTokens, four times running). Those readings are
- * recovered here; anything else throws the original parse error, and the phase's own validation
- * still checks whatever is recovered.
+ * close an object one brace too early and then carry on with its remaining members (a real
+ * Codex Brand answer closed the root after designTokens, four times running), or leave out the
+ * last closing brace (a real Claude Code Brand answer, in its first try and its correction alike).
+ * Those readings are recovered here; anything else throws the original parse error, and the
+ * phase's own validation still checks whatever is recovered.
  */
 export function parsePhaseJson(text: string): unknown {
   const trimmed = text.trim()
@@ -60,7 +63,7 @@ function valueAt(source: string): Recovered {
   let text = source
   for (let repairs = 0; repairs <= MAX_EARLY_CLOSES; repairs++) {
     const end = valueEnd(text)
-    if (end < 0) return { found: false, open: true }
+    if (end < 0) return closedAtEnd(text)
     if (/^\s*,\s*"/.test(text.slice(end)) && text[end - 1] === '}') {
       text = text.slice(0, end - 1) + text.slice(end)
       continue
@@ -72,6 +75,41 @@ function valueAt(source: string): Recovered {
     }
   }
   return { found: false, open: false }
+}
+
+/**
+ * The value `source` opens when only its last closing brackets are missing. The text has to end
+ * outside a string, right after a value closed by `}`, `]` or `"`: an answer cut off mid-value
+ * ends after a comma or a colon, or inside a string, and stays open.
+ */
+function closedAtEnd(source: string): Recovered {
+  const closers: string[] = []
+  let inString = false
+  let escaped = false
+  for (const ch of source) {
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+    } else if (ch === '"') inString = true
+    else if (ch === '{') closers.push('}')
+    else if (ch === '[') closers.push(']')
+    else if ((ch === '}' || ch === ']') && closers.pop() !== ch)
+      return { found: false, open: false }
+  }
+  const text = source.trimEnd()
+  if (
+    inString ||
+    closers.length === 0 ||
+    closers.length > MAX_MISSING_CLOSES ||
+    !/[}\]"]$/.test(text)
+  )
+    return { found: false, open: true }
+  try {
+    return { found: true, value: JSON.parse(text + closers.reverse().join('')) }
+  } catch {
+    return { found: false, open: true }
+  }
 }
 
 /** The index just past the bracket that closes the one `source` opens, or -1. */
