@@ -34,7 +34,7 @@ import {
   joinComposerDraft,
   moveComposerDraft,
   parseComposerDrafts,
-  serializeComposerDrafts,
+  saveComposerDrafts,
   type ComposerDraft,
 } from './composer-drafts.js'
 
@@ -51,7 +51,19 @@ export type PendingSubmission = RecoverableDraft & {
 type BufferedEvent = { seq: number | undefined; event: DomainEvent }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type HistoryBase = { state: ThreadState; sequence: number | undefined }
-export type DraftStorage = { read(): string | null; write(drafts: string | undefined): void }
+/** `write` returns whether storage took the drafts. */
+export type DraftStorage = { read(): string | null; write(drafts: string | undefined): boolean }
+/**
+ * A value saved beside the drafts that must describe the same state as the drafts on disk,
+ * as the New chat draft's project does for the New chat slots. `write` saves it before the
+ * drafts; the drafts it `keeps` are never set back to their saved versions; `undo` restores
+ * its previous value when those drafts could not be saved after all.
+ */
+export type DraftCompanion = {
+  keeps(key: string): boolean
+  write(): boolean
+  undo(): void
+}
 const DRAFT_SAVE_DELAY_MS = 300
 const BACKGROUND_COMPACTION_CHECK_CHARACTERS = 64 * 1024
 /** Whole turns in the first page of a cold open; older turns load on demand. */
@@ -78,6 +90,10 @@ export class ThreadController {
   #submissions = new Map<string, Map<string, PendingSubmission>>()
   #drafts: Map<string, ComposerDraft>
   #draftSave: ReturnType<typeof setTimeout> | undefined
+  /** What the last successful save wrote. */
+  #storedDrafts: ReadonlyMap<string, ComposerDraft>
+  /** A companion value not yet saved together with its drafts. */
+  #draftCompanion: DraftCompanion | undefined
   #histories = new Map<string, Set<BufferedEvent[]>>()
   #historyOwners = new Map<string, BufferedEvent[]>()
   // Live cursors can cross a gap. Keep the last safe state and cursor together
@@ -105,6 +121,7 @@ export class ThreadController {
     private draftStorage?: DraftStorage,
   ) {
     this.#drafts = parseComposerDrafts(draftStorage?.read() ?? null)
+    this.#storedDrafts = new Map(this.#drafts)
   }
 
   /** The focused column's frame store. */
@@ -251,7 +268,42 @@ export class ThreadController {
     if (this.#draftSave === undefined) return
     clearTimeout(this.#draftSave)
     this.#draftSave = undefined
-    this.draftStorage?.write(serializeComposerDrafts(this.#drafts))
+    this.#writeDrafts()
+  }
+  /** Saves the drafts now, together with a value that must match them on disk. */
+  saveDraftsWith(companion: DraftCompanion): void {
+    this.#draftCompanion = companion
+    if (this.#draftSave !== undefined) clearTimeout(this.#draftSave)
+    this.#draftSave = undefined
+    this.#writeDrafts()
+  }
+  #writeDrafts(): void {
+    const storage = this.draftStorage
+    if (!storage) return
+    const write = (drafts: string | undefined) => storage.write(drafts)
+    const companion = this.#draftCompanion
+    if (companion?.write()) {
+      const saved = saveComposerDrafts(this.#drafts, this.#storedDrafts, write, (key) =>
+        companion.keeps(key),
+      )
+      if (saved) {
+        this.#storedDrafts = saved
+        this.#draftCompanion = undefined
+        return
+      }
+      companion.undo()
+    }
+    // A companion that could not be saved with its drafts leaves disk at the last pair that
+    // matched: its drafts stay exactly as stored, and only the others are saved. One oversized
+    // draft there never stops the rest; the next save tries the full set again.
+    const drafts = companion
+      ? new Map([
+          ...[...this.#drafts].filter(([key]) => !companion.keeps(key)),
+          ...[...this.#storedDrafts].filter(([key]) => companion.keeps(key)),
+        ])
+      : this.#drafts
+    const saved = saveComposerDrafts(drafts, this.#storedDrafts, write)
+    if (saved) this.#storedDrafts = saved
   }
   #saveDraftsSoon(): void {
     if (!this.draftStorage) return

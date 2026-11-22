@@ -81,6 +81,7 @@ import {
 import {
   ThreadController,
   removePendingSubmission,
+  type DraftCompanion,
   type PaneSlot,
   type PendingSubmission,
   type RecoverableDraft,
@@ -2093,6 +2094,34 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     () => readSetting(NEW_CHAT_DRAFT_PROJECT_KEY) ?? undefined,
   )
   const newChatDraftProject = useRef<string | undefined>(savedNewChatDraftProject)
+  /**
+   * Saves the New chat draft's project together with the drafts it moves between the New
+   * chat slots: on disk the two always describe one state. When either cannot be written,
+   * the last pair stays, and both are tried again with the next save.
+   */
+  const [newChatDraftOwner] = useState((): DraftCompanion => {
+    let saved = savedNewChatDraftProject
+    let previous = saved
+    const persist = (project: string | undefined) =>
+      project === undefined
+        ? removeSetting(NEW_CHAT_DRAFT_PROJECT_KEY)
+        : writeSetting(NEW_CHAT_DRAFT_PROJECT_KEY, project)
+    return {
+      keeps: (key) => key === NEW_CHAT_DRAFT_KEY || key.startsWith(`${NEW_CHAT_DRAFT_KEY}:`),
+      write: () => {
+        const project = newChatDraftProject.current
+        previous = saved
+        if (project === saved) return true
+        if (!persist(project)) return false
+        saved = project
+        return true
+      },
+      undo: () => {
+        if (saved === previous) return
+        saved = persist(previous) ? previous : persist(undefined) ? undefined : saved
+      },
+    }
+  })
   /** Where a project's New chat draft is right now: live, or waiting for its project. */
   const newChatDraftSlot = useCallback((projectPath: string) => {
     const owner = newChatDraftProject.current ?? activePathRef.current
@@ -2105,10 +2134,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       // Until a draft is tied to a project, it is the one on screen's.
       const known = newChatDraftProject.current
       const owner = known ?? activePathRef.current
-      if (known !== projectPath) {
-        newChatDraftProject.current = projectPath
-        writeSetting(NEW_CHAT_DRAFT_PROJECT_KEY, projectPath)
-      }
+      if (known !== projectPath) newChatDraftProject.current = projectPath
       if (owner === undefined || owner === projectPath) {
         if (known !== undefined) return
         // The live draft becomes this project's; one it left waiting is joined to it.
@@ -2126,6 +2152,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         })
         if (waiting && activeIdRef.current === undefined)
           publishComposerDraft(threadController.draft(NEW_CHAT_DRAFT_KEY))
+        threadController.saveDraftsWith(newChatDraftOwner)
         return
       }
       // The project left keeps its draft and its Creatify choice; this one gets its own back.
@@ -2145,8 +2172,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       })
       if (activeIdRef.current === undefined)
         publishComposerDraft(threadController.draft(NEW_CHAT_DRAFT_KEY))
+      threadController.saveDraftsWith(newChatDraftOwner)
     },
-    [publishComposerDraft],
+    [newChatDraftOwner, publishComposerDraft],
   )
   // Whichever way the shown project changes (a chat of another project, the first
   // list after a start), New chat's live draft is that project's.
@@ -6691,7 +6719,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           // Its live one goes to the project shown next.
           if (newChatDraftProject.current === path) {
             newChatDraftProject.current = undefined
-            removeSetting(NEW_CHAT_DRAFT_PROJECT_KEY)
+            threadController.saveDraftsWith(newChatDraftOwner)
           }
           return refreshProjects()
         })
@@ -6706,7 +6734,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           void refreshProjects().catch(() => undefined)
         })
     },
-    [transport, refreshProjects],
+    [newChatDraftOwner, transport, refreshProjects],
   )
   const toggleSidebarProjectPin = useCallback(
     (path: string) => {
@@ -9185,11 +9213,13 @@ function usePersistedSettingChange(
  * ran inside layout effects, where an uncaught throw unmounts the whole app.
  * Reads were always defensive; writes get the same courtesy.
  */
-function writeSetting(key: string, value: string): void {
+function writeSetting(key: string, value: string): boolean {
   try {
     localStorage.setItem(key, value)
+    return true
   } catch {
     // A lost preference beats a white screen.
+    return false
   }
 }
 
@@ -9211,11 +9241,13 @@ function readSetting(key: string): string | null {
   }
 }
 
-function removeSetting(key: string): void {
+function removeSetting(key: string): boolean {
   try {
     localStorage.removeItem(key)
+    return true
   } catch {
     // Nothing to lose.
+    return false
   }
 }
 

@@ -211,6 +211,177 @@ describe('ThreadController lifecycle owner', () => {
     })
   })
 
+  describe('drafts at the storage quota', () => {
+    const draftOf = (text: string, attachments: string[] = []) => ({
+      text,
+      attachments,
+      resources: [],
+    })
+    /** Storage that refuses an entry over the quota, as localStorage does when it is full. */
+    function quotaStorage(quota: number, initial: Record<string, ReturnType<typeof draftOf>>) {
+      const storage = {
+        stored: JSON.stringify(initial) as string | null,
+        write: vi.fn((drafts: string | undefined) => {
+          if (drafts !== undefined && drafts.length > quota) return false
+          storage.stored = drafts ?? null
+          return true
+        }),
+        read: () => storage.stored,
+        /** A restart: a new controller loads the drafts from what is stored. */
+        restart: () => new ThreadController(new TestTransport(), storage),
+      }
+      return storage
+    }
+
+    it('saves new drafts up to the quota and falls back for the largest new ones', () => {
+      const storage = quotaStorage(1_000, {})
+      const controller = new ThreadController(new TestTransport(), storage)
+      controller.editDraft('small', { text: 'keep me' })
+      controller.editDraft('log', { text: 'x'.repeat(5_000), attachments: ['/work/log.png'] })
+      controller.editDraft('huge', { text: 'y'.repeat(10_000) })
+      controller.flushDrafts()
+
+      expect(JSON.parse(storage.stored!)).toEqual({ small: draftOf('keep me') })
+      expect(controller.draft('huge').text).toHaveLength(10_000)
+      expect(controller.draft('log').text).toHaveLength(5_000)
+
+      controller.editDraft('huge', { text: '' })
+      controller.editDraft('log', { text: 'short now' })
+      controller.flushDrafts()
+      expect(JSON.parse(storage.stored!)).toEqual({
+        small: draftOf('keep me'),
+        log: draftOf('short now', ['/work/log.png']),
+      })
+    })
+
+    it('never reduces a saved draft to make room for another one', () => {
+      const saved = draftOf('a'.repeat(800), ['/work/a.png'])
+      const storage = quotaStorage(1_000, { 'new-chat:/A': saved })
+      const before = storage.stored
+      const controller = new ThreadController(new TestTransport(), storage)
+      controller.editDraft('thread-b', { text: 'b'.repeat(500) })
+      controller.flushDrafts()
+
+      expect(storage.stored).toBe(before)
+      expect(controller.draft('thread-b').text).toHaveLength(500)
+      expect(storage.restart().draft('new-chat:/A')).toEqual(saved)
+    })
+
+    it('keeps the last saved text of the only draft when it grows past the quota', () => {
+      const storage = quotaStorage(1_000, { thread: draftOf('saved words') })
+      const before = storage.stored
+      const controller = new ThreadController(new TestTransport(), storage)
+      controller.editDraft('thread', { text: 'z'.repeat(5_000) })
+      controller.flushDrafts()
+
+      expect(storage.write).not.toHaveBeenCalledWith(undefined)
+      expect(storage.stored).toBe(before)
+      expect(controller.draft('thread').text).toHaveLength(5_000)
+      expect(storage.restart().draft('thread').text).toBe('saved words')
+
+      controller.editDraft('thread', { text: 'fits again' })
+      controller.flushDrafts()
+      expect(storage.restart().draft('thread').text).toBe('fits again')
+    })
+
+    it('saves nothing beside a companion value that could not be saved', () => {
+      const storage = quotaStorage(1_000, { 'new-chat': draftOf('words of A') })
+      const before = storage.stored
+      const controller = new ThreadController(new TestTransport(), storage)
+      controller.joinDraft('new-chat', 'new-chat:/A')
+      let owner = false
+      const companion = {
+        keeps: (key: string) => key.startsWith('new-chat'),
+        write: vi.fn(() => owner),
+        undo: vi.fn(),
+      }
+      controller.saveDraftsWith(companion)
+      expect(storage.stored).toBe(before)
+
+      // The next save writes both.
+      owner = true
+      controller.editDraft('other', { text: 'next edit' })
+      controller.flushDrafts()
+      expect(JSON.parse(storage.stored!)).toEqual({
+        'new-chat:/A': draftOf('words of A'),
+        other: draftOf('next edit'),
+      })
+      expect(companion.undo).not.toHaveBeenCalled()
+    })
+
+    it('undoes a companion value when the drafts it describes cannot be saved', () => {
+      const storage = quotaStorage(1_000, { 'new-chat': draftOf('words of A') })
+      const before = storage.stored
+      const controller = new ThreadController(new TestTransport(), storage)
+      controller.editDraft('new-chat:/A', { text: 'q'.repeat(5_000) })
+      const companion = { keeps: () => true, write: vi.fn(() => true), undo: vi.fn() }
+      controller.saveDraftsWith(companion)
+      expect(storage.stored).toBe(before)
+      expect(companion.undo).toHaveBeenCalledTimes(1)
+    })
+
+    it('still saves other drafts when an oversized New chat draft cannot move with its project', () => {
+      const storage = quotaStorage(1_000, {
+        'new-chat': draftOf('words of A'),
+        'new-chat:/B': draftOf('words of B'),
+        'thread-1': draftOf('old words'),
+      })
+      // The project the live New chat draft belongs to, saved beside the drafts as the app does.
+      let project = '/A'
+      const disk = { project: '/A', previous: '/A' }
+      const owner = {
+        keeps: (key: string) => key === 'new-chat' || key.startsWith('new-chat:'),
+        write: () => {
+          disk.previous = disk.project
+          disk.project = project
+          return true
+        },
+        undo: () => {
+          disk.project = disk.previous
+        },
+      }
+      const controller = new ThreadController(new TestTransport(), storage)
+      // An oversized prompt pasted into A's New chat: storage keeps A's saved words.
+      controller.editDraft('new-chat', { text: 'x'.repeat(5_000) })
+      controller.flushDrafts()
+      // Switch to B: A's prompt waits for A, B's comes back to New chat.
+      project = '/B'
+      controller.joinDraft('new-chat', 'new-chat:/A')
+      controller.joinDraft('new-chat:/B', 'new-chat')
+      controller.saveDraftsWith(owner)
+      // A small edit in an existing chat.
+      controller.editDraft('thread-1', { text: 'small edit' })
+      controller.flushDrafts()
+
+      const restarted = storage.restart()
+      expect(restarted.draft('thread-1').text).toBe('small edit')
+      // Disk still holds the pair from before the switch.
+      expect(disk.project).toBe('/A')
+      expect(restarted.draft('new-chat').text).toBe('words of A')
+      expect(restarted.draft('new-chat:/B').text).toBe('words of B')
+      expect(restarted.draft('new-chat:/A').text).toBe('')
+      // Memory keeps the moved drafts, and a save that fits writes them with B.
+      expect(controller.draft('new-chat').text).toBe('words of B')
+      controller.editDraft('new-chat:/A', { text: 'short again' })
+      controller.flushDrafts()
+      expect(disk.project).toBe('/B')
+      const moved = storage.restart()
+      expect(moved.draft('new-chat').text).toBe('words of B')
+      expect(moved.draft('new-chat:/A').text).toBe('short again')
+      expect(moved.draft('thread-1').text).toBe('small edit')
+    })
+
+    it('does not throw when storage refuses every write', () => {
+      const controller = new ThreadController(new TestTransport(), {
+        read: () => null,
+        write: () => false,
+      })
+      controller.editDraft('thread', { text: 'unsaved', attachments: ['/work/a.png'] })
+      expect(() => controller.flushDrafts()).not.toThrow()
+      expect(controller.draft('thread').text).toBe('unsaved')
+    })
+  })
+
   it('retains bounded inactive caches and invalidates old recovery epochs', () => {
     const controller = new ThreadController(new TestTransport())
     const protectedId = 'thread-0'

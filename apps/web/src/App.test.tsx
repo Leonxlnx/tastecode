@@ -8210,6 +8210,35 @@ describe('new chats', () => {
       await waitFor(() => expect(composerValue()).toBe('Words for other'))
     })
 
+    it('keeps a draft in its project when the project switch cannot be saved', async () => {
+      const view = render(<App />)
+      fireEvent.change(await screen.findByPlaceholderText('Do anything'), {
+        target: { value: 'Words for project' },
+      })
+      await waitFor(() =>
+        expect(localStorage.getItem('harness.composerDrafts.v1')).toContain('Words for project'),
+      )
+      expect(localStorage.getItem('harness.newChatDraftProject')).toBe('/work/project')
+      // Storage is full: the switch to the other project cannot be saved.
+      const setItem = localStorage.setItem.bind(localStorage)
+      const full = vi
+        .spyOn(localStorage, 'setItem')
+        .mockImplementation((key: string, value: string) => {
+          if (key === 'harness.newChatDraftProject')
+            throw new DOMException('full', 'QuotaExceededError')
+          setItem(key, value)
+        })
+      await chooseProject('other')
+      await waitFor(() => expect(composerValue()).toBe(''))
+      view.unmount()
+      full.mockRestore()
+
+      render(<App />)
+      await screen.findByPlaceholderText('Do anything')
+      await waitFor(() => expect(composerProps().projectPath).toBe('/work/project'))
+      await waitFor(() => expect(composerValue()).toBe('Words for project'))
+    })
+
     it('shows a draft under its own project after a restart', async () => {
       const view = render(<App />)
       await screen.findByPlaceholderText('Do anything')
