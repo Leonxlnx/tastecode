@@ -600,6 +600,17 @@ describe('restoreSnapshot', () => {
     expect(read('tracked.txt')).toBe('original\n')
   })
 
+  it('restores a file marked skip-worktree and leaves the mark in place', async () => {
+    const before = await takeSnapshot(repo)
+    git('update-index', '--skip-worktree', 'tracked.txt')
+    write('tracked.txt', 'agent change\n')
+
+    const replaced = await restoreSnapshot(repo, before.commit)
+    expect(read('tracked.txt')).toBe('original\n')
+    expect(git('ls-files', '-v', 'tracked.txt')).toMatch(/^S /)
+    expect(git('show', `${replaced.commit}:tracked.txt`)).toBe('agent change\n')
+  })
+
   it('still restores when a checkpointed folder became a link to another folder', async (context) => {
     mkdirSync(path.join(repo, 'assets'))
     write('assets/logo.txt', 'checkpoint\n')

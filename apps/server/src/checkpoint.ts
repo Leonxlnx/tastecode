@@ -536,11 +536,21 @@ async function restoreTree(
   // well, so a rollback would stage everything it touched and hand the user a
   // staging area they did not arrange. Nothing here moves HEAD or the branch
   // either — a rollback restores files, it is not a commit.
-  await run('git', ['restore', '--source', commit, '--worktree', '--', `:(literal)${scope}`], {
-    cwd: repoPath,
-    windowsHide: true,
-    timeout: 60_000,
-  })
+  // --ignore-skip-worktree-bits: a file marked skip-worktree is in the snapshot
+  // with its working content, and without it git would leave the file as it is.
+  await run(
+    'git',
+    [
+      'restore',
+      '--source',
+      commit,
+      '--worktree',
+      '--ignore-skip-worktree-bits',
+      '--',
+      `:(literal)${scope}`,
+    ],
+    { cwd: repoPath, windowsHide: true, timeout: 60_000 },
+  )
 }
 
 /**
