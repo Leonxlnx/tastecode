@@ -298,7 +298,7 @@
     <div class="wrap">
       <section id="scope">
         <p>
-          November 22 on dev (9c53c313, not on nightly or main): 63 pull requests merged. Creatify
+          November 22 on dev (9c53c313, not on nightly or main): 65 pull requests merged. Creatify
           replaces the Design button in the prompt bar: with it on, the server puts a short note
           behind the prompt that sends the agent to the bundled creative skill that fits (websites,
           motion, sound, demos), for every provider that runs a text turn, and the choice stays with
@@ -322,15 +322,17 @@
           Stop as stopped and cleans up after a failed one (#2435, #2438), a Codex compaction ends
           when Codex exits early (#2433), and further fixes cover emoji-safe cuts, find in chat from
           the message field, custom ACP harnesses in the model picker, a broken harness file, one
-          project per folder and the turn rail. Contributor fixes by lachlan1234564 (#2326 to
-          #2334): the agent's browser stays stopped per chat, clicks icon SVGs, sends screenshots at
-          CSS width and reads "card" as a word in its payment check; browser history keeps secrets
-          out of titles and entries can be removed or cleared; scheduled resumes survive other
-          windows and failed reads; and an imported chat survives a failed retry. Verified for the
-          fix round (#2338 to #2365, #2418 to #2439): a test per fix that failed on dev before it,
-          hosted CI on #2418 to #2439, and lint, typecheck and tests locally on the combined tree.
-          Not verified: real provider runs, a click test in the running app, an installer from dev,
-          and macOS beyond CI.
+          project per folder and the turn rail. New chat keeps a draft per project, also across a
+          restart, and the Pull requests view's Chat button adds to an unsent draft instead of
+          replacing it (#2445); the Usage page counts an ACP chat's cost once (#2444). Contributor
+          fixes by lachlan1234564 (#2326 to #2334): the agent's browser stays stopped per chat,
+          clicks icon SVGs, sends screenshots at CSS width and reads "card" as a word in its payment
+          check; browser history keeps secrets out of titles and entries can be removed or cleared;
+          scheduled resumes survive other windows and failed reads; and an imported chat survives a
+          failed retry. Verified for the fix round (#2338 to #2365, #2418 to #2439): a test per fix
+          that failed on dev before it, hosted CI on #2418 to #2439, and lint, typecheck and tests
+          locally on the combined tree. Not verified: real provider runs, a click test in the
+          running app, an installer from dev, and macOS beyond CI.
         </p>
         <p>
           November 6: a round for v0.5.2 on dev, promoted to nightly through #2253 (not to main).
