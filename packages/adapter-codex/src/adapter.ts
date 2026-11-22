@@ -886,7 +886,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const turns = [...this.#activeTurns]
     this.#activeTurns.clear()
     // A command waiting for the turn Codex was about to start hears now that none comes.
-    for (const finish of [...this.#turnStartWaiters.values()]) finish(undefined)
+    for (const finish of this.#turnStartWaiters.values()) finish(undefined)
     this.#subagents.endSession()
     // The provider is gone: settle cards without replying to its dead requests.
     for (const id of this.#approvals.keys()) {
@@ -1740,7 +1740,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#activeTurns.clear()
     this.#openItems.clear()
     this.#reviewingTurns.clear()
-    for (const finish of [...this.#turnStartWaiters.values()]) finish(undefined)
+    for (const finish of this.#turnStartWaiters.values()) finish(undefined)
     this.#sessionThread = undefined
     // Held responders close over the dead transport; answering one after
     // disposal would write into nothing. Drop them with the process.
