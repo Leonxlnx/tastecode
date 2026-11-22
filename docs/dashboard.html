@@ -291,51 +291,57 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-22 dev 5d05dbcf · nightly 8a60342f · main dd8f4264</span>
+        <span class="meta">2026-11-22 dev 594d8b30 · nightly 8a60342f · main dd8f4264</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <p>
-          November 22 on dev (5d05dbcf, not on nightly or main): 66 pull requests merged, besides
+          November 22 on dev (594d8b30, not on nightly or main): 73 pull requests merged, besides
           the dashboard entries. Creatify replaces the Design button in the prompt bar: with it on,
           the server puts a short note behind the prompt that sends the agent to the bundled
           creative skill that fits (websites, motion, sound, demos), for every provider that runs a
           text turn, and the choice stays with its chat (#2440, #2441); earshot ships with the
           default skills for sound (#2443). The server's Design workflow is removed: a prompt that
           still carries the old Design marker is an ordinary turn, continue in a chat with a saved
-          run is an ordinary prompt, and saved runs stay in the database unread (#2447). Restore and
-          Undo lose nothing any more: a file that became ignored is backed up before a restore
-          overwrites it, a restore that would delete a folder no snapshot holds is refused, and Undo
-          works in a project that is a repository subfolder and ignores the user's own diff settings
-          (#2422, #2426 to #2428). The orchestrator keeps the queue held while a Stop waits for a
-          prompt on its way, queues a prompt sent while the access mode changes, streams a
-          sub-agent's queued prompt on the sub-agent's channel and keeps the Design marker out of a
-          steered prompt (#2418, #2419, #2429, #2430). The pull request view keeps an action that
-          lands during a refresh, treats an unreachable GitHub as a failed read instead of a
-          sign-out, reruns only finished check runs and stops paging pickers at their limit (#2424,
-          #2425, #2431, #2432). On Windows, sign-in and update terminals start a provider CLI from
-          its chosen path, and an npm shim is followed to the CLI it starts (#2423, #2347). Imported
-          chats drop inline tool images, the desktop app's reminders and the app's own title
-          sessions, show Codex web searches and sleeps, find extended-length rollout paths and read
-          attached files back (#2352, #2356, #2357, #2361, #2364, #2365, #2442). Usage prices
-          GPT-6.2 Astra and Sol, GPT-6.1 Terra and Claude Fable 5.2, reads Grok's usage from its
-          session files and counts an OpenCode answer once (#2353 to #2355, #2332). Grok reports a
-          Stop as stopped and cleans up after a failed one (#2435, #2438), a Codex compaction ends
-          when Codex exits early (#2433), and further fixes cover emoji-safe cuts, find in chat from
-          the message field, custom ACP harnesses in the model picker, a broken harness file, one
-          project per folder and the turn rail. New chat keeps a draft per project, also across a
-          restart, and the Pull requests view's Chat button adds to an unsent draft instead of
-          replacing it (#2445); the Usage page counts an ACP chat's cost once (#2444). Contributor
-          fixes by lachlan1234564 (#2326 to #2334): the agent's browser stays stopped per chat,
-          clicks icon SVGs, sends screenshots at CSS width and reads "card" as a word in its payment
-          check; browser history keeps secrets out of titles and entries can be removed or cleared;
-          scheduled resumes survive other windows and failed reads; and an imported chat survives a
-          failed retry. Verified for the fix round (#2338 to #2365, #2418 to #2439): a test per fix
-          that failed on dev before it, hosted CI on #2418 to #2439, and lint, typecheck and tests
-          locally on the combined tree. Not verified: real provider runs, a click test in the
-          running app, an installer from dev, and macOS beyond CI.
+          run is an ordinary prompt, and saved runs stay in the database unread (#2447). Later the
+          same day: drafts keep saving when browser storage is full and a saved draft is never cut
+          back (#2455), a smaller window no longer overwrites saved panel sizes (#2456), "caching
+          saved" on the Usage page is net of the cache-write surcharge (#2453), the long-context
+          rate in the stored-usage fallback follows each request step (#2454), history prune reads a
+          date as local midnight (#2450), the queue no longer fills a log nothing reads (#2452), and
+          fonts ship as files so the CSP stops blocking a math font (#2449). Restore and Undo lose
+          nothing any more: a file that became ignored is backed up before a restore overwrites it,
+          a restore that would delete a folder no snapshot holds is refused, and Undo works in a
+          project that is a repository subfolder and ignores the user's own diff settings (#2422,
+          #2426 to #2428). The orchestrator keeps the queue held while a Stop waits for a prompt on
+          its way, queues a prompt sent while the access mode changes, streams a sub-agent's queued
+          prompt on the sub-agent's channel and keeps the Design marker out of a steered prompt
+          (#2418, #2419, #2429, #2430). The pull request view keeps an action that lands during a
+          refresh, treats an unreachable GitHub as a failed read instead of a sign-out, reruns only
+          finished check runs and stops paging pickers at their limit (#2424, #2425, #2431, #2432).
+          On Windows, sign-in and update terminals start a provider CLI from its chosen path, and an
+          npm shim is followed to the CLI it starts (#2423, #2347). Imported chats drop inline tool
+          images, the desktop app's reminders and the app's own title sessions, show Codex web
+          searches and sleeps, find extended-length rollout paths and read attached files back
+          (#2352, #2356, #2357, #2361, #2364, #2365, #2442). Usage prices GPT-6.2 Astra and Sol,
+          GPT-6.1 Terra and Claude Fable 5.2, reads Grok's usage from its session files and counts
+          an OpenCode answer once (#2353 to #2355, #2332). Grok reports a Stop as stopped and cleans
+          up after a failed one (#2435, #2438), a Codex compaction ends when Codex exits early
+          (#2433), and further fixes cover emoji-safe cuts, find in chat from the message field,
+          custom ACP harnesses in the model picker, a broken harness file, one project per folder
+          and the turn rail. New chat keeps a draft per project, also across a restart, and the Pull
+          requests view's Chat button adds to an unsent draft instead of replacing it (#2445); the
+          Usage page counts an ACP chat's cost once (#2444). Contributor fixes by lachlan1234564
+          (#2326 to #2334): the agent's browser stays stopped per chat, clicks icon SVGs, sends
+          screenshots at CSS width and reads "card" as a word in its payment check; browser history
+          keeps secrets out of titles and entries can be removed or cleared; scheduled resumes
+          survive other windows and failed reads; and an imported chat survives a failed retry.
+          Verified for the fix round (#2338 to #2365, #2418 to #2439): a test per fix that failed on
+          dev before it, hosted CI on #2418 to #2439, and lint, typecheck and tests locally on the
+          combined tree. Not verified: real provider runs, a click test in the running app, an
+          installer from dev, and macOS beyond CI.
         </p>
         <p>
           November 6: a round for v0.5.2 on dev, promoted to nightly through #2253 (not to main).
