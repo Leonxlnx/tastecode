@@ -1305,8 +1305,14 @@ function harnessUsageRecords(
     if (richerLocalAccounts.get(event.provider)?.has(account)) continue
     const sessionKey = `${event.provider}:${event.threadId}`
     const current = usageTokenCounts(event.usage)
+    const prior = previous.get(sessionKey)
+    // Counters that went back restarted: the whole sample is a fresh start, as
+    // in the Codex rollout reader. Subtracting counter by counter would mix
+    // the old run's counters with the new one's.
     const tokens = event.usage.cumulative
-      ? subtractTokenCounts(current, previous.get(sessionKey))
+      ? prior && countersWentBack(current, prior)
+        ? current
+        : subtractTokenCounts(current, prior)
       : current
     if (event.usage.cumulative) previous.set(sessionKey, current)
     if (processedTokens(tokens) <= 0 && tokens.providerReportedCostUsd <= 0) continue
@@ -1353,6 +1359,20 @@ function usageTokenCounts(usage: Usage): TokenCounts {
     reasoningTokens: Math.max(usage.reasoningTokens, 0),
     providerReportedCostUsd: Math.max(usage.costUsd ?? 0, 0),
   }
+}
+
+function countersWentBack(current: TokenCounts, prior: TokenCounts): boolean {
+  return (
+    current.uncachedInputTokens + current.cachedInputTokens <
+      prior.uncachedInputTokens + prior.cachedInputTokens ||
+    current.uncachedInputTokens < prior.uncachedInputTokens ||
+    current.cachedInputTokens < prior.cachedInputTokens ||
+    current.cacheWrite5mInputTokens < prior.cacheWrite5mInputTokens ||
+    current.cacheWrite1hInputTokens < prior.cacheWrite1hInputTokens ||
+    current.outputTokens < prior.outputTokens ||
+    current.reasoningTokens < prior.reasoningTokens ||
+    current.providerReportedCostUsd < prior.providerReportedCostUsd
+  )
 }
 
 function subtractTokenCounts(current: TokenCounts, prior: TokenCounts | undefined): TokenCounts {
