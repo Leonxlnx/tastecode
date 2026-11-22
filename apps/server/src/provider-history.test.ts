@@ -2347,6 +2347,32 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     ])
   })
 
+  it('knows a prompt of its own again when the provider saved its images apart from its files', () => {
+    // Claude Code keeps images as blocks and names other files in the text, so its saved
+    // copy lists the image first whatever order the user attached them in.
+    const withFiles = (events: DomainEvent[], attachments: string[]) =>
+      events.map((event): DomainEvent =>
+        event.type === 'item.completed' && event.item.role === 'user'
+          ? { ...event, item: { ...event.item, attachments } }
+          : event,
+      )
+    const local = withFiles(typed(words), ['/work/notes.txt', '/work/shot.png'])
+    const native = withFiles(turn('native', words, 'Done'), [
+      'data:image/png;base64,AA==',
+      '/work/notes.txt',
+    ])
+    expect(shown('local-thread', native, local)).toEqual([])
+
+    // Another file, or one more or fewer, is another prompt.
+    const other = withFiles(turn('native', words, 'Done'), [
+      'data:image/png;base64,AA==',
+      '/work/other.txt',
+    ])
+    expect(shown('local-thread', other, local)).toHaveLength(2)
+    const fewer = withFiles(turn('native', words, 'Done'), ['/work/notes.txt'])
+    expect(shown('local-thread', fewer, local)).toHaveLength(2)
+  })
+
   it('leaves the provider rows of a chat run here as they were saved', () => {
     const native = turn('outside', `${DESIGN_FOLLOW_UP_NOTICE}${words}`, 'pineapple', 900_000)
     expect(shown('local-thread', native, typed('Something else', 500_000))).toEqual([
