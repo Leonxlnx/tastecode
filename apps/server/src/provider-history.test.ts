@@ -5,7 +5,7 @@ import path from 'node:path'
 import type { DomainEvent, ProviderHistorySession, ProviderHistorySource } from '@harness/contracts'
 import { createClaudeHistorySource } from '@harness/adapter-claude-code'
 import { createGrokHistorySource } from '@harness/adapter-grok'
-import { importedEvents, ProviderHistory } from './provider-history.js'
+import { addProjectFolder, importedEvents, ProviderHistory } from './provider-history.js'
 import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
@@ -2407,5 +2407,42 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     const after = store.lastSeq(thread)
     expect(store.mergeProviderHistory(thread, '2', read())).toBe(false)
     expect(store.lastSeq(thread)).toBe(after)
+  })
+})
+
+describe('adding a project folder', () => {
+  const roots: string[] = []
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  it('answers with the listed project for another spelling of its folder', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'tastecode-project-folder-'))
+    roots.push(root)
+    const site = path.join(root, 'site')
+    const other = path.join(root, 'other')
+    mkdirSync(site)
+    mkdirSync(other)
+    const store = new Store(':memory:')
+    try {
+      expect(addProjectFolder(store, site, 'Site').path).toBe(site)
+      expect(addProjectFolder(store, `${site}${path.sep}`).path).toBe(site)
+      if (process.platform === 'win32') {
+        expect(addProjectFolder(store, site.replaceAll(path.sep, '/')).path).toBe(site)
+        const drive = site.slice(0, 1)
+        const otherCase = `${drive === drive.toLowerCase() ? drive.toUpperCase() : drive.toLowerCase()}${site.slice(1)}`
+        expect(addProjectFolder(store, otherCase).path).toBe(site)
+      }
+      expect(addProjectFolder(store, other).path).toBe(other)
+      expect(store.projects().map((project) => [project.path, project.name])).toEqual(
+        expect.arrayContaining([
+          [site, 'Site'],
+          [other, 'other'],
+        ]),
+      )
+      expect(store.projects()).toHaveLength(2)
+    } finally {
+      store.close()
+    }
   })
 })

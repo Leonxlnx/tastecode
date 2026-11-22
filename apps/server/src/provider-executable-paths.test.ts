@@ -77,13 +77,14 @@ describe('provider executable paths', () => {
     },
   )
 
-  it('escapes a selected path for the Windows terminal shell', () => {
+  it('quotes a selected path for the Windows terminal shell', () => {
     const platform = process.platform
     Object.defineProperty(process, 'platform', { value: 'win32' })
     try {
+      // The terminal wraps the line once for cmd /s /c; inside quotes & is no operator.
       setCommandOverride('codex', 'C:\\Program Files\\Tools & Co\\codex.cmd')
       expect(selectedProviderShellCommand('codex', 'codex login')).toBe(
-        '"C:\\Program^ Files\\Tools^ ^&^ Co\\codex.cmd login"',
+        '"C:\\Program Files\\Tools & Co\\codex.cmd" login',
       )
     } finally {
       Object.defineProperty(process, 'platform', { value: platform })

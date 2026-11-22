@@ -68,7 +68,7 @@ import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 import { ChatImportService, openCodeChatReader } from './chat-import.js'
 import { createT3CodeReader } from './chat-import-t3.js'
-import { ProviderHistory } from './provider-history.js'
+import { addProjectFolder, ProviderHistory } from './provider-history.js'
 import { HistoryRefreshSchedule } from './history-refresh-schedule.js'
 import { STREAM_QUIET_BACKGROUND_WAIT_MS, StreamQuiet } from './stream-quiet.js'
 
@@ -1381,7 +1381,7 @@ export function startServer(
 
       case 'projects.add': {
         const p = parseParams(method, params)
-        const project = store.addProject(p.path, p.name)
+        const project = addProjectFolder(store, p.path, p.name)
         refreshProviderHistory()
         return project
       }

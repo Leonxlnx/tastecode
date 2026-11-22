@@ -117,7 +117,9 @@ type SkillFrontmatter = {
 }
 
 export function parseSkillFrontmatter(markdown: string): SkillFrontmatter {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(markdown)
+  // Windows editors and PowerShell 5 save UTF-8 with a byte order mark, which
+  // `readFile(…, 'utf8')` keeps in front of the opening fence.
+  const match = /^﻿?---\r?\n([\s\S]*?)\r?\n---/.exec(markdown)
   if (!match) return {}
   const fields: Record<string, string> = {}
   let current: string | undefined

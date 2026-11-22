@@ -233,6 +233,21 @@ describe('local diagnostics bridge', () => {
     expect(setDiagnosticsEnabled).toHaveBeenCalledWith(true)
     expect(reportRendererError).toHaveBeenCalledWith(expect.stringContaining('renderer failed'))
   })
+
+  it('leaves out the resize observer loop notice Chromium raises while an answer streams', async () => {
+    const reportRendererError = vi.fn()
+    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, reportRendererError }
+    const bridge = await import('./bridge.js')
+
+    bridge.reportRendererError('ResizeObserver loop completed with undelivered notifications.')
+    bridge.reportRendererError('ResizeObserver loop limit exceeded')
+    bridge.reportRendererError(new Error('ResizeObserver loop completed in a real bug'))
+
+    expect(reportRendererError).toHaveBeenCalledOnce()
+    expect(reportRendererError).toHaveBeenCalledWith(
+      expect.stringContaining('ResizeObserver loop completed in a real bug'),
+    )
+  })
 })
 
 describe('app update bridge', () => {
