@@ -11,6 +11,7 @@ import type {
   ProviderId,
 } from '@harness/contracts'
 import { isBackgroundWorkspace } from './background-workspace.js'
+import { withoutCreatifyNote } from './creatify.js'
 import { Store, type ProviderHistoryListing } from './store.js'
 import { projectHistoryItems, withoutContinuationContext } from './side-chat.js'
 import {
@@ -881,6 +882,8 @@ function shownWords(text: string): string {
   words = withoutUnreadSubagentResults(words)
   // The Design follow-up envelope, matched by its whole text.
   if (words.startsWith(DESIGN_FOLLOW_UP_NOTICE)) words = words.slice(DESIGN_FOLLOW_UP_NOTICE.length)
+  // The creative skills note of a prompt sent with Creatify on.
+  words = withoutCreatifyNote(words)
   return designContinuationRequest(words) ?? words
 }
 
@@ -914,6 +917,8 @@ function sameUserMessage(left: Item, right: Item): boolean {
     const start = text.indexOf(marker)
     if (start !== -1) text = text.slice(start + marker.length)
   }
+  // The same for the creative skills note of a prompt sent with Creatify on.
+  if (text !== undefined) text = withoutCreatifyNote(text)
   return (
     (left.text === right.text || left.text === text) &&
     sameAttachments(left.attachments ?? [], right.attachments ?? [])

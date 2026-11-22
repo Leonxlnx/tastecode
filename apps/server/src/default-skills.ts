@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ProviderCommand, Skill } from '@harness/contracts'
+import { creatifyNote, type CreatifySkill } from './creatify.js'
 import { parseSkillFrontmatter, skillName } from './skill-inventory.js'
 
 /** Ids of the skills that ship with TasteCode; no provider owns them, so none can switch them. */
@@ -21,6 +22,8 @@ export type DefaultSkills = {
   commands: ProviderCommand[]
   /** A few lines for shared instructions, or '' when no skill is installed. */
   catalog: string
+  /** What follows a prompt sent with Creatify on, or '' when no skill is installed. */
+  creatify: string
 }
 
 type BundledEntry = { folder?: unknown; summary?: unknown }
@@ -59,11 +62,12 @@ export function loadDefaultSkills(root = defaultSkillsRoot()): DefaultSkills {
     const name = manifest.plugin?.name
     plugin = typeof name === 'string' && BUNDLE_NAME.test(name) ? name : undefined
   } catch {
-    return { root, skills: [], commands: [], catalog: '' }
+    return { root, skills: [], commands: [], catalog: '', creatify: '' }
   }
   const skills: Skill[] = []
   const commands: ProviderCommand[] = []
   const lines: string[] = []
+  const creative: CreatifySkill[] = []
   for (const entry of entries) {
     if (typeof entry.folder !== 'string' || !BUNDLE_NAME.test(entry.folder)) continue
     const dir = path.join(root, 'skills', entry.folder)
@@ -89,12 +93,14 @@ export function loadDefaultSkills(root = defaultSkillsRoot()): DefaultSkills {
     const summary = typeof entry.summary === 'string' ? entry.summary.trim() : ''
     const where = entry.folder === name ? '' : ` (folder ${entry.folder})`
     lines.push(`- ${name}${where}${summary ? `: ${summary}` : ''}`)
+    creative.push({ name, summary, file: path.join(dir, 'SKILL.md') })
   }
   return {
     root,
     skills,
     commands,
     catalog: lines.length ? catalogText(path.join(root, 'skills'), lines) : '',
+    creatify: creatifyNote(creative),
   }
 }
 
