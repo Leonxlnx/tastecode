@@ -191,7 +191,15 @@ type UsageHistoryOptions = {
   largeCacheLoader?: UsageCacheLoader
 }
 
-type AttributedUsageRecord = LocalUsageRecord & { provider: ProviderId; accountId?: AccountId }
+type AttributedUsageRecord = LocalUsageRecord & {
+  provider: ProviderId
+  accountId?: AccountId
+  /**
+   * The session's cost comes from the provider's own report on another record, so
+   * these tokens count but add no price-table estimate on top of it.
+   */
+  costReportedElsewhere?: boolean
+}
 
 /** One provider account, whose usage a request can ask for alone. */
 export type UsageHistoryAccount = { provider: ProviderId; accountId: AccountId }
@@ -595,7 +603,7 @@ export class UsageHistoryService {
     const addRecord = (
       providerId: ProviderId,
       accountId: AccountId | undefined,
-      entry: LocalUsageRecord,
+      entry: LocalUsageRecord & { costReportedElsewhere?: boolean },
     ) => {
       if (!earliestDate || entry.date < earliestDate) earliestDate = entry.date
       let knownSessions = providerSessions.get(providerId)
@@ -616,11 +624,13 @@ export class UsageHistoryService {
         rates.set(rateKey, rate)
       }
       const priced = priceEntry(rate, entry.tokens, entry.longContext)
-      addEntry(totals, entry.tokens, priced)
+      const reported =
+        entry.tokens.providerReportedCostUsd > 0 || entry.costReportedElsewhere === true
+      addEntry(totals, entry.tokens, priced, reported)
       sessions.add(sessionKey)
 
       const provider = getBucket(providerBuckets, providerId)
-      addEntry(provider.totals, entry.tokens, priced)
+      addEntry(provider.totals, entry.tokens, priced, reported)
       provider.sessions.add(sessionKey)
       if (splitProviders.has(providerId)) {
         const key = accountKey(providerId, accountId)
@@ -633,7 +643,7 @@ export class UsageHistoryService {
           }
           accountBuckets.set(key, accountBucket)
         }
-        addEntry(accountBucket.totals, entry.tokens, priced)
+        addEntry(accountBucket.totals, entry.tokens, priced, reported)
         accountBucket.sessions.add(sessionKey)
       }
 
@@ -648,7 +658,7 @@ export class UsageHistoryService {
         }
         modelBuckets.set(modelKey, model)
       }
-      addEntry(model.totals, entry.tokens, priced)
+      addEntry(model.totals, entry.tokens, priced, reported)
       model.sessions.add(sessionKey)
       model.pricing = lessCertainPricing(model.pricing, priced.pricing)
 
@@ -657,17 +667,16 @@ export class UsageHistoryService {
         day = { ...newBucket(), providers: new Map() }
         dayBuckets.set(entry.date, day)
       }
-      addEntry(day.totals, entry.tokens, priced)
+      addEntry(day.totals, entry.tokens, priced, reported)
       day.sessions.add(sessionKey)
       const providerDay = day.providers.get(providerId) ?? {
         tokens: 0,
         estimatedCostUsd: 0,
       }
       providerDay.tokens += processedTokens(entry.tokens)
-      providerDay.estimatedCostUsd +=
-        entry.tokens.providerReportedCostUsd > 0
-          ? entry.tokens.providerReportedCostUsd
-          : priced.estimatedCostUsd
+      providerDay.estimatedCostUsd += reported
+        ? entry.tokens.providerReportedCostUsd
+        : priced.estimatedCostUsd
       day.providers.set(providerId, providerDay)
     }
     // The account is the same for every record of a file, so it is compared once.
@@ -1284,6 +1293,12 @@ function harnessUsageRecords(
 ): AttributedUsageRecord[] {
   const records: AttributedUsageRecord[] = []
   const previous = new Map<string, TokenCounts>()
+  // A provider can report a session's tokens and its cost in separate events. Where
+  // it reports the cost, pricing the tokens as well would count the session twice.
+  const costReported = new Set<string>()
+  for (const event of events) {
+    if ((event.usage.costUsd ?? 0) > 0) costReported.add(`${event.provider}:${event.threadId}`)
+  }
 
   for (const event of events) {
     const account = event.accountId ?? DEFAULT_ACCOUNT_ID
@@ -1309,6 +1324,9 @@ function harnessUsageRecords(
       sessionId: event.threadId,
       longContext: inputForThreshold > longContextThreshold(model),
       tokens,
+      ...(costReported.has(sessionKey) && tokens.providerReportedCostUsd <= 0
+        ? { costReportedElsewhere: true }
+        : {}),
     })
   }
   return records
@@ -1359,6 +1377,8 @@ function addEntry(
   totals: UsageHistoryTotals,
   tokens: TokenCounts,
   priced: ReturnType<typeof priceEntry>,
+  /** The provider reports this record's cost, on it or on another record of its session. */
+  costReported = tokens.providerReportedCostUsd > 0,
 ): void {
   const processed = processedTokens(tokens)
   const cacheWriteInputTokens = tokens.cacheWrite5mInputTokens + tokens.cacheWrite1hInputTokens
@@ -1371,11 +1391,10 @@ function addEntry(
   totals.outputTokens += tokens.outputTokens
   totals.reasoningTokens += tokens.reasoningTokens
   totals.processedTokens += processed
-  totals.estimatedCostUsd +=
-    tokens.providerReportedCostUsd > 0 ? tokens.providerReportedCostUsd : priced.estimatedCostUsd
+  totals.estimatedCostUsd += costReported ? tokens.providerReportedCostUsd : priced.estimatedCostUsd
   totals.cacheSavingsUsd += priced.cacheSavingsUsd
   totals.providerReportedCostUsd += tokens.providerReportedCostUsd
-  if (tokens.providerReportedCostUsd > 0) {
+  if (costReported) {
     totals.providerReportedTokens += processed
   } else if (priced.pricing === 'unpriced') {
     totals.unpricedTokens += processed

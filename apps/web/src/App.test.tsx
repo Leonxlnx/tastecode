@@ -4436,6 +4436,10 @@ describe('web client', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('projects.list', {})
     })
+    // An unsent New chat prompt is kept; the pull request link goes behind it.
+    fireEvent.change(await screen.findByPlaceholderText('Do anything'), {
+      target: { value: 'Unsent idea' },
+    })
     const rejected =
       (fireEvent.click(screen.getByRole('button', { name: /^New session,/ })),
       await screen.findByPlaceholderText('Do anything'))
@@ -4453,7 +4457,7 @@ describe('web client', () => {
     const composer = await screen.findByPlaceholderText('Do anything')
     await waitFor(() => {
       expect((composer as HTMLTextAreaElement).value).toBe(
-        'I wanted to work on https://github.com/Blueemi/harness/pull/1 (Add the parser).',
+        'Unsent idea\n\nI wanted to work on https://github.com/Blueemi/harness/pull/1 (Add the parser).',
       )
     })
   })
@@ -8160,6 +8164,144 @@ describe('new chats', () => {
     await waitFor(() =>
       expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(''),
     )
+
+    // The words wait for their own project.
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^project/ }))
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+        'Words from a failed start',
+      ),
+    )
+  })
+
+  describe('a New chat draft per project', () => {
+    beforeEach(() => {
+      serverProjects = [
+        { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+        { path: '/work/other', name: 'other', pinned: false, createdAt: 0, sessions: [] },
+      ]
+    })
+
+    const composerValue = () =>
+      (screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value
+    const creatifyPressed = () =>
+      screen.getByRole('button', { name: 'Creatify' }).getAttribute('aria-pressed')
+    async function chooseProject(name: string) {
+      fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+      fireEvent.click(await screen.findByRole('menuitem', { name: new RegExp(`^${name}`) }))
+      await waitFor(() => expect(composerProps().projectPath).toBe(`/work/${name}`))
+    }
+
+    it('keeps each project its own draft in both directions', async () => {
+      render(<App />)
+      const composer = await screen.findByPlaceholderText('Do anything')
+      fireEvent.change(composer, { target: { value: 'Words for project' } })
+
+      await chooseProject('other')
+      await waitFor(() => expect(composerValue()).toBe(''))
+      fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+        target: { value: 'Words for other' },
+      })
+
+      await chooseProject('project')
+      await waitFor(() => expect(composerValue()).toBe('Words for project'))
+      await chooseProject('other')
+      await waitFor(() => expect(composerValue()).toBe('Words for other'))
+    })
+
+    it('shows a draft under its own project after a restart', async () => {
+      const view = render(<App />)
+      await screen.findByPlaceholderText('Do anything')
+      await chooseProject('other')
+      fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+        target: { value: 'Words for other' },
+      })
+      view.unmount()
+
+      render(<App />)
+      await screen.findByPlaceholderText('Do anything')
+      await waitFor(() => expect(composerProps().projectPath).toBe('/work/project'))
+      await waitFor(() => expect(composerValue()).toBe(''))
+      await chooseProject('other')
+      await waitFor(() => expect(composerValue()).toBe('Words for other'))
+    })
+
+    it('joins a waiting draft into New chat when no project owns it', async () => {
+      // Saved before it was known which project the live draft belongs to.
+      localStorage.setItem(
+        'harness.composerDrafts.v1',
+        JSON.stringify({
+          'new-chat': { text: 'Live words', attachments: [], resources: [] },
+          'new-chat:/work/project': { text: 'Waiting words', attachments: [], resources: [] },
+        }),
+      )
+      render(<App />)
+      await screen.findByPlaceholderText('Do anything')
+      await waitFor(() => expect(composerValue()).toBe('Live words\n\nWaiting words'))
+      await chooseProject('other')
+      await waitFor(() => expect(composerValue()).toBe(''))
+    })
+
+    it('keeps Creatify of an unsent New chat with its project', async () => {
+      render(<App />)
+      await screen.findByPlaceholderText('Do anything')
+      fireEvent.click(screen.getByRole('button', { name: 'Creatify' }))
+      expect(creatifyPressed()).toBe('true')
+
+      await chooseProject('other')
+      await waitFor(() => expect(creatifyPressed()).toBe('false'))
+      await chooseProject('project')
+      await waitFor(() => expect(creatifyPressed()).toBe('true'))
+    })
+
+    it('gives the draft of a removed project to the project shown next', async () => {
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method === 'projects.remove') {
+          serverProjects = serverProjects.filter((project) => project.path !== '/work/project')
+          return Promise.resolve({})
+        }
+        return request(method, params)
+      })
+      render(<App />)
+      fireEvent.change(await screen.findByPlaceholderText('Do anything'), {
+        target: { value: 'Words of a removed project' },
+      })
+      act(() => sidebarProps().onRemoveProject('/work/project'))
+
+      await waitFor(() => expect(composerProps().projectPath).toBe('/work/other'))
+      await waitFor(() => expect(composerValue()).toBe('Words of a removed project'))
+      expect(localStorage.getItem('harness.newChatDraftProject')).toBe('/work/other')
+    })
+
+    it('returns the Creatify choice of a failed start to its own project', async () => {
+      const request = transport.request.getMockImplementation()!
+      let fail!: () => void
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'thread.start'
+          ? new Promise((_, reject) => {
+              fail = () => reject(new Error('could not start'))
+            })
+          : request(method, params),
+      )
+      render(<App />)
+      await screen.findByPlaceholderText('Do anything')
+      fireEvent.click(screen.getByRole('button', { name: 'Creatify' }))
+      submitTurn('Creatify words')
+      await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+
+      act(() => sidebarProps().onNewSession('/work/other'))
+      await waitFor(() => expect(composerProps().projectPath).toBe('/work/other'))
+      await act(async () => fail())
+      await screen.findByText('could not start')
+      expect(composerValue()).toBe('')
+      expect(creatifyPressed()).toBe('false')
+
+      act(() => sidebarProps().onNewSession('/work/project'))
+      await waitFor(() => expect(composerValue()).toBe('Creatify words'))
+      expect(creatifyPressed()).toBe('true')
+    })
   })
 
   it('switches the project checkout from the branch shelf before starting a chat', async () => {
