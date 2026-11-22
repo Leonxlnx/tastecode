@@ -8,6 +8,12 @@ remains before M4 is complete.
 It is not a live ownership tracker. Before changing code, read `AGENTS.md`, the linked rules,
 `docs/ARCHITECTURE.md`, and the current GitHub issues and pull requests.
 
+> **Status, 2026-11-22.** The Design button is gone from the prompt bar. Creatify took its place:
+> it lets the agent apply the bundled creative skill that fits instead of running this workflow
+> (see `apps/server/src/creatify.ts`). The workflow described below is still in the tree and a
+> suspended run still resumes with `continue`, but no new run starts from the composer. Its removal
+> is planned in stages; until then this document describes what the code does, not what users reach.
+
 ## Product goal
 
 The v0.5 implementation and local catalog configuration are documented in

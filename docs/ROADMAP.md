@@ -93,6 +93,9 @@ Windows and macOS CI.
 TasteSkill integrated, preview pane, screenshot + critique loop, direction gallery, token
 editor, reference board. The provider-neutral Design mode entry point is already in the
 prompt bar; TasteSkill v2 runtime work continues separately.
+Since 2026-11-22 the prompt bar has Creatify in place of the Design button: the agent applies
+the bundled creative skill that fits (TasteSkill, Cinetic, Cook) in an ordinary turn. The Design
+workflow is no longer started from the composer and is being removed in stages.
 → _It builds our own landing page. If it can't, it isn't done._
 
 ### M5 — Visual pass
