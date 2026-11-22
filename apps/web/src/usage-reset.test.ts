@@ -397,6 +397,30 @@ describe('resume at usage reset', () => {
     expect(controller.snapshot()).toHaveLength(1)
   })
 
+  it('does not continue on stale limits whose last known reset has passed', async () => {
+    const { controller, request } = setup()
+    await controller.schedule(session, 'ask', NOW + 1000)
+    const original = request.getMockImplementation()!
+    request.mockImplementation(async (method) =>
+      method === 'usage.summary'
+        ? {
+            limits: [],
+            limitSource: {
+              provider: 'codex',
+              status: 'ready',
+              limits: [window(NOW + 500)],
+              stale: true,
+              refreshError: 'Refresh failed.',
+            },
+          }
+        : original(method),
+    )
+    vi.setSystemTime(NOW + 1000)
+    await controller.check()
+    expect(request.mock.calls.some(([method]) => method === 'thread.sendTurn')).toBe(false)
+    expect(controller.snapshot()).toHaveLength(1)
+  })
+
   it('waits while disconnected, and consumes a rejected send without retrying it', async () => {
     const { controller, request, transport, report } = setup()
     await controller.schedule(session, 'ask', NOW + 1000)

@@ -218,6 +218,8 @@ export class UsageResetController {
       source.reason !== 'noPlan'
     )
       return
+    // Neither do the last known limits of a refresh that failed: their reset may have passed.
+    if (source?.status === 'ready' && source.stale) return
     const limits = source ? (source.status === 'ready' ? source.limits : []) : summary.limits
     const later = usageResetAt(limits, Date.now())
     if (later !== undefined) {
