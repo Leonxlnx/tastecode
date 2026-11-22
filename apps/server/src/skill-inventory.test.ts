@@ -73,6 +73,21 @@ describe('local skill inventory', () => {
     ])
   })
 
+  it('reads the name and description of a SKILL.md saved with a byte order mark', async () => {
+    const project = temporary('project')
+    const homeSkills = path.join(temporary('home'), '.agents', 'skills')
+    // Notepad and PowerShell 5 save UTF-8 this way, with Windows line endings.
+    writeSkill(
+      path.join(homeSkills, 'folder-name'),
+      '﻿---\r\nname: review-animations\r\ndescription: Critique motion.\r\n---\r\nBody\r\n',
+    )
+
+    const inventory = await listLocalSkills(project, { userSkillsDir: homeSkills })
+    expect(inventory.skills).toEqual([
+      expect.objectContaining({ name: 'review-animations', description: 'Critique motion.' }),
+    ])
+  })
+
   it('keeps hyphenated frontmatter keys out of the description', async () => {
     const project = temporary('project')
     const homeSkills = path.join(temporary('home'), '.agents', 'skills')

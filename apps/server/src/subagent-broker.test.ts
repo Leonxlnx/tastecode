@@ -410,6 +410,20 @@ describe('SubagentBroker', () => {
     expect(short.endsWith('zzzz')).toBe(true)
     expect(short).toContain('[… shortened by TasteCode …]')
   })
+
+  it('cuts a report and a task without halving an emoji', async () => {
+    const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    // Every other code unit is a cut that would split one: both parities of both cuts.
+    for (const limit of [100, 101, 102, 103]) {
+      const short = shorten('😀'.repeat(200), limit)
+      expect(short.length).toBeLessThanOrEqual(limit)
+      expect(loneSurrogate.test(short)).toBe(false)
+    }
+
+    const f = fixture()
+    await start(f.broker, `${'x'.repeat(198)}🎉 and more`)
+    expect(f.lastRow().subagent.description).toBe(`${'x'.repeat(198)}…`)
+  })
 })
 
 describe('sub-agents on other providers', () => {

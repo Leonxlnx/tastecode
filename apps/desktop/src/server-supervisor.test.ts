@@ -164,6 +164,14 @@ describe('ServerSupervisor', () => {
     expect(logs).not.toContain('partial')
   })
 
+  it('keeps whole lines ahead of a runaway line that came after them', () => {
+    const { sup, children, logs } = supervisor()
+    sup.start()
+    const runaway = 'x'.repeat(64 * 1024 + 1)
+    children[0]!.stdout.write(`first\nsecond\n${runaway}`)
+    expect(logs).toEqual(['first', 'second', runaway])
+  })
+
   it('joins a line the pipe split across chunks and flushes the rest at end', () => {
     const { sup, children, logs } = supervisor()
     sup.start()

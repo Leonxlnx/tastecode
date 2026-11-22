@@ -442,22 +442,27 @@ function retainedTailStart(
   next: Item[],
   projection: ThreadProjection,
 ): number | undefined {
-  if (next.length === previous.length + 1) {
-    if (previous.length > 0 && previous.at(-1) !== next[previous.length - 1]) return undefined
-    const appendedIndex = previous.length
-    const appended = next[appendedIndex]!
-    const appendedTurn = normalizedTurnId(appended, appendedIndex)
-    const previousTurn = projection.turns.at(-1)
-    const start = previousTurn?.turnId === appendedTurn ? previousTurn.index : appendedIndex
+  if (next.length === 0) return undefined
+  if (next.length !== previous.length && next.length !== previous.length + 1) return undefined
+  // The first row that is not the object it was. Every row before it keeps
+  // its projection; comparing identities costs little next to projecting it.
+  let first = 0
+  while (first < previous.length && previous[first] === next[first]) first += 1
+  if (first === next.length) return undefined
+  const lastTurn = projection.turns.at(-1)
+
+  if (first === previous.length) {
+    const appended = next[first]!
+    const start = lastTurn?.turnId === normalizedTurnId(appended, first) ? lastTurn.index : first
     return turnStartAcrossEchoes(previous, projection.turns, appended.turnId, start)
   }
 
-  if (next.length !== previous.length || next.length === 0) return undefined
-  const lastIndex = next.length - 1
-  if (previous[lastIndex] === next[lastIndex]) return undefined
-  if (lastIndex > 0 && previous[lastIndex - 1] !== next[lastIndex - 1]) return undefined
-  const start = projection.turns.at(-1)?.index ?? 0
-  return turnStartAcrossEchoes(previous, projection.turns, next[lastIndex]!.turnId, start)
+  // A row of the last turn changed, and a row may follow it: one of parallel
+  // tool calls completing, or a streamed row settling as the next one arrives.
+  // A change in an earlier turn projects everything again.
+  const start = lastTurn?.index ?? 0
+  if (first < start) return undefined
+  return turnStartAcrossEchoes(previous, projection.turns, next.at(-1)!.turnId, start)
 }
 
 /**

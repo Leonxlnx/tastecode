@@ -113,14 +113,8 @@ export function parsePreviewPlan(value: unknown): PreviewPlan {
     viewports,
   } as const
   if (plan.kind === 'static') {
-    if (!new URL(url).pathname.endsWith('/')) {
-      throw new Error('static preview url must end with /')
-    }
-    return {
-      ...shared,
-      kind: 'static',
-      entry: relativePath(plan.entry, 'preview static entry'),
-    }
+    const entry = relativePath(plan.entry, 'preview static entry')
+    return { ...shared, url: staticBaseUrl(url, entry), kind: 'static', entry }
   }
   if (plan.kind !== undefined && plan.kind !== 'command') {
     throw new Error('preview kind must be command or static')
@@ -133,6 +127,26 @@ export function parsePreviewPlan(value: unknown): PreviewPlan {
     args: stringsAllowEmpty(plan.args, 'preview args'),
     ...(readyPattern ? { readyPattern } : {}),
   }
+}
+
+/**
+ * The folder a static plan's url names, ending in `/`. Models often write the entry page itself
+ * (`…/index.html`, or `…/pages/index.html` for entry `pages/index.html`) or the folder without
+ * its closing slash (`…/site`); both name one folder. Any other file name stays an error.
+ */
+function staticBaseUrl(href: string, entry: string): string {
+  const url = new URL(href)
+  if (url.pathname.endsWith('/')) return url.href
+  const entryPath = entry.replaceAll('\\', '/').replace(/^\.\//, '')
+  const last = url.pathname.slice(url.pathname.lastIndexOf('/') + 1)
+  if (url.pathname.endsWith(`/${entryPath}`)) {
+    url.pathname = url.pathname.slice(0, -entryPath.length)
+  } else if (!last.includes('.')) {
+    url.pathname = `${url.pathname}/`
+  } else {
+    throw new Error('static preview url must end with /')
+  }
+  return url.href
 }
 
 function localUrl(value: unknown): string {

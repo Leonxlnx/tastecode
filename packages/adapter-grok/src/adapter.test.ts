@@ -597,6 +597,51 @@ describe('Grok adapter', () => {
     expect(events.some((event) => event.type === 'thread.error')).toBe(false)
   })
 
+  it('reports a Stop as stopped when Grok answers it with a cancelled end frame', async () => {
+    // On macOS and Linux the stop sends SIGTERM first; Grok can still write its
+    // end frame then, with the stop reason seen in stream-subagent-cancelled.jsonl.
+    class EndsOnStop extends FakeChild {
+      override kill(): boolean {
+        this.stdout.write(
+          `${JSON.stringify({ type: 'end', stopReason: 'cancelled', sessionId: 'session-1' })}\n`,
+        )
+        return super.kill()
+      }
+    }
+    const child = new EndsOnStop()
+    const adapter = new GrokAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'stop me')
+    child.stdout.write(`${JSON.stringify({ type: 'thought', data: 'working' })}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    await adapter.interrupt()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'interrupted' },
+    ])
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+
+    // Disposed instead: the turn settles without a word, as it does without an end frame.
+    const disposedChild = new EndsOnStop()
+    const disposed = new GrokAdapter({ spawn: () => disposedChild })
+    const disposedEvents: DomainEvent[] = []
+    disposed.on('event', (event) => disposedEvents.push(event))
+    const disposedThread = await disposed.startThread('C:\\repo')
+    await disposed.sendTurn(disposedThread.id, 'close me')
+    await new Promise((resolve) => setImmediate(resolve))
+    // dispose() removes the listeners, so watch the stop on the child itself.
+    const endsSeen = new Promise<void>((resolve) => disposedChild.once('close', () => resolve()))
+    await disposed.dispose()
+    await endsSeen
+    expect(disposedEvents.some((event) => event.type === 'turn.completed')).toBe(false)
+    expect(disposedEvents.some((event) => event.type === 'thread.error')).toBe(false)
+    await adapter.dispose()
+  })
+
   it('does not launch a turn when the session is disposed while the previous child stops', async () => {
     const children: FakeChild[] = []
     const promptFiles: string[] = []
@@ -641,6 +686,25 @@ describe('Grok adapter', () => {
       'Grok session is closed',
     )
     expect(children).toHaveLength(1)
+  })
+
+  it('removes the new prompt folder when the previous turn does not stop', async () => {
+    class Unstoppable extends FakeChild {
+      override kill(): boolean {
+        throw new Error('Access is denied.')
+      }
+    }
+    const adapter = new GrokAdapter({ spawn: () => new Unstoppable() })
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'first')
+    const promptDirectories = () =>
+      readdirSync(os.tmpdir()).filter((name) => name.startsWith('harness-grok-'))
+    const before = new Set(promptDirectories())
+
+    await expect(adapter.sendTurn(thread.id, 'second')).rejects.toThrow('Access is denied.')
+
+    // It holds the user's prompt and the session instructions.
+    expect(promptDirectories().filter((name) => !before.has(name))).toEqual([])
   })
 
   it('records how long a thought ran on the completed reasoning item', async () => {

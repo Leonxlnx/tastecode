@@ -17,6 +17,7 @@ import {
   type StopAgentArgs,
   type WaitForAgentsArgs,
 } from './agent-tools-mcp.js'
+import { sliceCodeUnits } from './slice-code-units.js'
 import { SUBAGENT_LIMITS } from './subagent-limits.js'
 import {
   FINISHED_SUBAGENT_STATES,
@@ -922,7 +923,7 @@ function toolLabel(item: Item): string {
 
 function oneLine(text: string, limit: number): string {
   const line = text.replace(/\s+/g, ' ').trim()
-  return line.length > limit ? `${line.slice(0, limit - 1)}…` : line
+  return line.length > limit ? `${sliceCodeUnits(line, limit - 1)}…` : line
 }
 
 function errorText(error: unknown): string {

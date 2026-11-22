@@ -590,7 +590,12 @@ export function resolveSendAvailability(input: {
       : 'unavailable'
   }
 
-  if (input.selectedChoice?.agent && input.selectedChoice.provider !== 'acp') return 'ready'
+  // A harness runs with a sign-in of its own; only a stock ACP agent's account is checked below.
+  if (
+    input.selectedChoice?.agent &&
+    (input.selectedChoice.provider !== 'acp' || input.selectedChoice.harness === true)
+  )
+    return 'ready'
 
   const status = input.providerStatuses.find((entry) => entry.id === provider)
   if (!status) return 'unavailable'
@@ -1387,7 +1392,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     () =>
       mergeCustomModels(catalogModels, customModels).filter(
         (choice) =>
-          rosterAllows(providerRoster, modelSource(choice)) &&
+          // A user's own harness is added in custom-harnesses.json, not on the roster.
+          (choice.harness === true || rosterAllows(providerRoster, modelSource(choice))) &&
           // Once the server has answered, a cached or custom row for a provider
           // this build does not offer is left out.
           (providerStatuses.length === 0 ||
@@ -1729,7 +1735,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     implicitChoice &&
     (activeModelSource
       ? modelSource(implicitChoice) === activeModelSource
-      : rosterAllows(providerRoster, modelSource(implicitChoice))) &&
+      : implicitChoice.harness === true ||
+        rosterAllows(providerRoster, modelSource(implicitChoice))) &&
     (models.length === 0 ||
       preferredSourcePending ||
       (activeModelSource && !sourceHasCatalogModels))
@@ -2035,9 +2042,31 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       if (threadId === composerDraftKey(activeIdRef.current)) {
         threadController.draftOwner = threadId
         publishComposerDraft(draft)
+        return
+      }
+      // The chat beside shows its composer as it was left, and gets that view
+      // back when it takes focus again. The words returned to it go there too,
+      // or the next keystroke in that pane would overwrite them unseen.
+      const current = splitRef.current
+      if (current && splitBesideId(current) === threadId) {
+        setSplit({
+          ...current,
+          frozen: {
+            ...current.frozen,
+            composer: {
+              ...current.frozen.composer,
+              draftRequest: {
+                text: draft.text,
+                attachments: draft.attachments,
+                resources: draft.resources,
+                request: ++composerDraftRequests.current,
+              },
+            },
+          },
+        })
       }
     },
-    [publishComposerDraft],
+    [publishComposerDraft, setSplit],
   )
   const restoreComposerDraft = useCallback(
     (key: string) => {
@@ -3027,6 +3056,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           sourceName: harness.displayName,
           mark: providerMark(harness.provider),
           agent: { id: harness.id, name: harness.displayName },
+          harness: true as const,
         }
         try {
           const result = await transport.request('models.list', {
@@ -4396,7 +4426,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       const results = await Promise.allSettled(
         uniquePaths.map((path) => transport.request('projects.add', { path })),
       )
-      const added = uniquePaths.filter((_, index) => results[index]?.status === 'fulfilled')
+      // The project the server answers with: another spelling of a folder it
+      // already lists is that project, under the path it was saved with.
+      const added = results.flatMap((result) =>
+        result.status === 'fulfilled' ? [result.value.path] : [],
+      )
       const failed = uniquePaths.filter((_, index) => results[index]?.status === 'rejected')
       const failure = results.find((result) => result.status === 'rejected')
       const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))

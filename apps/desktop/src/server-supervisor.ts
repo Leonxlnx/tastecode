@@ -139,12 +139,13 @@ export class ServerSupervisor {
       stream.on('data', (chunk: string) => {
         const lines = (pending + chunk).split(/\r?\n/)
         pending = lines.pop() ?? ''
-        // A runaway line without a newline must not grow without bound.
+        for (const line of lines) emit(line)
+        // A runaway line without a newline must not grow without bound. It
+        // goes out after the whole lines that came before it.
         if (pending.length > MAX_LOG_LINE) {
           emit(pending)
           pending = ''
         }
-        for (const line of lines) emit(line)
       })
       stream.on('end', () => {
         emit(pending)
