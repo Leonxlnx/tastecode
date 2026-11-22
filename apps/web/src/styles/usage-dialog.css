@@ -1,0 +1,702 @@
+@import '@fontsource-variable/public-sans';
+
+/* Usage over the whole window, in the shared modal frame (.sheet). The panel
+   is as wide as the window allows up to a reading width, so each window's bar
+   runs long; its own face, Public Sans, gives the figures their voice while
+   the colours stay the theme's. */
+.sheet__panel.usage-dialog {
+  --font-usage: 'Public Sans Variable', var(--font-ui);
+  display: flex;
+  flex-direction: column;
+  width: min(1120px, 100%);
+  max-width: none;
+  height: min(820px, 100%);
+  overflow: hidden;
+  font-family: var(--font-usage);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-dialog:focus-visible {
+  outline: none;
+}
+
+.usage-dialog__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 20px;
+  padding: 20px 16px 18px 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.usage-dialog__heading {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.usage-dialog__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 28px;
+}
+
+.usage-dialog__title-icon {
+  flex: none;
+  color: var(--text-2);
+}
+
+.usage-dialog__lead {
+  min-width: 0;
+  margin: 0 0 0 32px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Two or three choices in one track; the chosen one is lifted a tone. */
+.usage-dialog__switch {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: var(--r-xl);
+}
+
+.usage-dialog__switch-option {
+  height: 32px;
+  padding: 0 16px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.usage-dialog__switch.is-small .usage-dialog__switch-option {
+  height: 28px;
+  padding: 0 12px;
+  font-size: var(--t-xs);
+}
+
+.usage-dialog__switch-option:hover {
+  color: var(--text);
+}
+
+.usage-dialog__switch-option[aria-pressed='true'] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.usage-dialog__tools {
+  display: flex;
+  gap: 4px;
+}
+
+.usage-dialog__icon-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-circle);
+  color: var(--text-3);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.usage-dialog__icon-button:hover:not([aria-disabled='true']) {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+.usage-dialog__icon-button[aria-disabled='true'] {
+  cursor: default;
+}
+
+.usage-dialog__icon-button.is-busy svg {
+  animation: usage-dialog-turn 1.2s linear infinite;
+}
+
+@keyframes usage-dialog-turn {
+  to {
+    rotate: 360deg;
+  }
+}
+
+.usage-dialog__switch-option:focus-visible,
+.usage-dialog__icon-button:focus-visible,
+.usage-dialog__retry:focus-visible,
+.usage-dialog__history:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.usage-dialog__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 28px 28px;
+}
+
+.usage-dialog__empty {
+  margin: 0;
+  padding: 24px 0;
+  color: var(--text-2);
+  font-size: var(--t-md);
+  line-height: 22px;
+}
+
+.usage-dialog__notice {
+  margin: 0 0 16px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.usage-dialog__sources {
+  display: grid;
+  gap: 12px;
+}
+
+/* A provider account is one panel, a tone above the dialog, holding its rows. */
+.usage-dialog__source {
+  display: grid;
+  gap: 14px;
+  padding: 18px 24px 22px;
+  background: color-mix(in srgb, var(--text) 3.5%, transparent);
+  border-radius: var(--r-panel);
+}
+
+.usage-dialog__source-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 28px;
+}
+
+/* The provider's own mark colour tells two panels apart at a glance; the
+   bars stay in the text ink. */
+.usage-dialog__mark {
+  flex: none;
+  color: var(--usage-ink, var(--text-2));
+}
+
+.usage-dialog__source-name {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--t-lg);
+  font-weight: 600;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-dialog__account {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.usage-dialog__status {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+}
+
+.usage-dialog__retry {
+  flex: none;
+  height: 28px;
+  margin-left: auto;
+  padding: 0 12px;
+  background: var(--surface-3);
+  border: 0;
+  border-radius: var(--r-pill);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-xs);
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.usage-dialog__status + .usage-dialog__retry {
+  margin-left: 0;
+}
+
+.usage-dialog__retry:hover {
+  background: var(--menu-hover);
+}
+
+/* A window: its name and reset on the left, the long bar, and what is left
+   as the largest type on the screen at the right end. */
+.usage-dialog__row {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) minmax(0, 1fr) 128px;
+  align-items: center;
+  column-gap: 32px;
+  min-height: 60px;
+}
+
+.usage-dialog__row-name {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.usage-dialog__row-label {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 550;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-dialog__reset {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The fill is a full-width block slid left by what is spent, so its leading
+   end keeps its corner at every length and it moves by transform alone; the
+   track clips it, and the pace tick sits outside the clip. */
+.usage-dialog__bar {
+  position: relative;
+  height: 22px;
+}
+
+.usage-dialog__track {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: var(--r-md);
+}
+
+.usage-dialog__fill {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--text) 88%, transparent);
+  border-radius: inherit;
+  transform: translateX(calc((var(--left, 0) - 1) * 100%));
+  transition: transform var(--dur-slow) var(--ease-out);
+  animation: usage-dialog-fill 700ms var(--ease-out) both;
+}
+
+.usage-dialog__row[data-low] .usage-dialog__fill {
+  background: var(--error);
+}
+
+@keyframes usage-dialog-fill {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+.usage-dialog__pace {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  width: 2px;
+  margin-left: -1px;
+  background: color-mix(in srgb, var(--text) 55%, transparent);
+  border-radius: var(--r-xs);
+}
+
+.usage-dialog__bar.is-checking {
+  animation: usage-dialog-breathe 1.4s var(--ease-out) infinite alternate;
+}
+
+@keyframes usage-dialog-breathe {
+  from {
+    opacity: 0.45;
+  }
+}
+
+.usage-dialog__amount {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.usage-dialog__figure {
+  color: var(--text);
+  font-size: 34px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 38px;
+  white-space: nowrap;
+}
+
+.usage-dialog__percent {
+  margin-left: 1px;
+  color: var(--text-2);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.usage-dialog__unit {
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
+.usage-dialog__row[data-low] :is(.usage-dialog__figure, .usage-dialog__percent) {
+  color: var(--error);
+}
+
+.usage-dialog__value {
+  justify-self: end;
+  color: var(--text);
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+
+/* A model under its provider: the same columns, a quieter bar and figure. */
+.usage-dialog__row.is-minor {
+  min-height: 40px;
+}
+
+.usage-dialog__row.is-minor .usage-dialog__row-label {
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
+.usage-dialog__row.is-minor .usage-dialog__bar {
+  height: 8px;
+}
+
+.usage-dialog__row.is-minor .usage-dialog__track {
+  border-radius: var(--r-xs);
+}
+
+.usage-dialog__row.is-minor .usage-dialog__fill {
+  background: color-mix(in srgb, var(--text) 45%, transparent);
+}
+
+.usage-dialog__row.is-minor .usage-dialog__figure {
+  color: var(--text-2);
+  font-size: var(--t-lg);
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 22px;
+}
+
+/* Several accounts of one provider: a table with a line per account and a
+   column per window, under the pool's long bars. Lines are split by a faint
+   rule; the bars here are short and quiet so eight accounts stay calm. */
+.usage-dialog__accounts {
+  width: 100%;
+  margin-top: 6px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.usage-dialog__accounts th:first-child {
+  width: min(260px, 32%);
+}
+
+.usage-dialog__accounts thead th {
+  padding: 0 0 8px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  text-align: left;
+}
+
+.usage-dialog__accounts tbody tr {
+  border-top: 1px solid color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.usage-dialog__accounts tbody th,
+.usage-dialog__accounts tbody td {
+  padding: 10px 0;
+  font-weight: 400;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.usage-dialog__accounts :is(th, td) + :is(th, td) {
+  padding-left: 28px;
+}
+
+.usage-dialog__account-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.usage-dialog__account-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 550;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The pool's pick for the next chat, a quiet pill beside the name. */
+.usage-dialog__tag {
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: var(--r-pill);
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 20px;
+}
+
+.usage-dialog__account-plan {
+  display: block;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-dialog__cell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 3px;
+}
+
+.usage-dialog__bar.is-compact {
+  height: 10px;
+}
+
+.usage-dialog__bar.is-compact .usage-dialog__track {
+  border-radius: var(--r-sm);
+}
+
+.usage-dialog__cell-figure {
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 650;
+  text-align: right;
+}
+
+.usage-dialog__cell[data-low] .usage-dialog__fill {
+  background: var(--error);
+}
+
+.usage-dialog__cell[data-low] .usage-dialog__cell-figure {
+  color: var(--error);
+}
+
+.usage-dialog__cell-reset {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-dialog__dash {
+  color: var(--text-3);
+}
+
+.usage-dialog__tokens {
+  display: grid;
+  gap: 20px;
+}
+
+/* Token counts run wider than a percentage, so their column does too. */
+.usage-dialog__tokens .usage-dialog__row {
+  grid-template-columns: minmax(140px, 220px) minmax(0, 1fr) 176px;
+}
+
+.usage-dialog__tokens .usage-dialog__row:not(.is-minor) .usage-dialog__figure {
+  font-size: 28px;
+  line-height: 34px;
+}
+
+.usage-dialog__tokens-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.usage-dialog__totals {
+  display: flex;
+  gap: 48px;
+  flex-wrap: wrap;
+}
+
+.usage-dialog__total {
+  display: grid;
+  gap: 2px;
+}
+
+.usage-dialog__total-label {
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.usage-dialog__total-value {
+  color: var(--text);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 32px;
+}
+
+.usage-dialog__source.is-skeleton {
+  gap: 18px;
+}
+
+.usage-dialog__skeleton-label {
+  width: 96px;
+  height: 14px;
+}
+
+.usage-dialog__skeleton-name {
+  width: 160px;
+  height: 22px;
+}
+
+.usage-dialog__skeleton-bar {
+  height: 22px;
+}
+
+.usage-dialog__foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px 10px 28px;
+  border-top: 1px solid var(--line);
+}
+
+.usage-dialog__note {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-dialog__history {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 8px 0 14px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.usage-dialog__history:hover {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+/* Narrow windows: the bar takes its own line under the name and figure. */
+@media (max-width: 760px) {
+  .usage-dialog__head {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-left: 20px;
+  }
+
+  .usage-dialog__switch:not(.is-small) {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .usage-dialog__body {
+    padding: 16px;
+  }
+
+  .usage-dialog__source {
+    padding: 16px;
+  }
+
+  .usage-dialog__row,
+  .usage-dialog__tokens .usage-dialog__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 10px;
+  }
+
+  .usage-dialog__bar {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+
+  .usage-dialog__accounts th:first-child {
+    width: 38%;
+  }
+
+  .usage-dialog__accounts :is(th, td) + :is(th, td) {
+    padding-left: 14px;
+  }
+
+  .usage-dialog__note {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-dialog__fill,
+  .usage-dialog__bar.is-checking,
+  .usage-dialog__icon-button.is-busy svg {
+    animation: none;
+    transition: none;
+  }
+}

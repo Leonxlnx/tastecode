@@ -23,7 +23,10 @@ import {
 } from '@harness/contracts'
 import {
   DEMO_PROJECTS,
+  DEMO_ACCOUNTS_MAX,
   DEMO_PROVIDERS,
+  demoAccountLimits,
+  demoAccounts,
   demoHome,
   demoJoin,
   demoProvider,
@@ -63,6 +66,8 @@ export type DemoServerOptions = {
   now?: () => number
   /** Opt-in usage-limit scenario for exercising the real recovery UI. */
   usageResetMs?: number
+  /** Accounts listed for each provider that holds several; one when absent. */
+  accountsPerProvider?: number
 }
 
 type Handler<M extends MethodName> = (params: ParamsOf<M>) => ResultOf<M> | Promise<ResultOf<M>>
@@ -128,6 +133,7 @@ export class DemoServer {
   #push: DemoPush
   #now: () => number
   #usageResetAt: number | undefined
+  #accountsPerProvider: number
   #timing: DemoTiming
   #projects: DemoProjectState[] = []
   #threads = new Map<string, DemoThread>()
@@ -147,6 +153,10 @@ export class DemoServer {
     this.#now = options.now ?? Date.now
     this.#usageResetAt =
       options.usageResetMs === undefined ? undefined : this.#now() + options.usageResetMs
+    this.#accountsPerProvider = Math.min(
+      DEMO_ACCOUNTS_MAX,
+      Math.max(1, Math.floor(options.accountsPerProvider ?? 1)),
+    )
     this.#timing = { ...DEMO_TIMING, ...options.timing }
     this.platform = options.platform ?? detectDemoPlatform()
     this.home = demoHome(this.platform)
@@ -838,14 +848,20 @@ export class DemoServer {
           (entry) =>
             entry.status.capabilities?.multipleAccounts &&
             (params.provider === undefined || params.provider === entry.status.id),
-        ).map((entry) => ({
-          id: 'default',
-          provider: entry.status.id,
-          label: 'Default',
-          managed: false,
-          email: entry.email,
-          plan: entry.plan,
-        })),
+        ).flatMap((entry) =>
+          this.#accountsPerProvider > 1
+            ? demoAccounts(this.platform, this.home, entry, this.#accountsPerProvider)
+            : [
+                {
+                  id: 'default',
+                  provider: entry.status.id,
+                  label: 'Default',
+                  managed: false,
+                  email: entry.email,
+                  plan: entry.plan,
+                },
+              ],
+        ),
         active: {},
       }),
       'accounts.detect': () => ({ found: [] }),
@@ -912,8 +928,15 @@ export class DemoServer {
 
       'usage.summary': (params) => {
         const id = 'threadId' in params ? this.#thread(params.threadId).provider : params.provider
-        const limits =
-          this.#usageResetAt !== undefined && id === 'claude-code'
+        const accountId = 'accountId' in params ? params.accountId : undefined
+        const listed = demoProvider(id)
+        const accountLimits =
+          accountId !== undefined && listed && this.#accountsPerProvider > 1
+            ? demoAccountLimits(listed, accountId, now())
+            : undefined
+        const limits = accountLimits
+          ? accountLimits
+          : this.#usageResetAt !== undefined && id === 'claude-code'
             ? [
                 {
                   label: 'Session',
@@ -933,8 +956,15 @@ export class DemoServer {
           session: tokens,
           today: { ...tokens, totalTokens: 1_284_000, inputTokens: 1_102_000 },
           limits,
-          limitSource: demoProvider(id)
-            ? { provider: id, status: 'ready', limits, checkedAt: now(), origin: 'read' }
+          limitSource: listed
+            ? {
+                provider: id,
+                ...(accountLimits && accountId !== undefined ? { accountId } : {}),
+                status: 'ready',
+                limits,
+                checkedAt: now(),
+                origin: 'read',
+              }
             : { provider: id, status: 'unavailable', reason: 'unsupported' },
         }
       },

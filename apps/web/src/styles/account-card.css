@@ -1,7 +1,8 @@
 /* The account footer is one raised card rather than a full-bleed rule over a
    row: the rail ends in something soft instead of a hard line. The whole card
-   is the account trigger, so the popup can sit flush with it; the settings
-   gear rides on its right edge as a sibling, because a button cannot nest. */
+   is the account trigger, so the popup can sit flush with it; the usage
+   button and the settings gear ride on its right edge as siblings, because a
+   button cannot nest. */
 /* The prompt bar's language: no flat grey block, but a faint lift over the
    rail, edged by a hairline, with a soft wash only on hover or while open. */
 .account-card {
@@ -42,8 +43,8 @@
 .account-card__trigger.menutrigger {
   width: 100%;
   min-height: 46px;
-  /* Room on the right for the gear, which overlays the card. */
-  padding: 7px 44px 7px 7px;
+  /* Room on the right for the usage button and the gear, which overlay the card. */
+  padding: 7px 76px 7px 7px;
   background: none;
   border-radius: var(--r-card);
   color: var(--rail-text);
@@ -53,6 +54,7 @@
   background: none;
 }
 
+.account-card__usage:focus-visible,
 .account-card__trigger:focus-visible,
 .account-card__settings:focus-visible {
   outline: var(--focus-ring);
@@ -168,10 +170,22 @@
   opacity: 0.75;
 }
 
-.account-card__settings {
+.account-card__settings,
+.account-card__usage {
   position: absolute;
   top: 50%;
   right: 9px;
+  translate: 0 -50%;
+}
+
+/* The usage button is the gear's twin, one step to its left. */
+.account-card__usage {
+  right: 39px;
+}
+
+/* Both carry Material icons at 18px, whose 24px grid leaves the glyph about
+   the size of the rail's 16px outline icons. */
+.account-card__icon {
   display: grid;
   place-items: center;
   width: 28px;
@@ -182,10 +196,12 @@
   border-radius: var(--r-circle);
   color: var(--text-3);
   cursor: pointer;
-  translate: 0 -50%;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
-.account-card__settings:hover {
+.account-card__icon:hover {
   background: var(--menu-hover);
   color: var(--text);
 }

@@ -18,6 +18,7 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | `@fontsource-variable/geist-mono` | Geist Mono variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
 | `@fontsource-variable/inter` | Inter variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
 | `@fontsource-variable/jetbrains-mono` | JetBrains Mono variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
+| `@fontsource-variable/public-sans` | Public Sans variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
 | `@napi-rs/keyring` | OS credential-store integration | MIT | [source](https://github.com/Brooooooklyn/keyring-node) |
 | `@opencode-ai/sdk` | OpenCode adapter client | MIT | [source](https://github.com/anomalyco/opencode) |
 | `@pierre/diffs` | Pull-request diff rendering | Apache-2.0 | [source](https://github.com/pierrecomputer/pierre) |
@@ -52,14 +53,15 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 
 ## Incorporated material
 
-| Project       | Use                                                             | License                                 | Source                                                                      |
-| ------------- | --------------------------------------------------------------- | --------------------------------------- | --------------------------------------------------------------------------- |
-| Codex         | Generated app-server protocol types                             | Apache-2.0                              | [openai/codex](https://github.com/openai/codex)                             |
-| Thinking Orbs | Adapted activity-indicator source                               | [MIT](./licenses/thinking-orbs-MIT.txt) | [Jakubantalik/thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) |
-| cinetic       | Default Agent Skill `cinetic`, shipped unmodified               | [MIT](./licenses/cinetic-MIT.txt)       | [Leonxlnx/cinetic](https://github.com/Leonxlnx/cinetic)                     |
-| taste-skill   | Default Agent Skill `design-taste-frontend`, with a local patch | [MIT](./licenses/taste-skill-MIT.txt)   | [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill)             |
-| taste-skill   | Design app-screen library, rules, `app.css` and `charts.js`     | [MIT](./licenses/taste-skill-MIT.txt)   | [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) v2.5        |
-| cook          | Default Agent Skill `cook`, shipped unmodified                  | [MIT](./licenses/cook-MIT.txt)          | [Leonxlnx/cook](https://github.com/Leonxlnx/cook)                           |
+| Project        | Use                                                             | License                                 | Source                                                                          |
+| -------------- | --------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------- |
+| Codex          | Generated app-server protocol types                             | Apache-2.0                              | [openai/codex](https://github.com/openai/codex)                                 |
+| Thinking Orbs  | Adapted activity-indicator source                               | [MIT](./licenses/thinking-orbs-MIT.txt) | [Jakubantalik/thinking-orbs](https://github.com/Jakubantalik/thinking-orbs)     |
+| cinetic        | Default Agent Skill `cinetic`, shipped unmodified               | [MIT](./licenses/cinetic-MIT.txt)       | [Leonxlnx/cinetic](https://github.com/Leonxlnx/cinetic)                         |
+| taste-skill    | Default Agent Skill `design-taste-frontend`, with a local patch | [MIT](./licenses/taste-skill-MIT.txt)   | [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill)                 |
+| taste-skill    | Design app-screen library, rules, `app.css` and `charts.js`     | [MIT](./licenses/taste-skill-MIT.txt)   | [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) v2.5            |
+| cook           | Default Agent Skill `cook`, shipped unmodified                  | [MIT](./licenses/cook-MIT.txt)          | [Leonxlnx/cook](https://github.com/Leonxlnx/cook)                               |
+| Material Icons | Outlined icon paths in `apps/web/src/ui/MaterialIcon.tsx`       | Apache-2.0                              | [google/material-design-icons](https://github.com/google/material-design-icons) |
 
 The default Agent Skills are pinned to exact commits in `packages/default-skills/skills.json`
 and ship as real files in the app's `resources/default-skills` folder, each with its own

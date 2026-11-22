@@ -92,6 +92,7 @@ import { USAGE_LOW_PERCENT } from '../usage-limits-state.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
+import { MaterialIcon } from './MaterialIcon.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import type { InboxActions } from './InboxSidebar.js'
 import { ProviderIcon } from './ProviderIcon.js'
@@ -301,7 +302,9 @@ function SidebarComponent(props: {
   onOpenSearch: (projectPath?: string) => void
   pullRequestsActive?: boolean | undefined
   onOpenPullRequests?: (() => void) | undefined
-  onOpenSettings: (section?: 'profile') => void
+  onOpenSettings: (section?: 'profile' | 'usage') => void
+  /** Opens usage over the whole window; without it the button opens the Usage page. */
+  onOpenUsage?: (() => void) | undefined
   /** Present only when this build can send feedback. */
   onSendFeedback?: (() => void) | undefined
 }) {
@@ -1058,9 +1061,24 @@ function SidebarComponent(props: {
                 )
               }}
             </Menu>
+            {/* Usage sits beside the gear as its twin: one press opens usage
+                over the whole window, without going through the account popup. */}
             <button
               type="button"
-              className="account-card__settings"
+              className="account-card__usage account-card__icon"
+              aria-label="Usage"
+              title="Usage"
+              onClick={() => {
+                if (props.onOpenUsage) props.onOpenUsage()
+                else props.onOpenSettings('usage')
+                closeOnNarrowViewport()
+              }}
+            >
+              <MaterialIcon name="bar_chart" size={18} />
+            </button>
+            <button
+              type="button"
+              className="account-card__settings account-card__icon"
               aria-label="Settings"
               title="Settings"
               aria-keyshortcuts={shortcutAria(keybindings.settings)}
@@ -1069,7 +1087,7 @@ function SidebarComponent(props: {
                 closeOnNarrowViewport()
               }}
             >
-              <Settings size={16} aria-hidden />
+              <MaterialIcon name="settings" size={18} />
             </button>
           </div>
           {isDesktop ? <AppUpdateNotice /> : null}
