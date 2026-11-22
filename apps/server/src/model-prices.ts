@@ -219,6 +219,9 @@ function rateOf(price: ModelPrice, pricing: ModelRate['pricing']): ModelRate {
 /**
  * The API-equivalent cost of one record. Cache writes cost 1.25 times the
  * input rate for the 5-minute cache and twice it for the 1-hour cache.
+ * `cacheSavingsUsd` is net: what cache reads saved minus that write
+ * surcharge. One record can be negative (it wrote the cache a later record
+ * reads), so a sum is floored at zero only once it is complete.
  */
 export function priceEntry(rate: ModelRate | null, tokens: TokenCounts, longContext: boolean) {
   if (!rate) return { pricing: 'unpriced' as const, estimatedCostUsd: 0, cacheSavingsUsd: 0 }
@@ -232,6 +235,9 @@ export function priceEntry(rate: ModelRate | null, tokens: TokenCounts, longCont
       tokens.outputTokens * rates.output) /
     perMillion
   const cacheSavingsUsd =
-    (tokens.cachedInputTokens * Math.max(rates.input - rates.cachedInput, 0)) / perMillion
+    (tokens.cachedInputTokens * Math.max(rates.input - rates.cachedInput, 0) -
+      tokens.cacheWrite5mInputTokens * rates.input * 0.25 -
+      tokens.cacheWrite1hInputTokens * rates.input) /
+    perMillion
   return { pricing: rate.pricing, estimatedCostUsd, cacheSavingsUsd }
 }

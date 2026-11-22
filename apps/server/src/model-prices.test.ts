@@ -112,6 +112,20 @@ describe('model prices', () => {
     })
   })
 
+  it('nets the cache-write surcharge out of what cache reads saved', () => {
+    const claude = modelRate('claude-opus-4-8', '2026-08-08')!
+    const reads = tokens({ cachedInputTokens: 1_000_000 })
+    expect(priceEntry(claude, reads, false).cacheSavingsUsd).toBeCloseTo(5 - 0.5, 8)
+
+    const traffic = tokens({
+      cachedInputTokens: 1_000_000,
+      cacheWrite5mInputTokens: 1_000_000,
+      cacheWrite1hInputTokens: 1_000_000,
+    })
+    // Reads save 4.50; 5-minute writes cost 0.25 x 5 extra and 1-hour writes 1 x 5.
+    expect(priceEntry(claude, traffic, false).cacheSavingsUsd).toBeCloseTo(4.5 - 1.25 - 5, 8)
+  })
+
   it('cites a source for every price and lists each model once per effective date', () => {
     const seen = new Set<string>()
     for (const price of MODEL_PRICES) {
