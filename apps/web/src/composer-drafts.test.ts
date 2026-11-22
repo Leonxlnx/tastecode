@@ -3,8 +3,10 @@ import {
   composerDraftKey,
   emptyComposerDraft,
   isEmptyComposerDraft,
+  joinComposerDraft,
   moveComposerDraft,
   NEW_CHAT_DRAFT_KEY,
+  parkedNewChatDraftKey,
   readComposerDraft,
   upsertComposerDraft,
   type ComposerDraft,
@@ -65,5 +67,47 @@ describe('composer drafts', () => {
     upsertComposerDraft(drafts, 'pending:2', { text: 'New words' })
     moveComposerDraft(drafts, 'pending:2', 'thread-2')
     expect(readComposerDraft(drafts, 'thread-2')).toEqual(draft({ text: 'New words' }))
+  })
+
+  it('joins a draft behind the one already there, keeping both', () => {
+    const drafts = new Map<string, ComposerDraft>()
+    upsertComposerDraft(drafts, NEW_CHAT_DRAFT_KEY, {
+      text: 'Live words',
+      attachments: ['/work/a.png'],
+      resources: [skill],
+    })
+    upsertComposerDraft(drafts, 'waiting', {
+      text: 'Waiting words',
+      attachments: ['/work/a.png', '/work/b.png'],
+      resources: [skill],
+    })
+
+    joinComposerDraft(drafts, 'waiting', NEW_CHAT_DRAFT_KEY)
+    expect(drafts.has('waiting')).toBe(false)
+    expect(readComposerDraft(drafts, NEW_CHAT_DRAFT_KEY)).toEqual(
+      draft({
+        text: 'Live words\n\nWaiting words',
+        attachments: ['/work/a.png', '/work/b.png'],
+        resources: [skill],
+      }),
+    )
+  })
+
+  it('joins onto an empty key as a plain move, and ignores a missing or same key', () => {
+    const drafts = new Map<string, ComposerDraft>()
+    upsertComposerDraft(drafts, 'from', { text: 'Only words' })
+    joinComposerDraft(drafts, 'from', 'to')
+    expect(drafts.has('from')).toBe(false)
+    expect(readComposerDraft(drafts, 'to')).toEqual(draft({ text: 'Only words' }))
+
+    joinComposerDraft(drafts, 'missing', 'to')
+    joinComposerDraft(drafts, 'to', 'to')
+    expect(readComposerDraft(drafts, 'to')).toEqual(draft({ text: 'Only words' }))
+  })
+
+  it("keeps a project's waiting New chat draft apart from the live one and from chats", () => {
+    expect(parkedNewChatDraftKey('/work/project')).not.toBe(NEW_CHAT_DRAFT_KEY)
+    expect(parkedNewChatDraftKey('/work/project')).not.toBe(parkedNewChatDraftKey('/work/other'))
+    expect(parkedNewChatDraftKey('/work/project').startsWith('pending:')).toBe(false)
   })
 })
