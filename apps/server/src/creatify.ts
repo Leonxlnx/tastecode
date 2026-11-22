@@ -21,6 +21,11 @@ export function isCreatifyAttachment(path: string): boolean {
  */
 export const CREATIFY_NOTE_OPEN = '\n\n<tastecode_creatify>\nCreatify is on for the request above: '
 export const CREATIFY_NOTE_CLOSE = '\n</tastecode_creatify>'
+/** How the note's text starts and ends; a block between the tags that does not is the user's. */
+const CREATIFY_NOTE_FIRST =
+  'it is creative work, where how the result looks, moves, sounds and feels matters as much as whether it works.\n'
+const CREATIFY_NOTE_LAST =
+  '\nDecide open details yourself and say briefly what you chose. Ask the user only when the work cannot start without an answer.'
 
 export type CreatifySkill = {
   name: string
@@ -39,19 +44,25 @@ export type CreatifySkill = {
 export function creatifyNote(skills: readonly CreatifySkill[]): string {
   if (skills.length === 0) return ''
   return [
-    `${CREATIFY_NOTE_OPEN}it is creative work, where how the result looks, moves, sounds and feels matters as much as whether it works.`,
+    `${CREATIFY_NOTE_OPEN}${CREATIFY_NOTE_FIRST.trimEnd()}`,
     "Before you start, choose the skill or skills below that fit the request and use them. They ship with TasteCode: load one through your skill tool where it lists TasteCode's skills, otherwise read its SKILL.md in full and follow it.",
     ...skills.map(
       (skill) => `- ${skill.name}${skill.summary ? `: ${skill.summary}` : ''} (${skill.file})`,
     ),
     'Combine skills when the request spans them, such as a game demo that also needs sound. When none fits, ignore this note and do the request as usual.',
-    `Decide open details yourself and say briefly what you chose. Ask the user only when the work cannot start without an answer.${CREATIFY_NOTE_CLOSE}`,
+    `${CREATIFY_NOTE_LAST.trimStart()}${CREATIFY_NOTE_CLOSE}`,
   ].join('\n')
 }
 
-/** The user's words of a prompt that carried the note; any other text as it is. */
+/**
+ * The user's words of a prompt that carried the note; any other text as it is. Only the
+ * note as creatifyNote writes it comes off: a user may quote the tags in their own words.
+ */
 export function withoutCreatifyNote(text: string): string {
-  if (!text.trimEnd().endsWith(CREATIFY_NOTE_CLOSE)) return text
-  const open = text.lastIndexOf(CREATIFY_NOTE_OPEN)
-  return open === -1 ? text : text.slice(0, open)
+  const trimmed = text.trimEnd()
+  if (!trimmed.endsWith(`${CREATIFY_NOTE_LAST}${CREATIFY_NOTE_CLOSE}`)) return text
+  const open = trimmed.lastIndexOf(CREATIFY_NOTE_OPEN)
+  if (open === -1 || !trimmed.startsWith(CREATIFY_NOTE_FIRST, open + CREATIFY_NOTE_OPEN.length))
+    return text
+  return text.slice(0, open)
 }

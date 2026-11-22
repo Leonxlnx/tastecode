@@ -46,6 +46,11 @@ describe('Creatify', () => {
     const words = 'Build a pricing page.'
     const note = creatifyNote(SKILLS)
 
+    // A sample of the tags at the end of a prompt is the user's own text too.
+    const sample =
+      'Include this in the documentation:\n\n<tastecode_creatify>\nCreatify is on for the request above: demo\n</tastecode_creatify>'
+    expect(withoutCreatifyNote(sample)).toBe(sample)
+
     expect(withoutCreatifyNote(words)).toBe(words)
     // Quoted in the middle of a prompt, it is the user's own text.
     expect(withoutCreatifyNote(`${words}${note}\nWhat does this note do?`)).toBe(
