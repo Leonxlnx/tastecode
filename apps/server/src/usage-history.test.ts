@@ -160,47 +160,65 @@ describe('local usage history', () => {
     )
   })
 
-  it('reports nothing saved when cache writes cost more than cache reads saved', async () => {
-    const root = temporaryDirectory()
-    const codexRoot = path.join(root, 'codex')
-    const claudeRoot = path.join(root, 'claude')
-    mkdirSync(codexRoot, { recursive: true })
-    mkdirSync(claudeRoot, { recursive: true })
-    writeJsonLines(path.join(claudeRoot, 'session.jsonl'), [
-      claudeAssistantRecord({
-        id: 'write',
-        model: 'claude-opus-4-8',
-        sessionId: 'claude-session',
-        input: 10,
-        cacheWrite: 100_000,
-        cacheWrite1h: 100_000,
-        output: 10,
-      }),
-      claudeAssistantRecord({
-        id: 'read',
-        model: 'claude-opus-4-8',
-        sessionId: 'claude-session',
-        input: 10,
-        cached: 50_000,
-        output: 10,
-      }),
-    ])
-    const service = usageService({
-      cacheFile: path.join(root, 'cache', 'usage.json'),
-      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
-      now: () => new Date('2026-08-08T12:00:00.000Z'),
-    })
-    const history = await settledHistory(service, '7d')
-
-    expect(history.totals.cachedInputTokens).toBe(50_000)
-    expect(history.totals.cacheSavingsUsd).toBe(0)
-    for (const totals of [
-      ...history.providers.map((provider) => provider.totals),
-      ...history.models.map((model) => model.totals),
-      ...history.daily.map((day) => day.totals),
-    ]) {
-      expect(totals.cacheSavingsUsd).toBe(0)
+  describe('net caching savings across records', () => {
+    // The write and the read are separate sessions, so they stay separate records
+    // and the net is summed across records instead of within one merged record.
+    const historyOf = async (cachedRead: number) => {
+      const root = temporaryDirectory()
+      const codexRoot = path.join(root, 'codex')
+      const claudeRoot = path.join(root, 'claude')
+      mkdirSync(codexRoot, { recursive: true })
+      mkdirSync(claudeRoot, { recursive: true })
+      writeJsonLines(path.join(claudeRoot, 'writer.jsonl'), [
+        claudeAssistantRecord({
+          id: 'write',
+          model: 'claude-opus-4-8',
+          sessionId: 'writer-session',
+          input: 10,
+          cacheWrite: 100_000,
+          cacheWrite1h: 100_000,
+          output: 10,
+        }),
+      ])
+      writeJsonLines(path.join(claudeRoot, 'reader.jsonl'), [
+        claudeAssistantRecord({
+          id: 'read',
+          model: 'claude-opus-4-8',
+          sessionId: 'reader-session',
+          input: 10,
+          cached: cachedRead,
+          output: 10,
+        }),
+      ])
+      const service = usageService({
+        cacheFile: path.join(root, 'cache', 'usage.json'),
+        sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
+        now: () => new Date('2026-08-08T12:00:00.000Z'),
+      })
+      const history = await settledHistory(service, '7d')
+      expect(history.sessionCount).toBe(2)
+      return history
     }
+
+    it("subtracts one record's write surcharge from another record's read savings", async () => {
+      // Reads save 200K x (5 - 0.5); the 1-hour write costs 100K x 5 extra.
+      const history = await historyOf(200_000)
+      expect(history.totals.cacheSavingsUsd).toBeCloseTo(0.9 - 0.5, 8)
+      expect(history.models[0]?.totals.cacheSavingsUsd).toBeCloseTo(0.4, 8)
+    })
+
+    it('reports nothing saved when cache writes cost more than cache reads saved', async () => {
+      const history = await historyOf(50_000)
+      expect(history.totals.cachedInputTokens).toBe(50_000)
+      expect(history.totals.cacheSavingsUsd).toBe(0)
+      for (const totals of [
+        ...history.providers.map((provider) => provider.totals),
+        ...history.models.map((model) => model.totals),
+        ...history.daily.map((day) => day.totals),
+      ]) {
+        expect(totals.cacheSavingsUsd).toBe(0)
+      }
+    })
   })
 
   it('counts the first cumulative snapshot and reparses a session after it grows', async () => {
