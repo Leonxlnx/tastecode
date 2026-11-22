@@ -3745,7 +3745,8 @@ function webSearchQuery(item: Item): string | undefined {
 function commandLabel(command: string | undefined): string {
   const text = inlineActivityText(command)
   const wrapped = /^(?:\S*[\\/])?(?:ba|z)?sh(?:\.exe)? -l?c (['"])([\s\S]*)\1$/.exec(text)
-  const inner = wrapped?.[2]?.trim() || powerShellCommand(text) || text
+  const inner =
+    (wrapped && unquotedPayload(wrapped[1], wrapped[2])) || powerShellCommand(text) || text
   // Claude Code starts many commands with `cd "<absolute project path>" &&`.
   // In a one-line row that path used up the width and the part that does the
   // work was cut off, so the label starts at the command after it. A relative
@@ -3760,10 +3761,16 @@ function commandLabel(command: string | undefined): string {
  */
 function powerShellCommand(text: string): string | undefined {
   const wrapped = POWERSHELL_WRAPPER.exec(text)
-  if (!wrapped) return undefined
-  const [, quote, payload = ''] = wrapped
-  // A double-quoted payload escapes `"`, `\`, `$` and backticks with a backslash;
-  // a single-quoted one closes, quotes and reopens around each `'` it contains.
+  return wrapped ? unquotedPayload(wrapped[1], wrapped[2]) : undefined
+}
+
+/**
+ * The command inside a wrapper's quotes, as it ran. The line is joined
+ * POSIX-style whatever the shell: a double-quoted payload escapes `"`, `\`,
+ * `$` and backticks with a backslash; a single-quoted one closes, quotes and
+ * reopens around each `'` it contains.
+ */
+function unquotedPayload(quote: string | undefined, payload = ''): string | undefined {
   const inner =
     quote === '"' ? payload.replace(/\\(["\\$`])/g, '$1') : payload.replace(/'"'"'|'\\''/g, "'")
   return inner.trim() || undefined
