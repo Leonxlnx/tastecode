@@ -1330,6 +1330,38 @@ describe('web client', () => {
     ).toBe(signedIn ? 'ready' : 'setup-required')
   })
 
+  it('lets a custom ACP harness send while a stock ACP agent still needs its sign-in', () => {
+    const providers = [
+      ...contractValidServerProviders(),
+      { ...contractValidServerProviders()[0]!, id: 'acp' as const, displayName: 'ACP' },
+    ]
+    const choice = (agent: string, harness: boolean) => ({
+      key: `acp:${agent}:automatic`,
+      provider: 'acp' as const,
+      sourceName: agent,
+      mark: 'acp' as const,
+      agent: { id: agent, name: agent },
+      ...(harness ? { harness: true as const } : {}),
+      model: {
+        id: '',
+        displayName: 'Default',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    })
+    const resolve = (selectedChoice: ReturnType<typeof choice>) =>
+      resolveSendAvailability({
+        catalog: 'ready',
+        serverBoundSession: false,
+        selectedChoice,
+        providerStatuses: providers,
+        accountCheck: { provider: 'acp', state: 'ready', account: { signedIn: false } },
+      })
+    expect(resolve(choice('design-replay', true))).toBe('ready')
+    expect(resolve(choice('devin', false))).toBe('setup-required')
+  })
+
   it('keeps Send available when the account could not be confirmed', () => {
     type SendInput = Parameters<typeof resolveSendAvailability>[0]
     const resolve = (
@@ -3491,6 +3523,31 @@ describe('web client', () => {
     ).toBeTruthy()
   })
 
+  it('opens the listed project when the folder was added under another spelling', async () => {
+    serverProjects = [
+      { path: '/work/site', name: 'site', pinned: false, createdAt: 0, sessions: [] },
+      { path: '/work/other', name: 'other', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    pickFolder.mockResolvedValue('/work/site/')
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      // The server answers with the project it already lists for this folder.
+      if (method === 'projects.add')
+        return Promise.resolve({ path: '/work/site', name: 'site', pinned: false, createdAt: 0 })
+      return request(method, params)
+    })
+
+    render(<App />)
+    await waitFor(() => expect(sidebarProps().projects).toHaveLength(2))
+    act(() => sidebarProps().onAddProject())
+
+    expect(
+      await screen.findByRole('heading', { name: 'What should we build in site?' }),
+    ).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('projects.add', { path: '/work/site/' })
+    expect(sidebarProps().activeProjectPath).toBe('/work/site')
+  })
+
   it.each(['projects.add', 'projects.list'])(
     'reports a failed %s when adding a project',
     async (failedMethod) => {
@@ -3989,6 +4046,69 @@ describe('web client', () => {
           model: 'openrouter/deepseek-v3.2',
           effort: 'high',
         }),
+      ),
+    )
+  })
+
+  it('offers a custom ACP harness, which the provider roster does not list, and starts sessions on it', async () => {
+    serverProviders = [
+      ...serverProviders,
+      { ...serverProviders[0]!, id: 'acp', displayName: 'ACP' },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'harnesses.list') {
+        return Promise.resolve({
+          harnesses: [
+            {
+              id: 'design-replay',
+              displayName: 'Design replay',
+              provider: 'acp',
+              command: 'node',
+              args: ['agent.mjs'],
+            },
+          ],
+        })
+      }
+      if (
+        method === 'models.list' &&
+        methods['models.list'].params.parse(params).agent === 'design-replay'
+      ) {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'replay',
+              displayName: 'Replay',
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'acp',
+        agent: 'design-replay',
+      }),
+    )
+    expect(
+      (await screen.findByRole('button', { name: 'Model and reasoning' })).textContent,
+    ).toContain('Replay')
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use my own ACP agent' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ provider: 'acp', agent: 'design-replay', model: 'replay' }),
       ),
     )
   })
@@ -16222,6 +16342,33 @@ describe('split view', () => {
 
     await waitFor(() => expect(lastComposer(false).threadId).toBe('left-thread'))
     expect(lastComposer(true).threadId).toBe('right-thread')
+  })
+  it('shows a prompt the server sent back in its own pane after focus moved away', async () => {
+    const request = transport.request.getMockImplementation()!
+    let rejectSend!: (error: Error) => void
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.sendTurn' && rpcCount('thread.sendTurn') === 1)
+        return new Promise((_resolve, reject) => (rejectSend = reject))
+      return request(method, params)
+    })
+    await openSplit()
+    const composerIn = (title: string) =>
+      within(pane(title)).getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    fireEvent.change(composerIn('Left chat'), { target: { value: 'Words for the left chat' } })
+    fireEvent.keyDown(composerIn('Left chat'), { key: 'Enter' })
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+
+    // Focus moves to the other pane before the server turns the prompt down.
+    fireEvent.pointerDown(transcriptIn('Right chat'), { button: 0 })
+    await waitFor(() => expect(isFocused('Right chat')).toBe(true))
+    act(() => rejectSend(new Error('rejected')))
+
+    await waitFor(() => expect(composerIn('Left chat').value).toBe('Words for the left chat'))
+    fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    expect(composerIn('Left chat').value).toBe('Words for the left chat')
   })
   it('answers an approval in the unfocused pane on that pane’s chat', async () => {
     await openSplit()

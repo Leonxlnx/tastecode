@@ -266,7 +266,10 @@ class Replay {
       update.rawOutput === undefined
     )
       item.text = this.#toolLabels.get(id) ?? name
-    if (parts.attachments.length) item.attachments = parts.attachments
+    // The transcript never shows a tool's attachments, and the live item carries none.
+    // An inline image here was only stored and sent on every open; references stay.
+    const references = parts.attachments.filter((ref) => !ref.startsWith('data:'))
+    if (references.length) item.attachments = references
     if (update.status === 'completed' || update.status === 'failed') {
       item.status =
         update.status === 'failed' || (exitCode !== undefined && exitCode !== 0)

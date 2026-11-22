@@ -1,3 +1,5 @@
+import { sliceCodeUnits } from '../slice-code-units.js'
+
 /**
  * Every adapter writes a tool call into `Item.text` the same way, so the
  * transcript can read any provider without knowing which one it was:
@@ -77,7 +79,7 @@ export function toolArgumentSnippet(args: ToolCall['args'], limit = 72): string 
   const value = candidates.find((entry) => typeof entry === 'string' && entry.trim().length > 0)
   if (typeof value !== 'string') return undefined
   const oneLine = value.replace(/\s+/g, ' ').trim()
-  return oneLine.length > limit ? `${oneLine.slice(0, limit - 1).trimEnd()}…` : oneLine
+  return oneLine.length > limit ? `${sliceCodeUnits(oneLine, limit - 1).trimEnd()}…` : oneLine
 }
 
 const PREFERRED_ARGUMENT_KEYS = [

@@ -217,9 +217,19 @@ function entry(row: Row, sources: boolean): IndexedSession | null {
       createdAt: Number(row.created),
       updatedAt: Number(row.updated),
       revision: String(row.updated),
-      locator: row.rollout_path,
+      locator: withoutExtendedPrefix(row.rollout_path),
     },
   }
+}
+
+/**
+ * A Windows rollout path in its plain form. Threads started through Codex's app server can
+ * record the extended-length form (`\\?\E:\…`, `\\?\UNC\server\…`); `path.resolve` keeps
+ * that prefix, so the row matched no listed rollout and its title and name went unused.
+ */
+function withoutExtendedPrefix(file: string): string {
+  if (file.startsWith('\\\\?\\UNC\\')) return `\\\\${file.slice(8)}`
+  return file.startsWith('\\\\?\\') ? file.slice(4) : file
 }
 
 function sameEntry(a: IndexedSession | null, b: IndexedSession | null): boolean {

@@ -37,6 +37,8 @@ const SEARCH_PAGE_SIZE = 20
 // A page that still times out is asked for again in this smaller size.
 const SEARCH_RETRY_PAGE_SIZE = 5
 const METADATA_OPTIONS_LIMIT = 1_000
+/** The `per_page` every metadata endpoint asks for. */
+const METADATA_PAGE_SIZE = 100
 const FILES_PAGE_SIZE = 30
 const REVIEW_THREAD_LIMIT = 500
 const DEFAULT_OUTPUT_LIMIT = 32 * 1024 * 1024
@@ -433,6 +435,13 @@ export class PullRequestService {
   #reviewThreadsCache = new Map<string, Cache<ReviewThreadsResult>>()
   #projectCache: (Cache<Map<string, string>> & { projectKey: string }) | undefined
   #listInFlight: { projectKey: string; promise: Promise<PullRequestListResult> } | undefined
+  /**
+   * Actions taken on list rows, numbered. A list read that started before one
+   * applies it to its rows when it lands, or it would put the row back as it was
+   * (a merged pull request open again) in the cache and in the window.
+   */
+  #listActions: Array<{ seq: number; target: string; action: PullRequestAction }> = []
+  #listActionSeq = 0
   #detailInFlight = new Map<string, Promise<PullRequestDetail>>()
   #filesInFlight = new Map<string, Promise<PullRequestFilesResult>>()
   #metadataOptionsInFlight = new Map<string, Promise<PullRequestMetadataOptions>>()
@@ -719,10 +728,16 @@ export class PullRequestService {
         message = action.rebase ? 'Branch rebased' : 'Base branch merged into pull request'
         break
 
-      case 'rerun_checks':
-        await this.#rerunChecks(repository, url, action.failedOnly)
+      case 'rerun_checks': {
+        const rerun = await this.#rerunChecks(repository, url, action.failedOnly)
+        if (rerun) {
+          // Other runs may have restarted: the cached checks are stale either way.
+          this.#invalidate(repository, number, action)
+          throw rerun.failure
+        }
         message = action.failedOnly ? 'Failed checks restarted' : 'Checks restarted'
         break
+      }
 
       case 'merge':
       case 'enable_auto_merge':
@@ -815,19 +830,25 @@ export class PullRequestService {
     return value
   }
 
+  /**
+   * One page at a time, up to the limit. `gh api --paginate` read every page
+   * before the limit applied, and a repository with thousands of branches ran
+   * into gh's timeout, leaving the picker empty.
+   */
   async #loadMetadataPages<T>(
     endpoint: string,
     itemSchema: z.ZodType<T>,
   ): Promise<{ items: T[]; truncated: boolean }> {
-    const output = await this.#run(['api', endpoint, '--paginate', '--slurp'], {
-      maxBytes: 16 * 1024 * 1024,
-    })
-    const pages = parseJson(
-      output,
-      `metadata options from ${endpoint}`,
-      z.array(z.array(itemSchema)),
-    )
-    const items = pages.flat()
+    const items: T[] = []
+    for (let page = 1; ; page += 1) {
+      const output = await this.#run(['api', `${endpoint}&page=${page}`], {
+        maxBytes: 16 * 1024 * 1024,
+      })
+      const entries = parseJson(output, `metadata options from ${endpoint}`, z.array(itemSchema))
+      if (items.length >= METADATA_OPTIONS_LIMIT) return { items, truncated: entries.length > 0 }
+      items.push(...entries)
+      if (entries.length < METADATA_PAGE_SIZE) break
+    }
     return {
       items: items.slice(0, METADATA_OPTIONS_LIMIT),
       truncated: items.length > METADATA_OPTIONS_LIMIT,
@@ -839,6 +860,7 @@ export class PullRequestService {
     projectKey: string,
     refresh: boolean,
   ): Promise<PullRequestListResult> {
+    const startedAfter = this.#listActionSeq
     const account = await this.#account(refresh)
     if (!account.authenticated) {
       const value = { account, items: [], fetchedAt: this.#now(), truncated: false }
@@ -883,9 +905,18 @@ export class PullRequestService {
         ...(localProjectPath ? { localProjectPath } : {}),
       })
     }
-    const items = [...combined.values()].sort(
-      (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
-    )
+    const later = this.#listActions.filter(({ seq }) => seq > startedAfter)
+    const items = [...combined.values()]
+      .map((item) =>
+        later.reduce(
+          (row, { target, action }) =>
+            targetKey(row.repository, row.number) === target
+              ? applyActionToListItem(row, action)
+              : row,
+          item,
+        ),
+      )
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
     const value = {
       account,
       items,
@@ -1240,7 +1271,15 @@ export class PullRequestService {
               authenticated: false,
               error: 'GitHub CLI did not return an account',
             }
-      } catch {
+      } catch (error) {
+        if (!signedOut(error)) {
+          // Offline, a slow GitHub or a rate limit says nothing about the sign-in. Keep
+          // the account last read, or fail this read, rather than cache a sign-out that
+          // empties the list and makes the user's own pull requests read as others'.
+          const known = this.#accountCache?.value
+          if (known?.authenticated) return known
+          throw error
+        }
         value = {
           available: true,
           authenticated: false,
@@ -1333,7 +1372,12 @@ export class PullRequestService {
     return pending
   }
 
-  async #rerunChecks(repository: string, url: string, failedOnly: boolean): Promise<void> {
+  /** Restarts what it can; the error of a run that would not restart comes back, not thrown. */
+  async #rerunChecks(
+    repository: string,
+    url: string,
+    failedOnly: boolean,
+  ): Promise<{ failure: unknown } | undefined> {
     const output = await this.#run([
       'pr',
       'checks',
@@ -1343,13 +1387,19 @@ export class PullRequestService {
     ])
     const checks = parseJson(output, 'pull-request checks', z.array(CheckRunSchema))
     const runIds = new Set<string>()
+    // GitHub restarts a run only once all of its jobs have ended, and one
+    // that still runs is running already.
+    const running = new Set<string>()
     for (const check of checks) {
-      if (failedOnly && check.bucket !== 'fail' && check.bucket !== 'cancel') continue
       const runId = /\/actions\/runs\/(\d+)/.exec(check.link ?? '')?.[1]
-      if (runId) runIds.add(runId)
+      if (!runId) continue
+      if (check.bucket === 'pending') running.add(runId)
+      if (failedOnly && check.bucket !== 'fail' && check.bucket !== 'cancel') continue
+      runIds.add(runId)
     }
+    for (const runId of running) runIds.delete(runId)
     if (runIds.size === 0) throw new Error('No GitHub Actions runs are available to restart')
-    await Promise.all(
+    const results = await Promise.allSettled(
       [...runIds].map((runId) =>
         this.#run([
           'run',
@@ -1361,10 +1411,15 @@ export class PullRequestService {
         ]),
       ),
     )
+    const failed = results.find((result) => result.status === 'rejected')
+    return failed ? { failure: failed.reason } : undefined
   }
 
   #invalidate(repository: string, number: number, action: PullRequestAction): void {
     const target = targetKey(repository, number)
+    this.#listActions.push({ seq: ++this.#listActionSeq, target, action })
+    // Only reads still in flight need them; a few dozen covers any burst of actions.
+    if (this.#listActions.length > 64) this.#listActions.splice(0, this.#listActions.length - 64)
     const cachedList = this.#listCache
     if (cachedList) {
       const items = cachedList.value.items.map((item) =>
@@ -2095,6 +2150,15 @@ function searchTimedOut(error: unknown): boolean {
 }
 
 const GITHUB_TIMEOUT_MESSAGE = 'GitHub did not respond in time'
+
+/**
+ * Whether gh failed because nobody is signed in: no token at all ("… please run: gh auth
+ * login") or one GitHub refuses ("gh: Bad credentials (HTTP 401)", as gh says it).
+ */
+function signedOut(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /gh auth login|HTTP 401|not logged in/i.test(message)
+}
 
 function firstUsefulLine(value: string): string {
   return (

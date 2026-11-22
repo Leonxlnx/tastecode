@@ -4,9 +4,11 @@ import { ThreadModel } from '../state/thread-model'
 import {
   approvalView,
   buildRows,
+  firstLine,
   relative,
   rowView,
   stepRuns,
+  commandTitle,
   stepView,
   summarize,
   toolName,
@@ -149,6 +151,25 @@ describe('thread rows', () => {
     ).toMatchObject({ kind: 'read', title: 'Read a.ts' })
   })
 
+  it('names a command without the shell that wrapped it, as the desktop does', () => {
+    // As Codex reports them: the argv joined into one POSIX-quoted line.
+    expect(commandTitle("/bin/zsh -lc 'npm test'")).toBe('npm test')
+    expect(commandTitle(`/bin/zsh -lc 'rg -n '"'"'focus ring'"'"' src'`)).toBe(
+      "rg -n 'focus ring' src",
+    )
+    expect(
+      commandTitle(
+        '"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe" -Command \'git diff -- index.html\'',
+      ),
+    ).toBe('git diff -- index.html')
+    // Claude Code's cd into the project, which a relative cd is not.
+    expect(commandTitle('cd "/Users/me/app" && pnpm build')).toBe('pnpm build')
+    expect(commandTitle('cd web && pnpm build')).toBe('cd web && pnpm build')
+    expect(
+      stepView(step({ id: 'c', type: 'command', command: "bash -lc 'ls -la'" })),
+    ).toMatchObject({ kind: 'command', title: 'ls -la' })
+  })
+
   it('summarizes steps of every kind in reading order', () => {
     expect(
       summarize([
@@ -159,6 +180,13 @@ describe('thread rows', () => {
       ]),
     ).toBe('Edited 1 file, ran 1 command and used 2 tools')
     expect(summarize([step({ id: '1', type: 'reasoning' })])).toBe('Thought it through')
+  })
+
+  it('cuts a long title before an emoji across the limit, not through it', () => {
+    expect(toolTitle(`WebSearch\n{"query":"${'q'.repeat(58)}🔎 more"}`)).toBe(
+      `Web search ${'q'.repeat(58)}…`,
+    )
+    expect(firstLine(`${'a'.repeat(119)}🎉 and more`)).toBe(`${'a'.repeat(119)}…`)
   })
 
   it('names a tool call after the thing it acted on', () => {

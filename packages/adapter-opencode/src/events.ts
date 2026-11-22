@@ -288,6 +288,8 @@ export class OpenCodeEventMapper {
     }
     if (part.type === 'tool') return this.#tool(part)
     if (part.type === 'step-finish') {
+      // The finished answer can arrive before its step, and a part can be sent again.
+      if (this.#usageReported.has(part.messageID)) return []
       this.#usageReported.add(part.messageID)
       return [usage(part.tokens, part.cost, this.#messageModels.get(part.messageID))]
     }

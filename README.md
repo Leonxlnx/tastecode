@@ -2,11 +2,11 @@
 
 # TasteCode
 
-[Download Windows](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-win-x64.exe) · [Download macOS](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-mac-arm64.dmg)
+[Download Windows](https://github.com/Leonxlnx/tastecode/releases/download/v0.5.1/TasteCode-0.5.1-win-x64.exe) · [Download macOS](https://github.com/Leonxlnx/tastecode/releases/download/v0.5.1/TasteCode-0.5.1-mac-arm64.dmg)
 
 > A local desktop workspace for AI coding agents, with Design Mode built in.
 
-**Early beta (`0.1.1`).** Expect bugs, rough edges, and changes as we keep working
+**Early beta (`0.5.1`).** Expect bugs, rough edges, and changes as we keep working
 on TasteCode. Please [report any issues](https://github.com/Leonxlnx/tastecode/issues) you find.
 
 ## What TasteCode does
@@ -29,8 +29,8 @@ pretending every provider supports the same features.
 
 ## Download
 
-- [Download for Windows x64 (.exe)](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-win-x64.exe)
-- [Download for macOS Apple Silicon (.dmg)](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-mac-arm64.dmg)
+- [Download for Windows x64 (.exe)](https://github.com/Leonxlnx/tastecode/releases/download/v0.5.1/TasteCode-0.5.1-win-x64.exe)
+- [Download for macOS Apple Silicon (.dmg)](https://github.com/Leonxlnx/tastecode/releases/download/v0.5.1/TasteCode-0.5.1-mac-arm64.dmg)
 - [Release notes, checksums, and all versions](https://github.com/Leonxlnx/tastecode/releases)
 
 The Windows beta is unsigned and may show a SmartScreen warning. The macOS beta is

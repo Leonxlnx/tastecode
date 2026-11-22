@@ -248,6 +248,34 @@ export function historyItem(payload: Value, original: Base, root = ''): HistoryI
           },
         },
       ]
+    // Codex 0.166 writes its web search and sleep as extensions named by `kind`;
+    // the app-server streams the same work live as `webSearch` and `sleep`.
+    case 'Extension':
+      if (payload.kind === 'web.search') {
+        const query = payload.query ?? object(payload.action).query
+        return [
+          {
+            item: {
+              ...base,
+              type: 'tool_call',
+              text: `Web search\n${typeof query === 'string' ? query : printable(payload.action)}`,
+            },
+          },
+        ]
+      }
+      if (payload.kind === 'clock.sleep') {
+        return [
+          {
+            item: {
+              ...base,
+              type: 'tool_call',
+              text: 'Sleep',
+              ...(typeof payload.durationMs === 'number' ? { durationMs: payload.durationMs } : {}),
+            },
+          },
+        ]
+      }
+      return [{ item: { ...base, type: 'unknown', text: printable(payload) } }]
     default:
       return [{ item: { ...base, type: 'unknown', text: printable(payload) } }]
   }
@@ -309,6 +337,9 @@ export function responseItem(payload: Value, base: Base, output?: unknown): Hist
     }
     case 'function_call_output':
     case 'custom_tool_call_output':
+    // The tools offered to the model and a changed reasoning effort: context, not activity.
+    case 'additional_tools':
+    case 'configuration_update':
       return []
     case 'web_search_call':
       return [
