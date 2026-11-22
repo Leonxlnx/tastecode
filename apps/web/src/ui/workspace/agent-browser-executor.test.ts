@@ -112,6 +112,32 @@ describe('agent browser commands', () => {
     })
   })
 
+  it("clicks an icon's SVG, and the button around it hears the click", async () => {
+    document.body.innerHTML =
+      '<button id="close"><svg viewBox="0 0 10 10"><path id="glyph" d="M0 0L10 10"/></svg></button>'
+    const glyph = document.querySelector('#glyph')!
+    const clicked = vi.fn()
+    document.querySelector('#close')!.addEventListener('click', clicked)
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(glyph)
+    const { page } = guest()
+    expect(await run({ action: 'click', selector: '#glyph' }, page)).toMatchObject({ ok: true })
+    expect(await run({ action: 'click', x: 5, y: 5 }, page)).toMatchObject({ ok: true })
+    expect(clicked).toHaveBeenCalledTimes(2)
+  })
+
+  it('clicks a chart point at the position the agent named', async () => {
+    document.body.innerHTML = '<svg id="chart"><circle id="dot" r="4"/></svg>'
+    const at = vi.fn()
+    document.querySelector('#chart')!.addEventListener('click', (event) => {
+      const { clientX, clientY } = event as MouseEvent
+      at(clientX, clientY)
+    })
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(document.querySelector('#dot'))
+    const { page } = guest()
+    expect(await run({ action: 'click', x: 100, y: 50 }, page)).toMatchObject({ ok: true })
+    expect(at).toHaveBeenCalledExactlyOnceWith(100, 50)
+  })
+
   it('reads text, bounded, and treats a selector as data, not code', async () => {
     document.body.innerHTML = `<main id="main">${'word '.repeat(30_000)}</main>`
     const { page } = guest({
