@@ -1240,7 +1240,15 @@ export class PullRequestService {
               authenticated: false,
               error: 'GitHub CLI did not return an account',
             }
-      } catch {
+      } catch (error) {
+        if (!signedOut(error)) {
+          // Offline, a slow GitHub or a rate limit says nothing about the sign-in. Keep
+          // the account last read, or fail this read, rather than cache a sign-out that
+          // empties the list and makes the user's own pull requests read as others'.
+          const known = this.#accountCache?.value
+          if (known?.authenticated) return known
+          throw error
+        }
         value = {
           available: true,
           authenticated: false,
@@ -2095,6 +2103,15 @@ function searchTimedOut(error: unknown): boolean {
 }
 
 const GITHUB_TIMEOUT_MESSAGE = 'GitHub did not respond in time'
+
+/**
+ * Whether gh failed because nobody is signed in: no token at all ("… please run: gh auth
+ * login") or one GitHub refuses ("gh: Bad credentials (HTTP 401)", as gh says it).
+ */
+function signedOut(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /gh auth login|HTTP 401|not logged in/i.test(message)
+}
 
 function firstUsefulLine(value: string): string {
   return (
