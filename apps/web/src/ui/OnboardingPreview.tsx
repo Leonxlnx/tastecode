@@ -226,7 +226,7 @@ export function OnboardingPreview(props: {
               </span>
               <span className="preview__tool preview__tool--text">
                 <Palette />
-                Design
+                Creatify
               </span>
               <span className="preview__spacer" />
               <span

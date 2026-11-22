@@ -2597,10 +2597,14 @@ function ComposerComponent(props: {
                           onFocus={preloadDesignBeamStyles}
                           onPointerEnter={preloadDesignBeamStyles}
                           onClick={() => props.onDesignModeChange(!props.designMode)}
-                          title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
+                          title={
+                            props.designMode
+                              ? 'Turn off Creatify'
+                              : 'Creatify: the agent uses the creative skill that fits, for websites, motion, sound and demos'
+                          }
                         >
                           <Palette size={13} aria-hidden />
-                          <span>Design</span>
+                          <span>Creatify</span>
                         </button>
                       </DesignBeam>
                     </div>

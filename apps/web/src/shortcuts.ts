@@ -151,8 +151,8 @@ export const KEYBINDING_DEFINITIONS = [
   {
     id: 'toggleDesignMode',
     group: 'Workspace',
-    label: 'Toggle Design mode',
-    description: 'Turn the design-first workflow on or off.',
+    label: 'Toggle Creatify',
+    description: 'Turn the creative skills on or off for the next prompt.',
     defaultShortcut: null,
   },
   {

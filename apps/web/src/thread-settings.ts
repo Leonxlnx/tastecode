@@ -7,7 +7,7 @@ export type LocalThreadSelection = {
   modelKey: string
   effort?: string
   serviceTier?: string
-  designMode?: boolean
+  creatify?: boolean
 }
 
 type SessionSource = {
@@ -79,7 +79,7 @@ export function adoptedSelection(
     modelKey: sameModel ? saved.modelKey : (visible?.key ?? modelChoiceKey(source, settings.model)),
     ...(settings.effort ? { effort: settings.effort } : {}),
     ...(settings.serviceTier ? { serviceTier: settings.serviceTier } : {}),
-    ...(saved?.designMode !== undefined ? { designMode: saved.designMode } : {}),
+    ...(saved?.creatify !== undefined ? { creatify: saved.creatify } : {}),
   }
 }
 
