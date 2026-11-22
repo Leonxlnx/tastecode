@@ -1311,8 +1311,12 @@ function harnessUsageRecords(
     if (event.usage.cumulative) previous.set(sessionKey, current)
     if (processedTokens(tokens) <= 0 && tokens.providerReportedCostUsd <= 0) continue
 
-    const inputForThreshold =
-      event.usage.inputIncludesCached === false
+    // One request's input decides the long-context rate. A cumulative event
+    // carries the session's sum, so its step since the previous event stands
+    // in for the request, as the rollout path prices it.
+    const inputForThreshold = event.usage.cumulative
+      ? tokens.uncachedInputTokens + tokens.cachedInputTokens
+      : event.usage.inputIncludesCached === false
         ? event.usage.inputTokens + event.usage.cachedInputTokens
         : event.usage.inputTokens
     const model = event.usage.model ?? 'Unknown model'

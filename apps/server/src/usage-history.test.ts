@@ -361,6 +361,41 @@ describe('local usage history', () => {
     expect(history.totals.estimatedCostUsd).toBeCloseTo(2.403008, 8)
   })
 
+  it('decides long-context rates from each cumulative step, not the session sum', async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex')
+    const claudeRoot = path.join(root, 'claude')
+    mkdirSync(codexRoot, { recursive: true })
+    mkdirSync(claudeRoot, { recursive: true })
+    const at = new Date('2026-08-08T10:00:00.000Z').getTime()
+    const cumulative = (inputTokens: number) => ({
+      threadId: 'codex-session',
+      provider: 'codex' as const,
+      at,
+      usage: {
+        inputTokens,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: inputTokens,
+        model: 'gpt-5.6-terra',
+        cumulative: true,
+        inputIncludesCached: true,
+      },
+    })
+    const service = usageService({
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
+      // Requests of 200K, 200K and 300K input: only the last passes 272K.
+      harnessUsage: () => [cumulative(200_000), cumulative(400_000), cumulative(700_000)],
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    })
+
+    const history = await settledHistory(service, '7d')
+    expect(history.totals.uncachedInputTokens).toBe(700_000)
+    expect(history.totals.estimatedCostUsd).toBeCloseTo(0.4 + 0.4 + 1.2, 8)
+  })
+
   it('falls back to persisted Harness events for every provider without rich local history', async () => {
     const root = temporaryDirectory()
     const codexRoot = path.join(root, 'codex')
