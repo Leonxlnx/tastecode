@@ -6,6 +6,7 @@ import {
   type AgentBrowserGuest,
   type ScaleScreenshot,
 } from './agent-browser-executor.js'
+import { scalePng } from './white-ground.js'
 
 const ID = '00000000-0000-4000-8000-000000000001'
 
@@ -144,13 +145,13 @@ describe('agent browser commands', () => {
       png: 'iVBORw0K',
     })
     // An 800 px wide page on a Retina screen captures 1600 px wide; the agent gets 800.
-    expect(scale).toHaveBeenLastCalledWith('data:image/png;base64,AAAA', 800)
+    expect(scale).toHaveBeenLastCalledWith('data:image/png;base64,AAAA', 800, true)
     cssWidth = 2400
     await run({ action: 'screenshot' }, page, scale)
-    expect(scale).toHaveBeenLastCalledWith('data:image/png;base64,AAAA', 1600)
+    expect(scale).toHaveBeenLastCalledWith('data:image/png;base64,AAAA', 1600, true)
     cssWidth = undefined
     await run({ action: 'screenshot' }, page, scale)
-    expect(scale).toHaveBeenLastCalledWith('data:image/png;base64,AAAA', 1600)
+    expect(scale).toHaveBeenLastCalledWith('data:image/png;base64,AAAA', 1600, false)
     expect(await run({ action: 'console', since: 2 }, page)).toMatchObject({
       ok: true,
       console: [{ level: 'error', text: 'new', at: 5 }],
@@ -169,6 +170,27 @@ describe('agent browser commands', () => {
       png: 'iVBORw0K',
     })
     expect(scale.mock.lastCall?.[1]).toBe(1600)
+  })
+
+  it('draws a capture narrower than the page at the page’s CSS width', async () => {
+    vi.spyOn(Image.prototype, 'decode').mockResolvedValue(undefined)
+    vi.spyOn(Image.prototype, 'naturalWidth', 'get').mockReturnValue(800)
+    vi.spyOn(Image.prototype, 'naturalHeight', 'get').mockReturnValue(600)
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      fillRect: vi.fn(),
+      drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D)
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(
+      'data:image/png;base64,iVBORw0K',
+    )
+    try {
+      const { page } = guest({ executeIsolated: async () => 1000 })
+      expect(await run({ action: 'screenshot' }, page, scalePng)).toMatchObject({ ok: true })
+      const drawn = getContext.mock.contexts[0] as HTMLCanvasElement
+      expect([drawn.width, drawn.height]).toEqual([1000, 750])
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 
   it('answers a failed page action with its reason instead of throwing', async () => {

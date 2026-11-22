@@ -30,8 +30,11 @@ export type AgentBrowserConsole = () => readonly BrowserConsoleEntry[]
 /** A screenshot is scaled down to the page's width in CSS pixels, and never past this. */
 export const AGENT_SCREENSHOT_WIDTH = 1600
 
-/** Scales a PNG data URL to at most AGENT_SCREENSHOT_WIDTH and returns its base64. */
-export type ScaleScreenshot = (dataUrl: string, width: number) => Promise<string>
+/**
+ * Scales a PNG data URL to at most a width, or to exactly that width when `exact`, and returns
+ * its base64.
+ */
+export type ScaleScreenshot = (dataUrl: string, width: number, exact?: boolean) => Promise<string>
 
 /**
  * A field an agent never types into: passwords and payment details. Checked in the page itself,
@@ -91,11 +94,12 @@ export async function runAgentBrowserCommand(
         // is the point to click.
         // A probe that fails leaves the capture at the limit, as it was before it was measured.
         const cssWidth = await guest.executeIsolated('window.innerWidth').catch(() => undefined)
-        const width =
-          typeof cssWidth === 'number' && cssWidth >= 1
-            ? Math.min(AGENT_SCREENSHOT_WIDTH, Math.round(cssWidth))
-            : AGENT_SCREENSHOT_WIDTH
-        const png = await scale(await guest.capturePng(), width)
+        const measured = typeof cssWidth === 'number' && cssWidth >= 1
+        const width = measured
+          ? Math.min(AGENT_SCREENSHOT_WIDTH, Math.round(cssWidth))
+          : AGENT_SCREENSHOT_WIDTH
+        // A capture narrower than the page (zoomed out) is drawn up to it, not left narrower.
+        const png = await scale(await guest.capturePng(), width, measured)
         if (png.length > BROWSER_PNG_MAX) return refuse('The screenshot is too large to send.')
         return { commandId: command.commandId, ok: true, ...page(), png }
       }
