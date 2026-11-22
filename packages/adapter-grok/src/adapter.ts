@@ -667,12 +667,25 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         if (frame.type === 'end') {
           if (terminal) return
           terminal = true
-          const status = frame.stopReason === 'end_turn' ? 'completed' : 'failed'
+          // A stop sends SIGTERM first on macOS and Linux, and Grok can still answer it
+          // with an end frame ("cancelled"): that is the Stop, not a failure.
+          const killReason = this.#killReasons.get(child)
+          const status =
+            frame.stopReason === 'end_turn'
+              ? 'completed'
+              : killReason === 'interrupt'
+                ? 'interrupted'
+                : 'failed'
+          // Disposed or replaced: settled without a word, as finishProcess does.
+          const silent = killReason === 'silent' && status !== 'completed'
           // close skips a turn whose end frame was seen, so a throwing listener
           // must not keep turn.completed from going out.
           try {
             if (this.#child === child) this.#announceProviderSessionId(frame.sessionId)
-            finishItems(status, status === 'completed' ? 'final_answer' : undefined)
+            finishItems(
+              status === 'completed' ? 'completed' : 'failed',
+              status === 'completed' ? 'final_answer' : undefined,
+            )
             const usage = frame.usage
             if (usage) {
               const reasoningTokens = usage.reasoning_tokens ?? 0
@@ -698,7 +711,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
                 },
               })
             }
-            if (status === 'failed') {
+            if (status === 'failed' && !silent) {
               this.emit('event', {
                 type: 'thread.error',
                 threadId,
@@ -706,7 +719,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               })
             }
           } finally {
-            this.emit('event', { type: 'turn.completed', turnId, status })
+            if (!silent) this.emit('event', { type: 'turn.completed', turnId, status })
           }
         }
         // usage snapshots and available_commands are noise between turns.
