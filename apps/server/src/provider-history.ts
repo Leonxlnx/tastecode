@@ -600,6 +600,8 @@ export class ProviderHistory {
 export class ProjectFolders {
   #known = new Map<string, string | undefined>()
   #aliases: Map<string, string[]> | undefined
+  /** Each project's folder by device and file id, read once a folder needs it. */
+  #identities: Map<string, string> | undefined
 
   constructor(private store: Store) {}
 
@@ -620,14 +622,28 @@ export class ProjectFolders {
         }
       }
       const candidates = this.#aliases.get(folderSpelling(folder))
-      const identity = candidates && folderIdentity(folder)
-      if (identity) project = candidates.find((candidate) => folderIdentity(candidate) === identity)
+      const identity = folderIdentity(folder)
+      if (identity && candidates)
+        project = candidates.find((candidate) => folderIdentity(candidate) === identity)
       // A folder that is gone has no identity; then only another spelling of the
       // same path counts, case aside where the file system ignores case.
       else project = candidates?.find((candidate) => folderKey(candidate) === folderKey(folder))
+      // A link or a mount names a project's folder by another path altogether.
+      if (project === undefined && identity) project = this.#byIdentity().get(identity)
     }
     this.#known.set(folder, project)
     return project
+  }
+
+  #byIdentity(): Map<string, string> {
+    if (!this.#identities) {
+      this.#identities = new Map()
+      for (const { path: stored } of this.store.projects()) {
+        const identity = folderIdentity(stored)
+        if (identity && !this.#identities.has(identity)) this.#identities.set(identity, stored)
+      }
+    }
+    return this.#identities
   }
 }
 

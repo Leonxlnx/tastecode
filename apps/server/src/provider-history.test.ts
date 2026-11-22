@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { DomainEvent, ProviderHistorySession, ProviderHistorySource } from '@harness/contracts'
 import { createClaudeHistorySource } from '@harness/adapter-claude-code'
 import { createGrokHistorySource } from '@harness/adapter-grok'
-import { addProjectFolder, importedEvents, ProviderHistory } from './provider-history.js'
+import {
+  addProjectFolder,
+  importedEvents,
+  ProjectFolders,
+  ProviderHistory,
+} from './provider-history.js'
 import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
@@ -2488,6 +2493,35 @@ describe('adding a project folder', () => {
       expect(store.projects()).toHaveLength(2)
     } finally {
       store.close()
+    }
+  })
+  it('answers with the listed project for a link to its folder, either way round', (context) => {
+    const root = mkdtempSync(path.join(tmpdir(), 'tastecode-project-folder-'))
+    roots.push(root)
+    const site = path.join(root, 'site')
+    mkdirSync(site)
+    const link = path.join(root, 'favourite')
+    try {
+      symlinkSync(site, link, 'dir')
+    } catch {
+      // Windows without Developer Mode or admin rights cannot create one.
+      context.skip()
+    }
+    const store = new Store(':memory:')
+    try {
+      expect(addProjectFolder(store, site).path).toBe(site)
+      expect(addProjectFolder(store, link).path).toBe(site)
+      expect(store.projects().map((project) => project.path)).toEqual([site])
+    } finally {
+      store.close()
+    }
+    const linked = new Store(':memory:')
+    try {
+      // A provider saves the folder's real path for a project added through the link.
+      expect(addProjectFolder(linked, link).path).toBe(link)
+      expect(new ProjectFolders(linked).project(site)).toBe(link)
+    } finally {
+      linked.close()
     }
   })
 })
