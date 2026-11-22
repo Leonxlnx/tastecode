@@ -3157,8 +3157,9 @@ export class Store {
   }
 
   /**
-   * A saved run of the removed Design mode. Nothing in the app reads or writes these any
-   * more; old rows stay until their chat is deleted, and tests seed them to prove that.
+   * A saved run of the removed Design mode. No turn reads or writes these any more; old rows
+   * stay until their chat is deleted, history export still copies them verbatim, and tests seed
+   * them to prove a chat with one behaves as an ordinary chat.
    */
   setDesignRun(threadId: string, payload: unknown): void {
     this.#db
