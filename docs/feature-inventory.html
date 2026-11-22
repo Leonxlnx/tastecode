@@ -1587,11 +1587,12 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Model, effort, speed, Design mode, and permissions remembered per chat
+                >Model, effort, speed, Creatify, and permissions remembered per chat
                 <span class="d"
                   >chat switches, catalog failures, hidden models, late discovery, and restart
                   preserve the last valid same-source choice; cross-provider overrides never reach a
-                  bound thread. Design completion resets only that chat's one-shot Design mode.
+                  bound thread. Creatify stays as set for its chat and a new chat starts without it;
+                  a chat saved with the Design toggle it replaced starts with Creatify off.
                   Permission edits during startup reach the created chat; reconnect and pending-turn
                   recovery restore the saved approval mode. Deleting a chat forgets its saved setup
                   once the server confirms the delete. Fast mode toggled from its shortcut or the
@@ -1711,8 +1712,25 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Design mode entry point in the prompt bar; unrelated requests show a muted grey
-                note and continue in the same session with their attachments and model settings
+                >Creatify in the prompt bar: the agent uses the bundled creative skill that fits
+                <span class="d"
+                  >replaces the Design button; a prompt sent with it on gets a short note in front
+                  that lists the creative skills shipped with TasteCode and where each SKILL.md is,
+                  so the agent picks the one for the job and decides open details itself instead of
+                  asking; works for every provider, for queued prompts when their turn starts, from
+                  its shortcut and the native menu; the chat shows only what the user wrote; without
+                  an installed skill bundle the prompt goes as written</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Design workflow (not started from the composer since 2026-11-22, when Creatify
+                replaced its button; a suspended run still resumes with continue); unrelated
+                requests show a muted grey note and continue in the same session with their
+                attachments and model settings
                 <span class="d"
                   >briefs continue without questions or confirmations, with recorded assumptions and
                   visible progress; new portfolios and catalogs can use visibly identified concept
