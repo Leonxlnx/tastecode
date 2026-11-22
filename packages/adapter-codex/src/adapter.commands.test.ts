@@ -4,14 +4,19 @@ import { CodexAdapter } from './adapter.js'
 import { CODEX_INIT_PROMPT, codexCommandRequest, codexPromptCommand } from './commands.js'
 import { FakeCodexRpc } from './fake-rpc.test-support.js'
 
-const proc = vi.hoisted(() => ({ rpc: undefined as FakeCodexRpc | undefined }))
+const proc = vi.hoisted(() => ({
+  rpc: undefined as FakeCodexRpc | undefined,
+  /** The transport's failure callback: what a Codex process exit calls. */
+  failure: undefined as ((error: Error) => void) | undefined,
+}))
 
 vi.mock('@harness/proc', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@harness/proc')>()),
   spawnCli: vi.fn(() => ({ pid: 1 })),
   StdioJsonRpc: class {
-    constructor() {
+    constructor(_child: unknown, _name: string, options?: { onFailure?: (error: Error) => void }) {
       if (!proc.rpc) throw new Error('fake Codex RPC was not installed')
+      proc.failure = options?.onFailure
       return proc.rpc
     }
   },
@@ -145,6 +150,27 @@ describe('Codex slash commands', () => {
     })
     try {
       await expect(adapter.sendTurn('thread-1', '/compact')).resolves.toBe('compact-turn')
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('ends a compaction at once, without a made-up turn, when Codex exits before it starts', async () => {
+    const { adapter, events } = await commandAdapter((method) => {
+      // Codex accepts the compaction, then its process exits before turn/started.
+      if (method === 'thread/compact/start')
+        setTimeout(() => proc.failure?.(new Error('Codex exited')), 0)
+      return {}
+    })
+    try {
+      const sentAt = Date.now()
+      await expect(adapter.sendTurn('thread-1', '/compact')).rejects.toThrow(
+        'Codex disconnected while starting the turn',
+      )
+      // Before, it waited for the 15 s turn-start limit.
+      expect(Date.now() - sentAt).toBeLessThan(3_000)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(events.some((event) => event.type === 'turn.started')).toBe(false)
     } finally {
       await adapter.dispose()
     }

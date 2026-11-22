@@ -18,6 +18,7 @@ import {
   isInterruptMarker,
   isPrompt,
   object,
+  promptText,
   slashCommandPrompt,
   string,
   type SavedRecord,
@@ -550,9 +551,10 @@ function observe(digest: Digest, row: SavedRecord): void {
     if (digest.prompt === undefined && isPrompt(row))
       digest.prompt = titleText(
         slashCommandPrompt(row) ??
-          contentBlocks(row)
-            .map((block) => string(block.text) ?? '')
-            .join(' '),
+          promptText(
+            contentBlocks(row).map((block) => string(block.text) ?? ''),
+            ' ',
+          ),
       )
   }
   if (row.type === 'relocated') digest.relocatedCwd = row.relocatedCwd

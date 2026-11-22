@@ -304,7 +304,7 @@ export function stepView(item: Item): StepView {
   switch (kind) {
     case 'command':
       // One line until the step opens; then the whole command.
-      title = (item.command ?? item.text ?? 'Command').trim()
+      title = item.command ? commandTitle(item.command) : (item.text ?? 'Command').trim()
       if (item.durationMs !== undefined) {
         detail = `${item.exitCode === undefined || item.exitCode === 0 ? 'Ran' : `Exit ${item.exitCode}`} in ${duration(item.durationMs)}`
       }
@@ -337,6 +337,36 @@ export function stepView(item: Item): StepView {
     running: item.status === 'started',
     failed: failed(item),
   }
+}
+
+const LOGIN_SHELL = /^(?:\S*[\\/])?(?:ba|z)?sh(?:\.exe)? -l?c (['"])([\s\S]*)\1$/
+const POWERSHELL =
+  /^(?:"[^"]*[\\/](?:pwsh|powershell)(?:\.exe)?"|(?:[^\s"]*[\\/])?(?:pwsh|powershell)(?:\.exe)?)(?:\s+-(?:NoProfile|NoLogo|NonInteractive))*\s+-(?:Command|c) (['"])([\s\S]*)\1$/i
+const LEADING_ABSOLUTE_CD =
+  /^cd(?:\s+\/d)?\s+(?:"(?:[a-z]:|[\\/~])[^"]*"|'(?:[a-z]:|[\\/~])[^']*'|(?:[a-z]:|[\\/~])[^\s;&|]*)\s*(?:&&|;)\s*/i
+
+/**
+ * The command that ran, as the desktop's transcript names it (`commandLabel` in
+ * apps/web/src/ui/Thread.tsx). Codex wraps every command in a login shell, or in
+ * PowerShell on Windows, and Claude Code starts many with `cd "<project path>" &&`;
+ * on a phone row that prefix took the whole line.
+ */
+export function commandTitle(command: string): string {
+  const text = command.trim()
+  const wrapped = LOGIN_SHELL.exec(text) ?? POWERSHELL.exec(text)
+  const inner = (wrapped && unquotedPayload(wrapped[1], wrapped[2])) || text
+  return inner.replace(LEADING_ABSOLUTE_CD, '') || inner
+}
+
+/**
+ * The line is joined POSIX-style whatever the shell: a double-quoted payload escapes `"`,
+ * `\`, `$` and backticks with a backslash; a single-quoted one closes, quotes and reopens
+ * around each `'` it contains.
+ */
+function unquotedPayload(quote: string | undefined, payload = ''): string | undefined {
+  const inner =
+    quote === '"' ? payload.replace(/\\(["\\$`])/g, '$1') : payload.replace(/'"'"'|'\\''/g, "'")
+  return inner.trim() || undefined
 }
 
 /** What finished work did, in one sentence: "Edited 2 files and ran 3 commands". */
@@ -440,7 +470,7 @@ function argumentTarget(rest: string): string | undefined {
   const line = value.replace(/\s+/g, ' ').trim()
   // A path reads as the file it names; the folders are in the approval and the diff.
   const shown = /^[^\s]*[\\/][^\s]*$/.test(line) ? basename(line) : line
-  return shown.length > 60 ? `${shown.slice(0, 59).trimEnd()}…` : shown
+  return shown.length > 60 ? `${cutText(shown, 59).trimEnd()}…` : shown
 }
 
 /** Where the JSON object opening at `start` closes, minding strings. */
@@ -561,7 +591,13 @@ export function basename(path: string): string {
 
 export function firstLine(text: string): string {
   const line = text.trim().split('\n')[0] ?? ''
-  return line.length > 120 ? `${line.slice(0, 120)}…` : line
+  return line.length > 120 ? `${cutText(line, 120)}…` : line
+}
+
+/** A cut must not end on the first half of a surrogate pair, or it splits an emoji. */
+function cutText(text: string, limit: number): string {
+  const cut = text.slice(0, limit)
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut
 }
 
 export function duration(ms: number): string {

@@ -265,6 +265,19 @@ describe('chat import scan', () => {
     expect(chats.map(({ id }) => id)).toEqual(['codex:visible'])
   })
 
+  it('leaves out the sessions the app wrote chat titles in', async () => {
+    const site = folder('site')
+    const { service: scanner } = await service({
+      sessions: [
+        session('title', path.join(os.tmpdir(), 'tastecode-background-Ab3dE9'), 'Grok chat'),
+        session('lookalike', folder('tastecode-background-notes')),
+        session('visible', site),
+      ],
+    })
+    const { chats } = await scanner.scan()
+    expect(chats.map(({ id }) => id).sort()).toEqual(['codex:lookalike', 'codex:visible'])
+  })
+
   it('says a folder is gone instead of hiding its chats', async () => {
     const gone = path.join(root, 'deleted-folder')
     const { service: scanner } = await service({ sessions: [session('one', gone)] })

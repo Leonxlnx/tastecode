@@ -335,21 +335,46 @@ export async function reverseUnifiedDiff(repoPath: string, patch: string): Promi
     })
     .join('\n')
 
-  const child = spawnCli(
-    'git',
-    ['apply', '--reverse', '--binary', '--recount', '--whitespace=nowarn', '-'],
-    { cwd: repoPath },
-  )
-  const captured = captureCli(child, 30_000)
-  child.stdin.on('error', () => undefined)
-  child.stdin.end(relative)
-  const result = await captured
-  if (result.code !== 0)
-    // Git's own reason stays out of the message the user sees, but goes along as the
-    // cause, so a log or a failed test says which file and line did not apply.
-    throw new Error('Could not apply diff decision. Check the working tree and retry.', {
+  const apply = (extra: readonly string[]) => {
+    const child = spawnCli(
+      'git',
+      ['apply', '--reverse', '--binary', '--recount', '--whitespace=nowarn', ...extra, '-'],
+      // Untranslated, so the checks below can read Git's verbose lines.
+      { cwd: repoPath, env: { LC_ALL: 'C' } },
+    )
+    const captured = captureCli(child, 30_000)
+    child.stdin.on('error', () => undefined)
+    child.stdin.end(relative)
+    return captured
+  }
+  // Git's own reason stays out of the message the user sees, but goes along as the
+  // cause, so a log or a failed test says which file and line did not apply.
+  const failure = (result: { code: number | null; stderr: string }) =>
+    new Error('Could not apply diff decision. Check the working tree and retry.', {
       cause: new Error(result.stderr.trim() || `git apply exited with ${result.code}`),
     })
+
+  // In a subfolder, Git reads a Git patch's paths from the repository root and
+  // skips, without failing, every file outside the folder. Checkpoint diffs and
+  // imported Codex turns name files from the project folder instead, so check
+  // which reading applies before changing anything.
+  const scope = gitPath(path.relative(canonicalCheckoutRoot(repoPath), realpathSync(repoPath)))
+  let extra: string[] = []
+  if (scope !== '') {
+    const applies = (result: { code: number | null; stderr: string }) =>
+      result.code === 0 && !/^Skipped patch /m.test(result.stderr)
+    const fromRoot = await apply(['--check', '--verbose'])
+    if (!applies(fromRoot)) {
+      const fromFolder = [`--directory=${scope}`]
+      if (applies(await apply(['--check', '--verbose', ...fromFolder]))) extra = fromFolder
+      // A patch that also edited files outside the folder still reverses the
+      // ones inside it, as before.
+      else if (fromRoot.code !== 0 || !/^Checking patch /m.test(fromRoot.stderr))
+        throw failure(fromRoot)
+    }
+  }
+  const result = await apply(extra)
+  if (result.code !== 0) throw failure(result)
 }
 
 function gitPath(value: string): string {

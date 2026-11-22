@@ -163,6 +163,33 @@ describe('model catalog cache', () => {
     expect(parseModelCatalogCache(JSON.stringify(cached))).toBeUndefined()
   })
 
+  it('keeps which ACP source is a user harness rather than a stock agent', () => {
+    const harness = choicesFor(
+      {
+        provider: 'acp',
+        sourceName: 'Design replay',
+        mark: 'acp',
+        agent: { id: 'design-replay', name: 'Design replay' },
+        harness: true,
+      },
+      [model],
+    )
+    const stock = choicesFor(
+      {
+        provider: 'acp',
+        sourceName: 'Devin',
+        mark: 'devin',
+        agent: { id: 'devin', name: 'Devin' },
+      },
+      [model],
+    )
+    const parsed = parseModelCatalogCache(serializeModelCatalogCache([...harness, ...stock]))
+    expect(parsed?.models.map((choice) => [choice.agent?.id, choice.harness])).toEqual([
+      ['design-replay', true],
+      ['devin', undefined],
+    ])
+  })
+
   it('keeps the lineage and curation an adapter declared', () => {
     const declared = choicesFor(
       { provider: 'opencode', sourceName: 'OpenCode', mark: 'opencode' },
