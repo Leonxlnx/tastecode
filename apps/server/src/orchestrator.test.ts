@@ -73,6 +73,7 @@ import {
 } from '@harness/design-agent'
 import { encodeHistoryCursor, readHistoryPage } from './history-page.js'
 import { compactHistoryReplay } from './history-replay.js'
+import { CREATIFY_ATTACHMENT, CREATIFY_NOTE_CLOSE, CREATIFY_NOTE_OPEN } from './creatify.js'
 import { writeDefaultSkillsFixture } from './default-skills.test-support.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
@@ -2059,6 +2060,172 @@ describe('default skills', () => {
     await orchestrator.startThread('cursor', process.cwd())
     expect(startedOptions[0]?.instructions).not.toContain('Skills included with TasteCode')
     await orchestrator.disposeAll()
+  })
+
+  describe('Creatify', () => {
+    const userItems = (store: Store, threadId: string) =>
+      store
+        .history(threadId)
+        .flatMap(({ event }) =>
+          event.type === 'item.completed' && event.item.role === 'user' ? [event.item] : [],
+        )
+    const shown = (store: Store, threadId: string) =>
+      userItems(store, threadId).map((item) => [item.text, item.attachments])
+
+    it('puts the creative skills note behind the prompt and keeps the marker from the agent', async () => {
+      const { orchestrator, sessions, store, root, project } = await skillsHarness()
+      try {
+        const thread = await orchestrator.startThread('codex', project)
+        const sent = await orchestrator.submitTurn(
+          thread.id,
+          'Build a landing page for a bakery.',
+          ['/shot.png', CREATIFY_ATTACHMENT],
+          {},
+          'creatify-1',
+        )
+        if (sent.queued) throw new Error('expected the turn to start')
+
+        const prompt = sessions[0]!.sent[0]!
+        // The words lead: a provider names its session after the start of the first prompt.
+        expect(prompt.startsWith(`Build a landing page for a bakery.${CREATIFY_NOTE_OPEN}`)).toBe(
+          true,
+        )
+        expect(prompt).toContain(
+          `- cinetic: cinematic videos and motion design made in code (${path.join(root, 'skills', 'cinetic', 'SKILL.md')})`,
+        )
+        expect(prompt).toContain(path.join(root, 'skills', 'design-taste-frontend', 'SKILL.md'))
+        expect(prompt.endsWith(CREATIFY_NOTE_CLOSE)).toBe(true)
+        // The marker is TasteCode's own; an agent shown it as a file tries to read it.
+        expect(sessions[0]!.sentAttachments[0]).toEqual(['/shot.png'])
+
+        // The chat shows what the user wrote and attached, nothing of the note.
+        sessions[0]!.emit(turnStarted(thread.id, sent.turnId))
+        expect(shown(store, thread.id)).toEqual([
+          ['Build a landing page for a bakery.', ['/shot.png']],
+        ])
+        sessions[0]!.emit({ type: 'turn.completed', turnId: sent.turnId, status: 'completed' })
+      } finally {
+        await orchestrator.disposeAll()
+      }
+    })
+
+    it('shows only the words when the client names no submission and the agent echoes its prompt', async () => {
+      const { orchestrator, sessions, store, project } = await skillsHarness()
+      try {
+        const thread = await orchestrator.startThread('codex', project)
+        const turnId = await orchestrator.sendTurn(thread.id, 'Make a launch film.', [
+          CREATIFY_ATTACHMENT,
+        ])
+        sessions[0]!.emit(turnStarted(thread.id, turnId))
+        // The agent's own copy of the prompt carries the note; it must not become a row.
+        sessions[0]!.emit(userMessage('provider-echo', sessions[0]!.sent[0]!, turnId))
+
+        expect(shown(store, thread.id)).toEqual([['Make a launch film.', undefined]])
+        sessions[0]!.emit({ type: 'turn.completed', turnId, status: 'completed' })
+      } finally {
+        await orchestrator.disposeAll()
+      }
+    })
+
+    it('sends the prompt as written when no skill is installed', async () => {
+      const { orchestrator, sessions } = harness()
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        await orchestrator.sendTurn(thread.id, 'Make a launch film.', [CREATIFY_ATTACHMENT])
+
+        expect(sessions[0]!.sent).toEqual(['Make a launch film.'])
+        expect(sessions[0]!.sentAttachments[0]).toEqual([])
+      } finally {
+        await orchestrator.disposeAll()
+      }
+    })
+
+    it('is an ordinary turn even with the old Design marker beside it', async () => {
+      const { orchestrator, sessions } = harness()
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        await orchestrator.sendTurn(thread.id, 'Build a site.', [
+          DESIGN_BRIEF_ATTACHMENT,
+          CREATIFY_ATTACHMENT,
+        ])
+
+        // No Design brief prompt, and neither marker handed over as a file.
+        expect(sessions[0]!.sent).toEqual(['Build a site.'])
+        expect(sessions[0]!.sentAttachments[0]).toEqual([])
+      } finally {
+        await orchestrator.disposeAll()
+      }
+    })
+
+    it('adds the note to a queued prompt when its turn starts, and shows the queue without the marker', async () => {
+      const { orchestrator, sessions, store, project } = await skillsHarness()
+      try {
+        const thread = await orchestrator.startThread('codex', project)
+        sessions[0]!.turnIds.push('first-turn', 'second-turn')
+        const first = await orchestrator.submitTurn(thread.id, 'Fix the header.', [], {}, 'first')
+        if (first.queued) throw new Error('expected the first turn to start')
+        sessions[0]!.emit(turnStarted(thread.id, 'first-turn'))
+        // Queued without a submission id, as a client that names none sends it.
+        const queued = await orchestrator.submitTurn(thread.id, 'Now a sound for the button.', [
+          CREATIFY_ATTACHMENT,
+        ])
+        if (!queued.queued) throw new Error('expected the prompt to queue')
+        expect(queued.queuedTurn.attachments).toEqual([])
+
+        sessions[0]!.emit({ type: 'turn.completed', turnId: 'first-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(2))
+
+        expect(
+          sessions[0]!.sent[1]!.startsWith(`Now a sound for the button.${CREATIFY_NOTE_OPEN}`),
+        ).toBe(true)
+        expect(sessions[0]!.sentAttachments[1]).toEqual([])
+
+        // Its record takes it off the queue with the row, so a start that failed
+        // after the record could not leave it queued and shown twice.
+        sessions[0]!.emit(turnStarted(thread.id, 'second-turn'))
+        expect(shown(store, thread.id).map(([text]) => text)).toEqual([
+          'Fix the header.',
+          'Now a sound for the button.',
+        ])
+        expect(orchestrator.queue(thread.id).items).toEqual([])
+        expect(userItems(store, thread.id).at(-1)?.id).toBe(queued.queuedTurn.id)
+        sessions[0]!.emit({ type: 'turn.completed', turnId: 'second-turn', status: 'completed' })
+      } finally {
+        await orchestrator.disposeAll()
+      }
+    })
+
+    it('steers a queued prompt with its note, without the marker, and shows its words', async () => {
+      const { orchestrator, sessions, store, project } = await skillsHarness()
+      try {
+        const thread = await orchestrator.startThread('codex', project)
+        sessions[0]!.turnIds.push('running-turn')
+        const first = await orchestrator.submitTurn(thread.id, 'Fix the header.', [], {}, 'first')
+        if (first.queued) throw new Error('expected the first turn to start')
+        sessions[0]!.emit(turnStarted(thread.id, 'running-turn'))
+        // No submission id: TasteCode still has to record the words itself, because
+        // the agent's copy of them carries the note.
+        const queued = await orchestrator.submitTurn(thread.id, 'Make it calmer.', [
+          CREATIFY_ATTACHMENT,
+        ])
+        if (!queued.queued) throw new Error('expected the prompt to queue')
+
+        await orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)
+
+        const steered = sessions[0]!.steered[0]!
+        expect(steered.startsWith(`Make it calmer.${CREATIFY_NOTE_OPEN}`)).toBe(true)
+        expect(steered.endsWith(CREATIFY_NOTE_CLOSE)).toBe(true)
+        expect(sessions[0]!.steeredAttachments).toEqual([[]])
+        sessions[0]!.emit(userMessage('steer-echo', steered, 'running-turn'))
+        expect(shown(store, thread.id).map(([text]) => text)).toEqual([
+          'Fix the header.',
+          'Make it calmer.',
+        ])
+        sessions[0]!.emit({ type: 'turn.completed', turnId: 'running-turn', status: 'completed' })
+      } finally {
+        await orchestrator.disposeAll()
+      }
+    })
   })
 
   it('lists the bundled skills as commands where the provider loads them as a plugin', async () => {
@@ -7181,6 +7348,33 @@ describe('provider-neutral design briefing', () => {
     },
   )
 
+  it('leaves a suspended Design run alone when "continue" is sent with Creatify on', async () => {
+    const first = await previewRecoveryHarness(undefined, 'preview')
+    const { store, workspace } = first
+    try {
+      first.sessions[0]?.emit({
+        type: 'thread.error',
+        threadId: 'preview-recovery',
+        message: 'Usage limit reached',
+      })
+      first.sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'failed' })
+      expect(store.designRun('preview-recovery')).toMatchObject({ suspended: true })
+
+      await first.orchestrator.submitTurn('preview-recovery', 'continue', [CREATIFY_ATTACHMENT])
+
+      // The agent gets the word as an ordinary request; the Design phase does not start again.
+      const prompt = first.sessions[0]?.sent.at(-1)
+      expect(prompt).not.toContain('Preview Setup phase')
+      expect(prompt?.endsWith('continue')).toBe(true)
+      expect(first.sessions[0]?.sentAttachments.at(-1)).toEqual([])
+      expect(store.designRun('preview-recovery')).toMatchObject({ suspended: true })
+    } finally {
+      await first.orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
   it.each([
     {
       detail: 'preview command argument is unsafe',
@@ -8652,12 +8846,15 @@ describe('provider commands', () => {
           ['compact', '/compact'],
           ['ordinary', 'Tighten the hero spacing.'],
           ['unlisted', '/foo bar'],
+          ['shouted', '/COMPACT'],
         ] as const) {
           session.turnIds.push(turnId)
           await orchestrator.sendTurn(thread.id, text)
           session.emit(turnStarted(thread.id, turnId))
           session.emit({ type: 'turn.completed', turnId, status: 'completed' })
         }
+        // Codex runs a command whatever its case; text around it would break it.
+        expect(session.sent[3]).toBe('/COMPACT')
         // The provider runs the command only when the prompt is the command itself.
         expect(session.sent[0]).toBe('/compact')
         expect(session.sent[1]).toContain('Earlier phase-only JSON protocols no longer apply')

@@ -14,6 +14,7 @@ import type {
   VisualReview,
 } from '@harness/design-agent'
 import { isDesignBriefAttachment } from '@harness/design-agent/attachment'
+import { isCreatifyAttachment } from './creatify.js'
 import {
   DEFAULT_ACCOUNT_ID,
   JsonValueSchema,
@@ -320,6 +321,9 @@ type AccountScope = {
 const accountScopeKey = (provider: ProviderId, accountId: AccountId) =>
   `${provider}\u0000${accountId}`
 const userTurnKey = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId])
+/** TasteCode's own markers among a prompt's attachments: Creatify's, and Design mode's before it. */
+const isModeMarker = (attachment: string): boolean =>
+  isCreatifyAttachment(attachment) || isDesignBriefAttachment(attachment)
 const composeInstructions = (instructions?: string): string =>
   instructions?.trim()
     ? `${REPLY_STYLE_INSTRUCTIONS}\n\n${instructions.trim()}`
@@ -1829,7 +1833,7 @@ export class Orchestrator {
     const root = this.#defaultSkillsRoot
     this.#defaultSkills ??= root
       ? loadDefaultSkills(root)
-      : { root: '', skills: [], commands: [], catalog: '' }
+      : { root: '', skills: [], commands: [], catalog: '', creatify: '' }
     return this.#defaultSkills
   }
 
@@ -3150,6 +3154,12 @@ export class Orchestrator {
   ): Promise<string> {
     // The words the user sent; whatever the prompt carries in front of them is not theirs.
     this.#latestUserPrompts.set(threadId, text)
+    // Creatify's marker is no file. It asks for the creative skills note behind
+    // the words; without a skill installed the prompt goes as written. Such a
+    // prompt is never a Design run's, so a Design marker beside it goes too.
+    const wantsCreatify = attachments.some(isCreatifyAttachment)
+    const creatify = wantsCreatify ? this.#bundledSkills().creatify : ''
+    if (wantsCreatify) attachments = attachments.filter((attachment) => !isModeMarker(attachment))
     // A failed change leaves the session on its last applied mode, which is
     // the mode this turn runs under. Its error belongs to whoever changed it.
     const approvalChange = this.#approvalChanges.get(threadId)
@@ -3184,6 +3194,7 @@ export class Orchestrator {
       (handover ||
         continuation ||
         unreadSubagents ||
+        creatify ||
         this.#store.threadNeedsRestoreContext(threadId)) &&
       !submission
     ) {
@@ -3218,7 +3229,9 @@ export class Orchestrator {
       }
       const design = attachments.some(isDesignBriefAttachment)
       // Resume only an explicit continuation; a new brief still starts a fresh design.
+      // "continue" sent with Creatify on is a request to the agent, not to a suspended run.
       if (
+        !wantsCreatify &&
         /^(?:continue|resume|retry|weiter|weitermachen|fortsetzen)(?:\s+(?:please|pls|bitte))?[.!?]*$/i.test(
           text.trim(),
         ) &&
@@ -3325,9 +3338,11 @@ export class Orchestrator {
           handover ||
           continuation ||
           unreadSubagents !== undefined ||
+          creatify !== '' ||
           this.#store.threadNeedsRestoreContext(threadId)) &&
         (await this.#isProviderCommand(threadId, entry, text))
-      const ownPrompt = brief ? `${DESIGN_FOLLOW_UP_NOTICE}${text}` : text
+      const words = `${text}${creatify}`
+      const ownPrompt = brief ? `${DESIGN_FOLLOW_UP_NOTICE}${words}` : words
       const prompt = unreadSubagents ? `${unreadSubagents.text}${ownPrompt}` : ownPrompt
       const sent = command
         ? text
@@ -3711,7 +3726,18 @@ export class Orchestrator {
     this.#notifyQueue(threadId)
     const ownedTurnKey = activeTurnId ? userTurnKey(threadId, activeTurnId) : undefined
     const alreadyOwned = ownedTurnKey ? this.#serverOwnedUserTurns.has(ownedTurnKey) : false
-    if (ownedTurnKey && item.clientSubmissionId) this.#serverOwnedUserTurns.add(ownedTurnKey)
+    // The creative skills note of a prompt queued with Creatify on. It needs the
+    // turn's id: the transcript must show the words, not what the agent got.
+    const steerNote =
+      activeTurnId && item.attachments.some(isCreatifyAttachment)
+        ? this.#bundledSkills().creatify
+        : ''
+    // The agent's own copy of the steered words is left out of a turn TasteCode
+    // records the prompts of, so there TasteCode records these too.
+    const recordsSteer = Boolean(
+      activeTurnId && (item.clientSubmissionId || alreadyOwned || steerNote),
+    )
+    if (ownedTurnKey && recordsSteer) this.#serverOwnedUserTurns.add(ownedTurnKey)
     const generation = this.#panicGeneration
     const draining: QueueDrain = { queueId: item.id }
     this.#drainingQueues.set(threadId, draining)
@@ -3726,19 +3752,19 @@ export class Orchestrator {
     }
     try {
       this.#latestUserPrompts.set(threadId, item.text)
-      // A prompt queued with Design mode on carries TasteCode's brief marker. It is no
-      // file: an agent handed it as one tries to read tastecode://design-brief-v1.
+      // A prompt queued with Creatify on (or, before it, Design mode) carries TasteCode's
+      // marker. It is no file: an agent handed it as one tries to read tastecode://….
       await session.steer(
         threadId,
-        item.text,
-        item.attachments.filter((attachment) => !isDesignBriefAttachment(attachment)),
+        `${item.text}${steerNote}`,
+        item.attachments.filter((attachment) => !isModeMarker(attachment)),
       )
       if (!current()) return
       // An acknowledged steer belongs to the captured turn even when that turn
       // finished before this continuation ran; restoring it would run it twice.
-      if (activeTurnId && item.clientSubmissionId) {
+      if (activeTurnId && recordsSteer) {
         this.#recordUserSubmission(threadId, activeTurnId, {
-          id: item.clientSubmissionId,
+          id: item.clientSubmissionId ?? item.id,
           text: item.text,
           attachments: item.attachments,
           createdAt: item.createdAt,
@@ -3979,7 +4005,7 @@ export class Orchestrator {
   #recordUserSubmission(threadId: string, turnId: string, submission: UserSubmission): void {
     this.#serverOwnedUserTurns.add(userTurnKey(threadId, turnId))
     const visibleAttachments = submission.attachments.filter(
-      (attachment) => !isDesignBriefAttachment(attachment),
+      (attachment) => !isModeMarker(attachment),
     )
     const event: DomainEvent = {
       type: 'item.completed',
@@ -4662,15 +4688,20 @@ export class Orchestrator {
     this.#notifyQueue(threadId)
     const generation = this.#panicGeneration
     let drainNext = false
+    // A Creatify prompt is recorded by TasteCode in any case; its record then
+    // also takes it off the queue, so a start that fails after the record
+    // cannot leave it queued and shown twice.
+    const submissionId =
+      next.clientSubmissionId ?? (next.attachments.some(isCreatifyAttachment) ? next.id : undefined)
     try {
       const turnId = await this.sendTurn(
         threadId,
         next.text,
         next.attachments,
         next.options,
-        next.clientSubmissionId
+        submissionId
           ? {
-              id: next.clientSubmissionId,
+              id: submissionId,
               text: next.text,
               attachments: next.attachments,
               createdAt: next.createdAt,
@@ -4686,7 +4717,7 @@ export class Orchestrator {
         await entry.session.interrupt(threadId)
         return
       }
-      if (!next.clientSubmissionId && !this.#store.completeQueuedTurn(threadId, next.id)) return
+      if (!submissionId && !this.#store.completeQueuedTurn(threadId, next.id)) return
       if (!this.#threads.has(threadId) || this.#store.thread(threadId)?.closedAt !== undefined)
         return
       if (this.#activeTurnIds.get(threadId) === turnId) {
@@ -4732,7 +4763,7 @@ export class Orchestrator {
     return {
       id: item.id,
       text: item.text,
-      attachments: item.attachments.filter((path) => !isDesignBriefAttachment(path)),
+      attachments: item.attachments.filter((path) => !isModeMarker(path)),
       createdAt: item.createdAt,
     }
   }
@@ -5070,7 +5101,9 @@ export class Orchestrator {
     entry: AttachedThreadRuntime,
     text: string,
   ): Promise<boolean> {
-    const name = /^\/([^/\s]\S*)(?:\s|$)/.exec(text.trimStart())?.[1]
+    // Codex runs its commands whatever their case. Taking one for prose would put text
+    // around it and break it; taking prose for a command only leaves that text out once.
+    const name = /^\/([^/\s]\S*)(?:\s|$)/.exec(text.trimStart())?.[1]?.toLowerCase()
     if (name === undefined) return false
     const inventory = await this.listCommands(
       entry.thread.provider,
@@ -5079,7 +5112,9 @@ export class Orchestrator {
     ).catch(() => undefined)
     return (
       inventory?.commands.some(
-        (command) => command.name === name || command.aliases?.includes(name),
+        (command) =>
+          command.name.toLowerCase() === name ||
+          command.aliases?.some((alias) => alias.toLowerCase() === name),
       ) === true
     )
   }
