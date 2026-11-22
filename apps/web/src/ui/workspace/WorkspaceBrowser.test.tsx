@@ -757,16 +757,30 @@ describe('WorkspaceBrowser history', () => {
     rememberBrowserVisit('https://two.example/', 'Two')
     render(<WorkspaceBrowser active keepHistory />)
 
-    const removes = screen.getAllByRole('button', { name: 'Remove from Recently used' })
+    const removes = screen.getAllByRole('button', { name: /^Remove .* from Recently used$/ })
     expect(removes).toHaveLength(2)
     // Newest first: the first row is Two.
     fireEvent.click(removes[0]!)
     expect(screen.queryByRole('button', { name: /Two/ })).toBeNull()
     expect(screen.getByRole('button', { name: /One/ })).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Clear recently used pages' }))
     expect(screen.queryByText('Recently used')).toBeNull()
     expect(screen.getByText('Start browsing')).toBeTruthy()
+  })
+
+  it('names the page each Remove button takes off the list', () => {
+    rememberBrowserVisit('https://one.example/', 'One')
+    rememberBrowserVisit('https://two.example/', 'Two')
+    render(<WorkspaceBrowser active keepHistory />)
+
+    expect(
+      screen.getByRole('button', { name: 'Remove https://two.example/ from Recently used' }),
+    ).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Remove https://one.example/ from Recently used' }),
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Clear recently used pages' })).toBeTruthy()
   })
 
   it('updates a page in the list when another tab opens one', async () => {

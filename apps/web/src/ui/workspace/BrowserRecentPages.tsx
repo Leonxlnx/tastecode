@@ -33,6 +33,7 @@ export function BrowserRecentPages(props: { onOpen: (url: string) => void; child
         <button
           type="button"
           className="workspace-browser__recent-clear"
+          aria-label="Clear recently used pages"
           onClick={clearBrowserHistory}
         >
           Clear
@@ -61,7 +62,7 @@ export function BrowserRecentPages(props: { onOpen: (url: string) => void; child
             <button
               type="button"
               className="icon-btn workspace-browser__recent-forget"
-              aria-label="Remove from Recently used"
+              aria-label={`Remove ${visit.url} from Recently used`}
               title="Remove from Recently used"
               onClick={() => forgetBrowserVisit(visit.url)}
             >
