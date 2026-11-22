@@ -4,6 +4,7 @@ import { ThreadModel } from '../state/thread-model'
 import {
   approvalView,
   buildRows,
+  firstLine,
   relative,
   rowView,
   stepRuns,
@@ -179,6 +180,13 @@ describe('thread rows', () => {
       ]),
     ).toBe('Edited 1 file, ran 1 command and used 2 tools')
     expect(summarize([step({ id: '1', type: 'reasoning' })])).toBe('Thought it through')
+  })
+
+  it('cuts a long title before an emoji across the limit, not through it', () => {
+    expect(toolTitle(`WebSearch\n{"query":"${'q'.repeat(58)}🔎 more"}`)).toBe(
+      `Web search ${'q'.repeat(58)}…`,
+    )
+    expect(firstLine(`${'a'.repeat(119)}🎉 and more`)).toBe(`${'a'.repeat(119)}…`)
   })
 
   it('names a tool call after the thing it acted on', () => {
