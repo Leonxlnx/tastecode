@@ -110,6 +110,35 @@ describe('history replay compaction', () => {
     expect(compactHistoryReplay(tail)).toEqual(tail)
   })
 
+  it('keeps the last context reading when a token-only report follows it', () => {
+    const report = (totalTokens: number, contextWindow?: number): DomainEvent => ({
+      type: 'usage.updated',
+      usage: {
+        inputTokens: totalTokens,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        totalTokens,
+        ...(contextWindow === undefined ? {} : { contextWindow }),
+      },
+    })
+    const history = entries([
+      {
+        type: 'turn.started',
+        turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 1 },
+      },
+      report(40_000, 200_000),
+      // ACP sends the prompt's token counts apart from its context reading.
+      report(1_200),
+      { type: 'turn.completed', turnId: 'turn-1', status: 'completed', completedAt: 2 },
+      report(1_300),
+    ])
+
+    const live = reduceEventLog(emptyThread, history)
+    expect(live.usage?.contextWindow).toBe(200_000)
+    expect(reduceEventLog(emptyThread, compactHistoryReplay(history)).usage).toEqual(live.usage)
+  })
+
   it('leaves an already-final replay exact', () => {
     const history = entries([
       {

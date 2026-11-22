@@ -181,6 +181,25 @@ describe('history pages', () => {
     expect(older.events[0]!.event.type).toBe('turn.started')
   })
 
+  it('carries the last context reading into a page whose usage has none', () => {
+    const reading: DomainEvent = {
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: 40_000,
+        contextWindow: 200_000,
+      },
+    }
+    const replay = entries([...turn(0), reading, usage(12), ...turn(1), usage(13), ...turn(2)])
+
+    const newest = readHistoryPage('thread', replay, { turnLimit: 1 })
+    expect(rendered(newest.events).usage).toEqual(rendered(replay).usage)
+    expect(rendered(newest.events).usage?.contextWindow).toBe(200_000)
+  })
+
   it('walks back through a replay that sorts imported turns by time', () => {
     const log = entries([
       ...turn(1),

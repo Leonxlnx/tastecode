@@ -1,4 +1,5 @@
 import { createCipheriv, createHash, randomBytes, randomUUID } from 'node:crypto'
+import { carriesContextWindow } from './history-replay.js'
 import {
   closeSync,
   existsSync,
@@ -3748,7 +3749,26 @@ export class Store {
       seq,
     )
     const userInputs = this.#openHistoryRequests(threadId, 'user_input', error?.seq ?? 0, seq)
-    return { ...(usage ? { usage } : {}), approvals, userInputs }
+    const contextUsage = usage && this.#lastContextUsage(threadId, usage)
+    return {
+      ...(usage ? { usage } : {}),
+      ...(contextUsage && contextUsage !== usage ? { contextUsage } : {}),
+      approvals,
+      userInputs,
+    }
+  }
+
+  /**
+   * The latest usage with a context window, from `latest` back. Bounded: a chat whose agent
+   * never reports a window would otherwise be read to its start for every page.
+   */
+  #lastContextUsage(threadId: string, latest: ReplayEntry): ReplayEntry | undefined {
+    let entry: ReplayEntry | undefined = latest
+    for (let looked = 0; entry && looked < 64; looked += 1) {
+      if (carriesContextWindow(entry.event)) return entry
+      entry = this.#lastHistoryStateEvent(threadId, 'usage.updated', entry.seq)
+    }
+    return undefined
   }
 
   #lastHistoryStateEvent(
