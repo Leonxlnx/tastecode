@@ -132,6 +132,16 @@ it('never stores a secret that also names an untitled page', () => {
   expect(localStorage.getItem(STORAGE_KEY)).not.toContain(secret)
 })
 
+it("never stores a secret from an app route's query in its untitled title", () => {
+  rememberBrowserVisit(
+    'https://app.example/#/callback?code=ABCDEF',
+    'app.example/#/callback?code=ABCDEF',
+  )
+
+  expect(urls()).toEqual(['https://app.example/#/callback'])
+  expect(localStorage.getItem(STORAGE_KEY)).not.toContain('ABCDEF')
+})
+
 it('keeps a title that shares a word with an anchor in the address', () => {
   rememberBrowserVisit('https://docs.example/guide#install', 'How to install')
 

@@ -103,13 +103,8 @@ export function rememberBrowserVisit(url: string, title: string, now = Date.now(
     if (secretParam(name)) removed.push(value)
   page.username = ''
   page.password = ''
-  page.hash = appRoute(page.hash)
-  // A copy: deleting from the live parameters while walking them would skip one.
-  for (const [name, value] of Array.from(page.searchParams)) {
-    if (!secretParam(name)) continue
-    removed.push(value)
-    page.searchParams.delete(name)
-  }
+  page.hash = appRoute(page.hash, removed)
+  stripSecrets(page.searchParams, removed)
   const key = pageKey(page)
   const visits = readBrowserHistory()
   const earlier = visits.find((visit) => pageKey(webPage(visit.url)) === key)
@@ -153,16 +148,26 @@ export function browserVisitAddress(url: string): string {
 /**
  * A fragment that is a single-page app's route, `#/settings` or `#!/inbox`,
  * with its secret parameters taken out. Any other fragment is an anchor or a
- * sign-in response, and becomes empty.
+ * sign-in response, and becomes empty. The values taken out go to `removed`.
  */
-function appRoute(hash: string): string {
+function appRoute(hash: string, removed: string[] = []): string {
   if (!/^#!?\//.test(hash)) return ''
   const queryAt = hash.indexOf('?')
   if (queryAt === -1) return hash
   const query = new URLSearchParams(hash.slice(queryAt + 1))
-  for (const [name] of Array.from(query)) if (secretParam(name)) query.delete(name)
+  stripSecrets(query, removed)
   const kept = query.toString()
   return `${hash.slice(0, queryAt)}${kept ? `?${kept}` : ''}`
+}
+
+/** Deletes the secret parameters and adds their values to `removed`. */
+function stripSecrets(params: URLSearchParams, removed: string[]): void {
+  // A copy: deleting from the live parameters while walking them would skip one.
+  for (const [name, value] of Array.from(params)) {
+    if (!secretParam(name)) continue
+    removed.push(value)
+    params.delete(name)
+  }
 }
 
 function decode(value: string): string {
