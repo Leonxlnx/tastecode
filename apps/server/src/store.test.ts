@@ -488,6 +488,46 @@ describe('durable queued turns', () => {
     }
   })
 
+  it('keeps no unread queue mutation log and drains one an older build wrote', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-queued-log-'))
+    const file = path.join(dir, 'harness.db')
+    const logRows = () => {
+      const raw = new DatabaseSync(file)
+      try {
+        const row = raw.prepare('SELECT count(*) AS count FROM queued_turn_events').get()
+        return Number((row as { count: number }).count)
+      } finally {
+        raw.close()
+      }
+    }
+    try {
+      const seeded = new Store(file)
+      seeded.addProject('/repo')
+      seeded.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Queue' })
+      seeded.enqueueQueuedTurn(queued('submission-a'))
+      seeded.enqueueQueuedTurn(queued('submission-b'))
+      seeded.moveQueuedTurn('thread-1', 'submission-b', 'up')
+      seeded.deleteQueuedTurn('thread-1', 'submission-a')
+      seeded.close()
+      expect(logRows()).toBe(0)
+
+      const raw = new DatabaseSync(file)
+      const insert = raw.prepare(
+        `INSERT INTO queued_turn_events (thread_id, queue_id, at, mutation, payload)
+         VALUES ('thread-1', 'submission-a', 1, 'enqueue', '{}')`,
+      )
+      for (let index = 0; index < 3; index += 1) insert.run()
+      raw.close()
+
+      const restarted = new Store(file)
+      expect(restarted.queuedTurns('thread-1').map(({ id }) => id)).toEqual(['submission-b'])
+      restarted.close()
+      expect(logRows()).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  })
+
   it('restores rejected claims and permanently completes accepted ones', () => {
     store.addProject('/repo')
     store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'api', title: 'Queue' })

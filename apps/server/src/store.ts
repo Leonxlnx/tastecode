@@ -831,7 +831,6 @@ type QueuedTurnRow = {
 }
 type PositionRow = { position: SqliteInteger }
 type AdjacentQueuedTurnRow = { queue_id: string; position: SqliteInteger }
-type QueuedTurnClaimRow = { thread_id: string; queue_id: string; intent: string }
 type DiffDecisionRow = { decision: string }
 type InterruptedThreadRow = { thread_id: string; payload: string }
 type HistoryRow = { seq: SqliteInteger; payload: string }
@@ -902,6 +901,8 @@ const REPLAY_SNAPSHOT_CACHE_LIMIT = 64
 // Disk snapshots duplicate a thread's compacted replay. Recently written threads
 // keep one; an older or closed thread rebuilds its replay from the log when reopened.
 const REPLAY_SNAPSHOT_DISK_LIMIT = REPLAY_SNAPSHOT_CACHE_LIMIT
+/** Rows of the retired queue mutation log removed per start; a start never waits on all of them. */
+const QUEUED_TURN_LOG_DRAIN_BATCH = 10_000
 const REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT = 16 * 1024 * 1024
 
 const StoredEventRowsSchema = z.array(
@@ -953,7 +954,6 @@ export class Store {
   #upsertRecoveryError: StatementSync
   #readInterruptedThreads: StatementSync
   #readInterruptedThread: StatementSync
-  #insertQueuedTurnEvent: StatementSync
   #listQueuedTurns: StatementSync
   #hasQueuedSubmission: StatementSync
   #openThread: StatementSync
@@ -1237,10 +1237,6 @@ export class Store {
     this.#readInterruptedThread = this.#db.prepare(
       `${openRecoveryLifecycles} AND recovery.thread_id = ? ORDER BY recovery.started_seq`,
     )
-    this.#insertQueuedTurnEvent = this.#db.prepare(
-      `INSERT INTO queued_turn_events (thread_id, queue_id, at, mutation, payload)
-       VALUES (?, ?, ?, ?, ?)`,
-    )
     this.#listQueuedTurns = this.#db.prepare(
       `SELECT queued_turns.* FROM queued_turns
        INNER JOIN threads ON threads.id = queued_turns.thread_id
@@ -1485,6 +1481,14 @@ export class Store {
     ))
       this.#ephemeralThreads.add(id)
     this.#recoverQueuedTurnClaims()
+    // Older builds appended every queue change to queued_turn_events, which
+    // nothing ever read. Each start removes one bounded batch until it is empty.
+    this.#db
+      .prepare(
+        `DELETE FROM queued_turn_events WHERE seq IN
+           (SELECT seq FROM queued_turn_events ORDER BY seq LIMIT ?)`,
+      )
+      .run(QUEUED_TURN_LOG_DRAIN_BATCH)
     const completedMigrations = new Set(
       sqliteRows<MigrationRow>(this.#db.prepare(`SELECT name FROM schema_migrations`)).map(
         ({ name }) => name,
@@ -3214,11 +3218,6 @@ export class Store {
       const position = Number(
         requiredSqliteRow<PositionRow>(this.#nextQueuedPosition, turn.threadId).position,
       )
-      this.#appendQueuedTurnEvent(turn.threadId, turn.id, 'enqueue', {
-        ...turn,
-        intent: 'normal',
-        position,
-      })
       this.#insertQueuedTurn.run(
         turn.threadId,
         turn.id,
@@ -3232,7 +3231,7 @@ export class Store {
   }
 
   deleteQueuedTurn(threadId: string, queueId: string): boolean {
-    return this.#mutateQueuedTurn(threadId, queueId, 'queued', 'delete', () => {
+    return this.#mutateQueuedTurn(threadId, queueId, 'queued', () => {
       this.#deleteQueuedTurn.run(threadId, queueId)
     })
   }
@@ -3247,7 +3246,6 @@ export class Store {
         current.position,
       )
       if (!adjacent) return false
-      this.#appendQueuedTurnEvent(threadId, queueId, 'move', { direction })
       this.#swapQueuedTurnPositions.run(
         queueId,
         adjacent.position,
@@ -3273,7 +3271,6 @@ export class Store {
       // Cannot honestly dispatch a prompt this build cannot read; the row
       // stays queued for a build that can.
       if (stored === undefined) return undefined
-      this.#appendQueuedTurnEvent(threadId, queueId, 'claim', { intent })
       this.#dispatchQueuedTurn.run(intent, threadId, queueId)
       return { ...stored, intent }
     })
@@ -3282,13 +3279,13 @@ export class Store {
   }
 
   restoreQueuedTurn(threadId: string, queueId: string): boolean {
-    return this.#mutateQueuedTurn(threadId, queueId, 'dispatching', 'restore', () => {
+    return this.#mutateQueuedTurn(threadId, queueId, 'dispatching', () => {
       this.#restoreQueuedTurn.run(threadId, queueId)
     })
   }
 
   completeQueuedTurn(threadId: string, queueId: string): boolean {
-    return this.#mutateQueuedTurn(threadId, queueId, 'dispatching', 'complete', () => {
+    return this.#mutateQueuedTurn(threadId, queueId, 'dispatching', () => {
       this.#deleteQueuedTurn.run(threadId, queueId)
     })
   }
@@ -3303,7 +3300,6 @@ export class Store {
       const claimed = this.#claimedQueuedTurn.get(threadId, queueId)
       if (!claimed) throw new Error('queued prompt is no longer claimed')
       const eventSeq = this.#appendEventPayload(threadId, event, Date.now(), serializedEvent)
-      this.#appendQueuedTurnEvent(threadId, queueId, 'complete', {})
       this.#deleteClaimedQueuedTurn.run(threadId, queueId)
       return eventSeq
     })
@@ -3330,13 +3326,11 @@ export class Store {
     threadId: string,
     queueId: string,
     state: 'queued' | 'dispatching',
-    mutation: string,
     project: () => void,
   ): boolean {
     const changed = this.#transaction(() => {
       const exists = this.#queuedTurnInState.get(threadId, queueId, state)
       if (!exists) return false
-      this.#appendQueuedTurnEvent(threadId, queueId, mutation, {})
       project()
       return true
     })
@@ -3347,39 +3341,16 @@ export class Store {
   #clearQueuedTurns(threadId: string): void {
     const exists = this.#hasQueuedTurn.get(threadId)
     if (!exists) return
-    this.#appendQueuedTurnEvent(threadId, null, 'clear', {})
     this.#clearQueuedTurnsStatement.run(threadId)
     this.#queuedThreadIdsCache = undefined
   }
 
-  #appendQueuedTurnEvent(
-    threadId: string,
-    queueId: string | null,
-    mutation: string,
-    payload: unknown,
-  ): void {
-    this.#insertQueuedTurnEvent.run(threadId, queueId, Date.now(), mutation, serializeJson(payload))
-  }
-
   #recoverQueuedTurnClaims(): void {
-    const claims = sqliteRows<QueuedTurnClaimRow>(
-      this.#db.prepare(
-        `SELECT thread_id, queue_id, intent FROM queued_turns WHERE state = 'dispatching'`,
-      ),
-    ).map((claim) => ({ ...claim, intent: queuedTurnIntent(claim.intent) }))
-    if (claims.length === 0) return
-    this.#transaction(() => {
-      for (const claim of claims) {
-        this.#appendQueuedTurnEvent(claim.thread_id, claim.queue_id, 'recover', {
-          intent: claim.intent,
-        })
-      }
-      this.#db
-        .prepare(
-          `UPDATE queued_turns SET state = 'queued', intent = 'normal' WHERE state = 'dispatching'`,
-        )
-        .run()
-    })
+    this.#db
+      .prepare(
+        `UPDATE queued_turns SET state = 'queued', intent = 'normal' WHERE state = 'dispatching'`,
+      )
+      .run()
   }
 
   #transaction<T>(action: () => T): T {
