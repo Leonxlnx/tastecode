@@ -22,7 +22,7 @@ export type DefaultSkills = {
   commands: ProviderCommand[]
   /** A few lines for shared instructions, or '' when no skill is installed. */
   catalog: string
-  /** What goes in front of a prompt sent with Creatify on, or '' when no skill is installed. */
+  /** What follows a prompt sent with Creatify on, or '' when no skill is installed. */
   creatify: string
 }
 

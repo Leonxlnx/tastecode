@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   CREATIFY_ATTACHMENT,
+  CREATIFY_NOTE_CLOSE,
   CREATIFY_NOTE_OPEN,
-  CREATIFY_NOTE_REQUEST,
   creatifyNote,
   isCreatifyAttachment,
   withoutCreatifyNote,
@@ -24,7 +24,7 @@ describe('Creatify', () => {
     const note = creatifyNote(SKILLS)
 
     expect(note.startsWith(CREATIFY_NOTE_OPEN)).toBe(true)
-    expect(note.endsWith(CREATIFY_NOTE_REQUEST)).toBe(true)
+    expect(note.endsWith(CREATIFY_NOTE_CLOSE)).toBe(true)
     expect(note).toContain('\n- cinetic: motion design made in code (/skills/cinetic/SKILL.md)\n')
     expect(note).toContain('\n- plain (/skills/plain/SKILL.md)\n')
   })
@@ -33,14 +33,27 @@ describe('Creatify', () => {
     expect(creatifyNote([])).toBe('')
   })
 
-  it('takes the note off a prompt and leaves any other text alone', () => {
+  it('takes the note off the end of a prompt', () => {
     const words = 'Build a pricing page.\n\nUser request:\nis part of what I wrote.'
+    const note = creatifyNote(SKILLS)
 
-    expect(withoutCreatifyNote(`${creatifyNote(SKILLS)}${words}`)).toBe(words)
+    expect(withoutCreatifyNote(`${words}${note}`)).toBe(words)
+    // A provider may store the prompt with a line break after it.
+    expect(withoutCreatifyNote(`${words}${note}\n`)).toBe(words)
+  })
+
+  it('leaves text alone that only looks like the note', () => {
+    const words = 'Build a pricing page.'
+    const note = creatifyNote(SKILLS)
+
     expect(withoutCreatifyNote(words)).toBe(words)
-    // Opened but never closed is not our note; nothing is cut.
-    expect(withoutCreatifyNote(`${CREATIFY_NOTE_OPEN}${words}`)).toBe(
-      `${CREATIFY_NOTE_OPEN}${words}`,
+    // Quoted in the middle of a prompt, it is the user's own text.
+    expect(withoutCreatifyNote(`${words}${note}\nWhat does this note do?`)).toBe(
+      `${words}${note}\nWhat does this note do?`,
+    )
+    // A closing tag without the note's opening is not ours either.
+    expect(withoutCreatifyNote(`<tastecode_creatify>\nmy example${CREATIFY_NOTE_CLOSE}`)).toBe(
+      `<tastecode_creatify>\nmy example${CREATIFY_NOTE_CLOSE}`,
     )
   })
 })

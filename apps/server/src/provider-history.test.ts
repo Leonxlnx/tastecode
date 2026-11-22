@@ -2281,16 +2281,16 @@ describe('a chat that ran in TasteCode before it was imported', () => {
     const note = creatifyNote([
       { name: 'cinetic', summary: 'motion design made in code', file: '/skills/cinetic/SKILL.md' },
     ])
-    expect(imported(`${note}${words}`)).toEqual([
+    expect(imported(`${words}${note}`)).toEqual([
       ['user', words],
       ['assistant', 'pineapple'],
     ])
-    expect(imported(`${RESTORE_CONTEXT_NOTICE}${unreadResults}${note}${words}`)[0]).toEqual([
+    expect(imported(`${RESTORE_CONTEXT_NOTICE}${unreadResults}${words}${note}`)[0]).toEqual([
       'user',
       words,
     ])
     // Run here, the local log shows the words already; the provider's copy is the same prompt.
-    expect(shown('local-thread', turn('native', `${note}${words}`, 'Done'), typed(words))).toEqual(
+    expect(shown('local-thread', turn('native', `${words}${note}`, 'Done'), typed(words))).toEqual(
       [],
     )
   })
