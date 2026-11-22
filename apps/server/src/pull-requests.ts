@@ -719,10 +719,16 @@ export class PullRequestService {
         message = action.rebase ? 'Branch rebased' : 'Base branch merged into pull request'
         break
 
-      case 'rerun_checks':
-        await this.#rerunChecks(repository, url, action.failedOnly)
+      case 'rerun_checks': {
+        const rerun = await this.#rerunChecks(repository, url, action.failedOnly)
+        if (rerun) {
+          // Other runs may have restarted: the cached checks are stale either way.
+          this.#invalidate(repository, number, action)
+          throw rerun.failure
+        }
         message = action.failedOnly ? 'Failed checks restarted' : 'Checks restarted'
         break
+      }
 
       case 'merge':
       case 'enable_auto_merge':
@@ -1333,7 +1339,12 @@ export class PullRequestService {
     return pending
   }
 
-  async #rerunChecks(repository: string, url: string, failedOnly: boolean): Promise<void> {
+  /** Restarts what it can; the error of a run that would not restart comes back, not thrown. */
+  async #rerunChecks(
+    repository: string,
+    url: string,
+    failedOnly: boolean,
+  ): Promise<{ failure: unknown } | undefined> {
     const output = await this.#run([
       'pr',
       'checks',
@@ -1343,13 +1354,19 @@ export class PullRequestService {
     ])
     const checks = parseJson(output, 'pull-request checks', z.array(CheckRunSchema))
     const runIds = new Set<string>()
+    // GitHub restarts a run only once all of its jobs have ended, and one
+    // that still runs is running already.
+    const running = new Set<string>()
     for (const check of checks) {
-      if (failedOnly && check.bucket !== 'fail' && check.bucket !== 'cancel') continue
       const runId = /\/actions\/runs\/(\d+)/.exec(check.link ?? '')?.[1]
-      if (runId) runIds.add(runId)
+      if (!runId) continue
+      if (check.bucket === 'pending') running.add(runId)
+      if (failedOnly && check.bucket !== 'fail' && check.bucket !== 'cancel') continue
+      runIds.add(runId)
     }
+    for (const runId of running) runIds.delete(runId)
     if (runIds.size === 0) throw new Error('No GitHub Actions runs are available to restart')
-    await Promise.all(
+    const results = await Promise.allSettled(
       [...runIds].map((runId) =>
         this.#run([
           'run',
@@ -1361,6 +1378,8 @@ export class PullRequestService {
         ]),
       ),
     )
+    const failed = results.find((result) => result.status === 'rejected')
+    return failed ? { failure: failed.reason } : undefined
   }
 
   #invalidate(repository: string, number: number, action: PullRequestAction): void {
