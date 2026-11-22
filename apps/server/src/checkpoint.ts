@@ -470,19 +470,29 @@ export async function patchSince(
   const root = canonicalCheckoutRoot(repoPath)
   const scope = path.relative(root, realpathSync(repoPath))
   const posix = (value: string) => value.split(path.sep).join('/')
-  const out = await git(root, [
-    'diff',
-    '--binary',
-    '--no-color',
-    '--no-ext-diff',
-    ...(scope === '' ? [] : [`--relative=${posix(scope)}`]),
-    commit,
-    now.commit,
-    '--',
-    ...files.map((file) => `:(literal)${posix(path.join(scope, file))}`),
-  ])
+  const out = await git(
+    root,
+    [
+      'diff',
+      '--binary',
+      '--no-color',
+      '--no-ext-diff',
+      // Undo applies this patch in reverse: the user's diff.noprefix or a textconv
+      // driver would give it headers or contents git apply cannot read back.
+      '--no-textconv',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
+      ...(scope === '' ? [] : [`--relative=${posix(scope)}`]),
+      commit,
+      now.commit,
+      '--',
+      ...files.map((file) => `:(literal)${posix(path.join(scope, file))}`),
+    ],
+    // A binary hunk ends in an empty line; trimmed, git apply calls the patch corrupt.
+    { untrimmed: true },
+  )
   if (out === undefined) return undefined
-  return out === '' ? '' : `${out}\n`
+  return out.trim() === '' ? '' : out
 }
 
 const protectedSnapshots = new Map<string, { repoPath: string; commit: string }>()
@@ -629,7 +639,11 @@ export async function syncCheckpointRefs(
   }
 }
 
-async function git(cwd: string, args: string[]): Promise<string | undefined> {
+async function git(
+  cwd: string,
+  args: string[],
+  { untrimmed = false }: { untrimmed?: boolean } = {},
+): Promise<string | undefined> {
   try {
     // Path lists after an agent generated thousands of files outgrow Node's
     // 1 MiB default, and the failed call would make undo unavailable.
@@ -639,7 +653,7 @@ async function git(cwd: string, args: string[]): Promise<string | undefined> {
       timeout: 20000,
       maxBuffer: 256 * 1024 * 1024,
     })
-    return args.includes('-z') ? stdout : stdout.trim()
+    return untrimmed || args.includes('-z') ? stdout : stdout.trim()
   } catch {
     return undefined
   }
