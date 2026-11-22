@@ -8,6 +8,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs'
@@ -495,6 +496,41 @@ describe('restoreSnapshot', () => {
     expect(read('victim.txt')).toBe('private ignored file\n')
     await restoreSnapshot(repo, replaced.commit)
     expect(read(' victim.txt')).toBe('agent file\n')
+  })
+
+  it('backs up a file that became ignored after the checkpoint before overwriting it', async () => {
+    write('.env', 'checkpoint secret\n')
+    const before = await takeSnapshot(repo)
+    write('.gitignore', '.env\n')
+    write('.env', 'newer secret\n')
+
+    const replaced = await restoreSnapshot(repo, before.commit)
+    expect(read('.env')).toBe('checkpoint secret\n')
+    expect(existsSync(path.join(repo, '.gitignore'))).toBe(false)
+    expect(git('show', `${replaced.commit}:.env`)).toBe('newer secret\n')
+
+    await restoreSnapshot(repo, replaced.commit)
+    expect(read('.env')).toBe('newer secret\n')
+    expect(read('.gitignore')).toBe('.env\n')
+  })
+
+  it('still restores when a checkpointed folder became a link to another folder', async (context) => {
+    mkdirSync(path.join(repo, 'assets'))
+    write('assets/logo.txt', 'checkpoint\n')
+    write('notes.txt', 'checkpoint\n')
+    const before = await takeSnapshot(repo)
+    renameSync(path.join(repo, 'assets'), path.join(repo, 'shared'))
+    try {
+      symlinkSync('shared', path.join(repo, 'assets'), 'dir')
+    } catch {
+      // Windows without Developer Mode or admin rights cannot create one.
+      context.skip()
+    }
+    write('notes.txt', 'agent\n')
+
+    await restoreSnapshot(repo, before.commit)
+
+    expect(read('notes.txt')).toBe('checkpoint\n')
   })
 
   it('backs up working edits to force-staged ignored files without changing their index', async () => {

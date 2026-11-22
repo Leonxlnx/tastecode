@@ -68,12 +68,16 @@ export class RestoreSnapshotError extends AggregateError {
  * `retainIn` also keeps the snapshot as a checkpoint of that namespace (see
  * retainCheckpoint), written in the same git run as the reference that
  * protects it.
+ *
+ * `ignoredFiles` (relative to the checkout root) are captured although Git
+ * ignores them.
  */
 export async function takeSnapshot(
   repoPath: string,
-  options: { retainIn?: string } = {},
+  options: { retainIn?: string; ignoredFiles?: readonly string[] } = {},
 ): Promise<Snapshot> {
   const retainIn = options.retainIn
+  const ignoredFiles = options.ignoredFiles ?? []
   if (retainIn !== undefined && !/^[a-zA-Z0-9-]+$/.test(retainIn))
     throw new Error('invalid checkpoint namespace')
   const scope = path.relative(canonicalCheckoutRoot(repoPath), realpathSync(repoPath)) || '.'
@@ -84,7 +88,12 @@ export async function takeSnapshot(
   const [base, status] = await Promise.all([snapshotBase(repoPath), cleanStatus(repoPath, scope)])
   // Before the first commit there is no HEAD; snapshots then start from the empty tree.
   const head = base.head
-  if (head && status === '' && (await indexTrustsWorkingTree(repoPath))) {
+  if (
+    head &&
+    status === '' &&
+    ignoredFiles.length === 0 &&
+    (await indexTrustsWorkingTree(repoPath))
+  ) {
     await protectSnapshot(repoPath, head, retainIn)
     return { commit: head, clean: true }
   }
@@ -146,16 +155,23 @@ export async function takeSnapshot(
     ]
     // Through stdin: one pathspec per nested repository could outgrow the
     // Windows command line.
-    await new Promise<void>((resolve, reject) => {
-      const child = execFile(
-        'git',
-        ['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'],
-        { cwd: repoPath, env, windowsHide: true, timeout: 60_000 },
-        (error) => (error ? reject(error) : resolve()),
+    const add = (flag: string, specs: readonly string[]) =>
+      new Promise<void>((resolve, reject) => {
+        const child = execFile(
+          'git',
+          ['add', flag, '--pathspec-from-file=-', '--pathspec-file-nul'],
+          { cwd: repoPath, env, windowsHide: true, timeout: 60_000 },
+          (error) => (error ? reject(error) : resolve()),
+        )
+        child.stdin?.on('error', reject)
+        child.stdin?.end(specs.join('\0') + '\0')
+      })
+    await add('-A', pathspecs)
+    if (ignoredFiles.length > 0)
+      await add(
+        '--force',
+        ignoredFiles.map((file) => `:(literal)${file}`),
       )
-      child.stdin?.on('error', reject)
-      child.stdin?.end(pathspecs.join('\0') + '\0')
-    })
     const { stdout: tree } = await run('git', ['write-tree'], {
       cwd: repoPath,
       env,
@@ -361,10 +377,22 @@ export async function restoreSnapshot(
   commit: string,
   namespace?: string,
 ): Promise<Snapshot> {
-  const replaced = await takeSnapshot(repoPath, namespace ? { retainIn: namespace } : {})
+  const folder = repoPath
+  let replaced = await takeSnapshot(folder)
   const scope = path.relative(canonicalCheckoutRoot(repoPath), realpathSync(repoPath)) || '.'
   repoPath = canonicalCheckoutRoot(repoPath)
   assertCommit(commit)
+
+  // `add -A` leaves out a file that became ignored after the checkpoint, yet
+  // the restore below overwrites it with the checkpoint's version. The
+  // snapshot of what the restore replaces has to hold it.
+  const ignoredSince = await ignoredSinceCheckpoint(repoPath, commit, replaced.commit, scope)
+  if (ignoredSince.length > 0)
+    replaced = await takeSnapshot(folder, {
+      ...(namespace ? { retainIn: namespace } : {}),
+      ignoredFiles: ignoredSince,
+    })
+  else if (namespace) await retainCheckpoint(repoPath, namespace, replaced.commit)
 
   // Anything that exists now and did not exist at the checkpoint. Computed
   // against the snapshot we just took rather than the live tree, so untracked
@@ -413,6 +441,51 @@ export async function restoreSnapshot(
   }
 
   return replaced
+}
+
+/**
+ * Files a checkpoint holds that a later snapshot of the same checkout does
+ * not, although they are on disk: Git ignores them now. A path below a
+ * symbolic link stays out; `git add` refuses it and the restore would fail.
+ */
+async function ignoredSinceCheckpoint(
+  root: string,
+  checkpoint: string,
+  snapshot: string,
+  scope: string,
+): Promise<string[]> {
+  const missing = await git(root, [
+    'diff',
+    '--no-renames',
+    '--name-only',
+    '-z',
+    '--diff-filter=D',
+    checkpoint,
+    snapshot,
+    '--',
+    `:(literal)${scope}`,
+  ])
+  if (missing === undefined) throw new Error('could not list files to restore')
+  const folders = new Map<string, Promise<boolean>>()
+  const realFolder = (folder: string): Promise<boolean> => {
+    if (folder === '.') return Promise.resolve(true)
+    let known = folders.get(folder)
+    if (known === undefined) {
+      known = (async () => {
+        const entry = await lstat(path.join(root, folder)).catch(() => undefined)
+        return entry?.isDirectory() === true && (await realFolder(path.posix.dirname(folder)))
+      })()
+      folders.set(folder, known)
+    }
+    return known
+  }
+  const files: string[] = []
+  for (const file of missing.split('\0').filter(Boolean)) {
+    if (!(await realFolder(path.posix.dirname(file)))) continue
+    const entry = await lstat(path.join(root, file)).catch(() => undefined)
+    if (entry !== undefined && !entry.isDirectory()) files.push(file)
+  }
+  return files
 }
 
 async function restoreTree(
