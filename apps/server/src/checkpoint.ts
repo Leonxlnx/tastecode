@@ -396,6 +396,11 @@ export async function restoreSnapshot(
     `:(literal)${scope}`,
   ])
   if (rollbackAdded === undefined) throw new Error('could not list files for restore rollback')
+  const blocking = await folderNoSnapshotHolds(repoPath, commit, replaced.commit, scope)
+  if (blocking !== undefined)
+    throw new Error(
+      `Cannot restore: "${blocking}" is a folder now and holds files or a repository that no checkpoint can bring back. Move the folder elsewhere, then restore again.`,
+    )
   try {
     await restoreTree(repoPath, commit, scope, added)
   } catch (error) {
@@ -433,6 +438,66 @@ async function restoreTree(
     windowsHide: true,
     timeout: 60_000,
   })
+}
+
+/**
+ * The first file of a checkpoint whose path is a folder now, holding something
+ * the snapshot of the current state leaves out: ignored files, a nested
+ * repository or a submodule. To write the file, `git restore` deletes the
+ * whole folder, and nothing could bring those back.
+ */
+async function folderNoSnapshotHolds(
+  root: string,
+  checkpoint: string,
+  snapshot: string,
+  scope: string,
+): Promise<string | undefined> {
+  // Deleted, or changed type: a file the snapshot holds as a submodule's gitlink.
+  const replaced = await git(root, [
+    'diff',
+    '--no-renames',
+    '--name-only',
+    '-z',
+    '--diff-filter=DT',
+    checkpoint,
+    snapshot,
+    '--',
+    `:(literal)${scope}`,
+  ])
+  if (replaced === undefined) throw new Error('could not list files to restore')
+  for (const file of replaced.split('\0').filter(Boolean)) {
+    if (!(await lstat(path.join(root, file)).catch(() => undefined))?.isDirectory()) continue
+    const inside = `:(literal)${file}/`
+    const ignored = await git(root, [
+      'ls-files',
+      '--others',
+      '--ignored',
+      '--exclude-standard',
+      '--directory',
+      '-z',
+      '--',
+      inside,
+    ])
+    // Untracked nested repositories are listed as folders, ending in "/".
+    const untracked = await git(root, [
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '-z',
+      '--',
+      inside,
+    ])
+    const tracked = await git(root, ['ls-files', '--stage', '-z', '--', inside])
+    if (ignored === undefined || untracked === undefined || tracked === undefined)
+      throw new Error('could not list files to restore')
+    if (
+      ignored !== '' ||
+      untracked.split('\0').some((entry) => entry.endsWith('/')) ||
+      tracked.split('\0').some((entry) => entry.startsWith('160000 '))
+    )
+      return file
+  }
+  return undefined
 }
 
 /** Files that differ between a snapshot and the working tree right now. */
