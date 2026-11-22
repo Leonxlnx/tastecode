@@ -317,6 +317,22 @@ describe('durable history ownership', () => {
     expect(store.subagents.get('declined-run')).toBeUndefined()
   })
 
+  it("keeps a pruned chat's provider session out of provider history", () => {
+    const { store, root } = setup()
+    store.addThread({
+      id: 'grok-chat',
+      projectPath: root,
+      provider: 'grok',
+      title: 'Pruned',
+      providerSessionId: 'native-session',
+    } as Parameters<typeof store.addThread>[0])
+    store.closeThread('grok-chat')
+    expect(store.pruneHistory(Date.now() + 1_000, path.join(root, 'archive.ndjson'))).toBe(1)
+
+    expect(store.leftProviderSessions('grok')).toEqual(['native-session'])
+    expect(store.leftProviderSessions('codex')).toEqual([])
+  })
+
   it('retains checkpoints and undo tails for providers absent from this build', () => {
     const { store, root, location } = setup()
     const seq = store.append('thread', message('first'))

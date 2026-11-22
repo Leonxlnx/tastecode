@@ -3014,6 +3014,14 @@ export class Store {
       // A chat's sub-agents go with it, as in `deleteThread`. They are never
       // closed themselves, so left behind nothing could reach or remove them.
       ids = [...new Set(candidates.flatMap((id) => [id, ...this.ownedThreadIds(id)]))]
+      // Their provider sessions stay on disk. Like a deleted chat's, they are kept out of
+      // provider history, which would otherwise import them as new chats.
+      const sessions = candidates.flatMap((id) => {
+        const thread = this.thread(id)
+        return thread && !thread.ephemeral
+          ? [{ id, provider: thread.provider, session: thread.providerSessionId ?? thread.id }]
+          : []
+      })
       // The archive is flushed to disk while the transaction still holds the
       // selected state. A failed write cannot erase even one conversation.
       this.#writeHistoryArchive(archive, ids)
@@ -3033,6 +3041,16 @@ export class Store {
         this.subagents.deleteFor(id)
         this.#db.prepare('DELETE FROM threads WHERE id = ?').run(id)
       }
+      // After the deletes: a session another remaining chat runs on is still that chat's.
+      const leave = this.#db.prepare(
+        `INSERT INTO left_provider_sessions (provider, session_id, thread_id, left_at)
+         SELECT ?, ?, ?, ? WHERE NOT EXISTS (
+           SELECT 1 FROM threads WHERE provider = ? AND COALESCE(provider_session_id, id) = ?)
+         ON CONFLICT(provider, session_id) DO NOTHING`,
+      )
+      const now = Date.now()
+      for (const { id, provider, session } of sessions)
+        leave.run(provider, session, id, now, provider, session)
     })
     for (const id of ids) {
       this.#ephemeralThreads.delete(id)
