@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TestTransport } from '../../test-transport.js'
 import { WorkspacePanel } from './WorkspacePanel.js'
 import {
@@ -140,6 +140,75 @@ it('resizes the bottom panel with Up and Down', () => {
   expect(base.onWidthChange).toHaveBeenLastCalledWith(200)
   fireEvent.keyDown(edge, { key: 'End' })
   expect(base.onWidthChange).toHaveBeenLastCalledWith(720)
+})
+
+it('saves no size when the edge is pressed and released without moving', () => {
+  reduceMotion(true)
+  const base = props()
+  // 720px of room leaves 360px for the panel: the saved 700 is drawn at 360.
+  const { container } = renderIn('workspace-layout', base)
+  Object.defineProperty(container, 'clientWidth', { configurable: true, value: 720 })
+  const edge = screen.getByRole('separator')
+  Object.defineProperty(edge, 'setPointerCapture', { configurable: true, value: vi.fn() })
+  fireEvent.pointerDown(edge, { clientX: 500, pointerId: 3 })
+  fireEvent.pointerUp(window, { clientX: 500, pointerId: 3 })
+  expect(base.onWidthChange).not.toHaveBeenCalled()
+})
+
+it('saves no size for a keyboard step that cannot move past a limit', () => {
+  reduceMotion(true)
+  const base = props()
+  const { container, rerender } = renderIn('workspace-layout', base)
+  Object.defineProperty(container, 'clientWidth', { configurable: true, value: 720 })
+  const edge = screen.getByRole('separator')
+  // Drawn at its 360px maximum: widening cannot move it.
+  fireEvent.keyDown(edge, { key: 'ArrowLeft' })
+  fireEvent.keyDown(edge, { key: 'End' })
+  rerender(<WorkspacePanel {...base} width={300} />)
+  // At the 300px minimum: narrowing cannot move it.
+  fireEvent.keyDown(edge, { key: 'ArrowRight' })
+  fireEvent.keyDown(edge, { key: 'Home' })
+  expect(base.onWidthChange).not.toHaveBeenCalled()
+  fireEvent.keyDown(edge, { key: 'ArrowLeft' })
+  expect(base.onWidthChange).toHaveBeenLastCalledWith(316)
+})
+
+describe('a bottom panel restored below its 200px minimum', () => {
+  // A saved 180px is valid and drawn at 180px: nothing clamps it from below.
+  const restored = () => {
+    reduceMotion(true)
+    const base = { ...props(), placement: 'bottom' as const, width: 180 }
+    const { container } = renderIn('bottom-terminal', base)
+    Object.defineProperty(container.parentElement!, 'clientHeight', {
+      configurable: true,
+      value: 800,
+    })
+    const edge = screen.getByRole('separator')
+    Object.defineProperty(edge, 'setPointerCapture', { configurable: true, value: vi.fn() })
+    return { base, edge }
+  }
+
+  it('moves to the minimum on Home', () => {
+    const { base, edge } = restored()
+    fireEvent.keyDown(edge, { key: 'Home' })
+    expect(base.onWidthChange).toHaveBeenLastCalledWith(200)
+  })
+
+  it('keeps a drag that ends exactly at the minimum', () => {
+    const { base, edge } = restored()
+    fireEvent.pointerDown(edge, { clientY: 500, pointerId: 4 })
+    fireEvent.pointerMove(window, { clientY: 450, pointerId: 4 })
+    fireEvent.pointerMove(window, { clientY: 500, pointerId: 4 })
+    fireEvent.pointerUp(window, { clientY: 500, pointerId: 4 })
+    expect(base.onWidthChange).toHaveBeenLastCalledWith(200)
+  })
+
+  it('still saves nothing for a press without movement', () => {
+    const { base, edge } = restored()
+    fireEvent.pointerDown(edge, { clientY: 500, pointerId: 5 })
+    fireEvent.pointerUp(window, { clientY: 500, pointerId: 5 })
+    expect(base.onWidthChange).not.toHaveBeenCalled()
+  })
 })
 
 it('keeps the edge of an expanded panel out of the tab order', () => {

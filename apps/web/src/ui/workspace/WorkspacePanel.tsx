@@ -542,6 +542,7 @@ function WorkspacePanelComponent(props: {
     const previousTransition = layout?.style.transition
     if (layout) layout.style.transition = 'none'
     const bounds = panelSizeBounds(layout, bottom)
+    const drawn = drawnPanelSize(props.width, bounds)
     resizeCleanup.current = beginPanelResize(event, {
       axis: bottom ? 'clientY' : 'clientX',
       initialSize: props.width,
@@ -551,7 +552,10 @@ function WorkspacePanelComponent(props: {
       property: bottom ? 'height' : '--workspace-panel-w',
       onFinish: (size, commit) => {
         resizeCleanup.current = () => {}
-        if (commit) props.onWidthChange(size)
+        // A press without movement ends at the size it started from, the saved
+        // or the drawn one: that is no resize, and must not replace the saved
+        // size with a clamped one.
+        if (commit && size !== drawn && size !== props.width) props.onWidthChange(size)
         else
           layout?.style.setProperty(bottom ? 'height' : '--workspace-panel-w', `${props.width}px`)
         if (layout) layout.style.transition = previousTransition ?? ''
@@ -616,6 +620,8 @@ function WorkspacePanelComponent(props: {
     resizeCleanup.current()
     setSizeLimit(bounds.max)
     const size = Math.round(Math.min(bounds.max, Math.max(bounds.min, next)))
+    // A step against a limit leaves the drawn size as it is: nothing to save.
+    if (size === Math.round(drawnPanelSize(props.width, bounds))) return
     layout?.style.setProperty(bottom ? 'height' : '--workspace-panel-w', `${size}px`)
     props.onWidthChange(size)
   }
@@ -744,6 +750,15 @@ function WorkspacePanelComponent(props: {
       </div>
     </aside>
   )
+}
+
+/**
+ * The size a panel is drawn at now. The host caps it at the room there is, but
+ * nothing raises it to the minimum: a 180px bottom panel restored from an older
+ * save is drawn at 180px although a resize can only reach 200px.
+ */
+function drawnPanelSize(width: number, bounds: { max: number }): number {
+  return Math.min(bounds.max, width)
 }
 
 /** The sizes a panel can take inside its host right now: the chat keeps its minimum width. */
