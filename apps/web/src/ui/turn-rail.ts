@@ -30,9 +30,14 @@ export function turnRailEntries(
   previous: readonly TurnRailEntry[] = [],
 ): readonly TurnRailEntry[] {
   const entries: TurnRailEntry[] = []
+  const marked = new Set<string>()
   for (const turn of turns) {
     const prompt = presentations.get(turn.turnId)?.prompt
-    if (!prompt) continue
+    // A row without a turn, such as the notice that a chat moved to another
+    // provider, can split one turn's rows into two marks. The turn keeps one
+    // tick, at its start.
+    if (!prompt || marked.has(turn.turnId)) continue
+    marked.add(turn.turnId)
     entries.push({
       turnId: turn.turnId,
       index: turn.index,

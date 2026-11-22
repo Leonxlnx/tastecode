@@ -42,6 +42,26 @@ describe('turn rail entries', () => {
     expect(entries.map((entry) => entry.turnId)).toEqual(['t1'])
   })
 
+  it('marks a turn once when a row without a turn splits its rows', () => {
+    // Moving a chat to another provider records a notice with no turn id, which
+    // can land between the first prompt there and that turn's answer.
+    const notice: Item = {
+      id: 'n1',
+      turnId: '',
+      type: 'notice',
+      status: 'completed',
+      notice: { kind: 'provider', provider: 'codex' },
+      createdAt: 0,
+    }
+    const entries = entriesOf([
+      message('p1', 't1', 'user', 'Continue on Codex'),
+      notice,
+      message('a1', 't1', 'assistant', 'Done.'),
+    ])
+
+    expect(entries.map((entry) => [entry.turnId, entry.index])).toEqual([['t1', 0]])
+  })
+
   it('names a prompt without text by its attachment', () => {
     const entries = entriesOf([{ ...message('p1', 't1', 'user', ''), attachments: ['a.png'] }])
 
