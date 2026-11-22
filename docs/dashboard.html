@@ -291,19 +291,22 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-22 dev 9c53c313 · nightly 8a60342f · main dd8f4264</span>
+        <span class="meta">2026-11-22 dev 5d05dbcf · nightly 8a60342f · main dd8f4264</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <p>
-          November 22 on dev (9c53c313, not on nightly or main): 65 pull requests merged. Creatify
-          replaces the Design button in the prompt bar: with it on, the server puts a short note
-          behind the prompt that sends the agent to the bundled creative skill that fits (websites,
-          motion, sound, demos), for every provider that runs a text turn, and the choice stays with
-          its chat (#2440, #2441); earshot ships with the default skills for sound (#2443). Restore
-          and Undo lose nothing any more: a file that became ignored is backed up before a restore
+          November 22 on dev (5d05dbcf, not on nightly or main): 66 pull requests merged, besides
+          the dashboard entries. Creatify replaces the Design button in the prompt bar: with it on,
+          the server puts a short note behind the prompt that sends the agent to the bundled
+          creative skill that fits (websites, motion, sound, demos), for every provider that runs a
+          text turn, and the choice stays with its chat (#2440, #2441); earshot ships with the
+          default skills for sound (#2443). The server's Design workflow is removed: a prompt that
+          still carries the old Design marker is an ordinary turn, continue in a chat with a saved
+          run is an ordinary prompt, and saved runs stay in the database unread (#2447). Restore and
+          Undo lose nothing any more: a file that became ignored is backed up before a restore
           overwrites it, a restore that would delete a folder no snapshot holds is refused, and Undo
           works in a project that is a repository subfolder and ignores the user's own diff settings
           (#2422, #2426 to #2428). The orchestrator keeps the queue held while a Stop waits for a
