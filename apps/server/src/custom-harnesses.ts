@@ -1,17 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import {
-  constants,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { CustomHarnessSchema, type CustomHarness } from '@harness/contracts'
 import { z } from 'zod'
+// Apart from the node:fs import above, which the temporary-file cleanup (#2346) changes.
+import { constants, copyFileSync } from 'node:fs'
 import { configFile } from './product-paths.js'
 import { assertProviderOffered, providerOffered } from './provider-edition.js'
 
@@ -79,6 +72,7 @@ export class CustomHarnessStore {
     const index = file.harnesses.findIndex((entry) => entry.id === harness.id)
     if (index < 0) file.harnesses.push(harness)
     else file.harnesses[index] = harness
+    this.#setAsideUnreadable()
     this.#write(file)
     return harness
   }
@@ -88,10 +82,11 @@ export class CustomHarnessStore {
     const index = file.harnesses.findIndex((entry) => entry.id === id)
     if (index < 0) throw new Error(`custom harness "${id}" does not exist`)
     file.harnesses.splice(index, 1)
+    this.#setAsideUnreadable()
     this.#write(file)
   }
 
-  /** The last read could not parse the file; the next write sets the file aside first. */
+  /** The last read could not parse the file; it is set aside before a write replaces it. */
   #readLossy = false
 
   #read(): ConfigFile {
@@ -111,34 +106,25 @@ export class CustomHarnessStore {
     }
   }
 
+  /** A hand-edited file we could not parse is not ours to destroy. */
+  #setAsideUnreadable(): void {
+    if (!this.#readLossy || !existsSync(this.location)) return
+    copyFileSync(
+      this.location,
+      `${this.location}.invalid-${Date.now()}-${randomUUID().slice(0, 8)}.bak`,
+      constants.COPYFILE_EXCL,
+    )
+    this.#readLossy = false
+  }
+
   #write(file: ConfigFile): void {
     mkdirSync(path.dirname(this.location), { recursive: true })
     const temporary = `${this.location}.${randomUUID()}.tmp`
     const stored = { version: file.version, harnesses: [...file.harnesses, ...file.unsupported] }
-    try {
-      writeFileSync(temporary, `${JSON.stringify(stored, null, 2)}\n`, {
-        encoding: 'utf8',
-        mode: 0o600,
-      })
-      // A hand-edited file we could not parse is not ours to destroy.
-      if (this.#readLossy && existsSync(this.location)) {
-        copyFileSync(
-          this.location,
-          `${this.location}.invalid-${Date.now()}-${randomUUID().slice(0, 8)}.bak`,
-          constants.COPYFILE_EXCL,
-        )
-      }
-      renameSync(temporary, this.location)
-      this.#readLossy = false
-    } catch (error) {
-      // A failed rename (an editor or antivirus holding the file on Windows)
-      // must not leave a stray temporary file on every retry.
-      try {
-        rmSync(temporary, { force: true })
-      } catch {
-        // Report the write failure, not the cleanup one.
-      }
-      throw error
-    }
+    writeFileSync(temporary, `${JSON.stringify(stored, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    })
+    renameSync(temporary, this.location)
   }
 }
