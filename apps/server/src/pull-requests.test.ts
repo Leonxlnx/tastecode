@@ -104,6 +104,41 @@ describe('PullRequestService', () => {
     expect(run).toHaveBeenCalledTimes(11)
   })
 
+  it('keeps an action taken while a list refresh was still loading', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let searches = 0
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (isMergeStateRead(args)) return mergeStatePage(args, 'CLEAN')
+      const search = args[0] === 'search' || args.some((argument) => argument.startsWith('q='))
+      if (!search) return ''
+      searches += 1
+      await gate
+      const nodes = [authored]
+      return args[0] === 'search'
+        ? JSON.stringify(nodes.map(searchItem))
+        : searchPage(nodes.filter((item) => item.state === 'OPEN'))
+    })
+    const service = new PullRequestService({
+      run,
+      installed: async () => true,
+      now: () => 100,
+      resolveProjects: async () => new Map(),
+    })
+
+    const refreshing = service.list([], true)
+    await vi.waitFor(() => expect(searches).toBeGreaterThan(0))
+    await service.action('Blueemi/harness', 7, { type: 'close' })
+    release()
+
+    // The searches ran before the close; their row must not open the pull request again.
+    expect((await refreshing).items.find((item) => item.number === 7)?.state).toBe('CLOSED')
+    expect((await service.list([])).items.find((item) => item.number === 7)?.state).toBe('CLOSED')
+  })
+
   it('pages open searches in small steps and retries a gateway timeout with a smaller page', async () => {
     const open = Array.from({ length: 7 }, (_, index) =>
       pullRequest({

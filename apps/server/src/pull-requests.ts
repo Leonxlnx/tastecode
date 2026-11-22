@@ -433,6 +433,13 @@ export class PullRequestService {
   #reviewThreadsCache = new Map<string, Cache<ReviewThreadsResult>>()
   #projectCache: (Cache<Map<string, string>> & { projectKey: string }) | undefined
   #listInFlight: { projectKey: string; promise: Promise<PullRequestListResult> } | undefined
+  /**
+   * Actions taken on list rows, numbered. A list read that started before one
+   * applies it to its rows when it lands, or it would put the row back as it was
+   * (a merged pull request open again) in the cache and in the window.
+   */
+  #listActions: Array<{ seq: number; target: string; action: PullRequestAction }> = []
+  #listActionSeq = 0
   #detailInFlight = new Map<string, Promise<PullRequestDetail>>()
   #filesInFlight = new Map<string, Promise<PullRequestFilesResult>>()
   #metadataOptionsInFlight = new Map<string, Promise<PullRequestMetadataOptions>>()
@@ -839,6 +846,7 @@ export class PullRequestService {
     projectKey: string,
     refresh: boolean,
   ): Promise<PullRequestListResult> {
+    const startedAfter = this.#listActionSeq
     const account = await this.#account(refresh)
     if (!account.authenticated) {
       const value = { account, items: [], fetchedAt: this.#now(), truncated: false }
@@ -883,9 +891,18 @@ export class PullRequestService {
         ...(localProjectPath ? { localProjectPath } : {}),
       })
     }
-    const items = [...combined.values()].sort(
-      (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
-    )
+    const later = this.#listActions.filter(({ seq }) => seq > startedAfter)
+    const items = [...combined.values()]
+      .map((item) =>
+        later.reduce(
+          (row, { target, action }) =>
+            targetKey(row.repository, row.number) === target
+              ? applyActionToListItem(row, action)
+              : row,
+          item,
+        ),
+      )
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
     const value = {
       account,
       items,
@@ -1365,6 +1382,9 @@ export class PullRequestService {
 
   #invalidate(repository: string, number: number, action: PullRequestAction): void {
     const target = targetKey(repository, number)
+    this.#listActions.push({ seq: ++this.#listActionSeq, target, action })
+    // Only reads still in flight need them; a few dozen covers any burst of actions.
+    if (this.#listActions.length > 64) this.#listActions.splice(0, this.#listActions.length - 64)
     const cachedList = this.#listCache
     if (cachedList) {
       const items = cachedList.value.items.map((item) =>
