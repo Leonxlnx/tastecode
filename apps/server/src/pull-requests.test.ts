@@ -908,6 +908,70 @@ describe('PullRequestService', () => {
     },
   )
 
+  it('restarts only the runs that have finished when every check is rerun', async () => {
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[0] === 'pr' && args[1] === 'checks')
+        return JSON.stringify([
+          { bucket: 'fail', link: 'https://github.com/Blueemi/harness/actions/runs/88/job/1' },
+          { bucket: 'pass', link: 'https://github.com/Blueemi/harness/actions/runs/77/job/2' },
+          { bucket: 'pending', link: 'https://github.com/Blueemi/harness/actions/runs/77/job/3' },
+          { bucket: 'pass', link: 'https://github.com/Blueemi/harness/actions/runs/99/job/4' },
+        ])
+      return ''
+    })
+    const service = new PullRequestService({ run, installed: async () => true })
+
+    await service.action('Blueemi/harness', 7, { type: 'rerun_checks', failedOnly: false })
+
+    // GitHub refuses to restart run 77 while one of its jobs still runs.
+    expect(run.mock.calls.map(([args]) => args).filter((args) => args[0] === 'run')).toEqual([
+      ['run', 'rerun', '88', '--repo', 'Blueemi/harness'],
+      ['run', 'rerun', '99', '--repo', 'Blueemi/harness'],
+    ])
+  })
+
+  it('reloads the checks after a restart that failed for one of the runs', async () => {
+    let views = 0
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (args[1] === 'view') {
+        views += 1
+        return JSON.stringify({
+          ...authored,
+          comments: [],
+          createdAt: authored.updatedAt,
+          headRefOid: 'head',
+          baseRefOid: 'base',
+        })
+      }
+      if (args[0] === 'pr' && args[1] === 'checks')
+        return JSON.stringify([
+          { bucket: 'fail', link: 'https://github.com/Blueemi/harness/actions/runs/88/job/1' },
+          { bucket: 'fail', link: 'https://github.com/Blueemi/harness/actions/runs/99/job/2' },
+        ])
+      if (args[0] === 'run' && args[2] === '99') throw new Error('run 99 cannot be rerun')
+      return '{}'
+    })
+    const service = new PullRequestService({ run, installed: async () => true })
+    await service.detail('Blueemi/harness', 7, [])
+
+    await expect(
+      service.action('Blueemi/harness', 7, { type: 'rerun_checks', failedOnly: true }),
+    ).rejects.toThrow('run 99 cannot be rerun')
+
+    expect(run.mock.calls.map(([args]) => args)).toContainEqual([
+      'run',
+      'rerun',
+      '88',
+      '--repo',
+      'Blueemi/harness',
+      '--failed',
+    ])
+    // Run 88 did restart, so the cached detail with its old check states is gone.
+    await service.detail('Blueemi/harness', 7, [])
+    expect(views).toBe(2)
+  })
+
   it('invalidates all comparison pages and fences old file reads after a base change', async () => {
     let finishOld!: (value: string) => void
     let filesCalls = 0
