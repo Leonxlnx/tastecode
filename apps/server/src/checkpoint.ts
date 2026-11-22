@@ -313,7 +313,12 @@ async function nestedRepositories(repoPath: string, scope: string): Promise<stri
   const { stdout } = await run(
     'git',
     ['ls-files', '--others', '--exclude-standard', '-z', '--', `:(literal)${scope}`],
-    { cwd: repoPath, windowsHide: true, timeout: 60_000, maxBuffer: 256 * 1024 * 1024 },
+    {
+      cwd: repoPath,
+      windowsHide: true,
+      timeout: 60_000,
+      maxBuffer: 256 * 1024 * 1024,
+    },
   )
   return stdout
     .split('\0')
@@ -447,6 +452,9 @@ export async function restoreSnapshot(
  * Files a checkpoint holds that a later snapshot of the same checkout does
  * not, although they are on disk: Git ignores them now. A path below a
  * symbolic link stays out; `git add` refuses it and the restore would fail.
+ * A file or link standing where the checkpoint has a folder is listed too:
+ * the restore deletes it to make the folder, and when Git ignores it no
+ * snapshot would hold it otherwise.
  */
 async function ignoredSinceCheckpoint(
   root: string,
@@ -479,13 +487,29 @@ async function ignoredSinceCheckpoint(
     }
     return known
   }
-  const files: string[] = []
+  const files = new Set<string>()
   for (const file of missing.split('\0').filter(Boolean)) {
-    if (!(await realFolder(path.posix.dirname(file)))) continue
+    if (!(await realFolder(path.posix.dirname(file)))) {
+      const blocker = await blockingAncestor(root, file)
+      if (blocker !== undefined) files.add(blocker)
+      continue
+    }
     const entry = await lstat(path.join(root, file)).catch(() => undefined)
-    if (entry !== undefined && !entry.isDirectory()) files.push(file)
+    if (entry !== undefined && !entry.isDirectory()) files.add(file)
   }
-  return files
+  return [...files]
+}
+
+/** The first folder of `file`'s path that is a file or a link on disk now. */
+async function blockingAncestor(root: string, file: string): Promise<string | undefined> {
+  const parts = path.posix.dirname(file).split('/')
+  for (let depth = 1; depth <= parts.length; depth += 1) {
+    const folder = parts.slice(0, depth).join('/')
+    const entry = await lstat(path.join(root, folder)).catch(() => undefined)
+    if (entry === undefined) return undefined
+    if (!entry.isDirectory()) return folder
+  }
+  return undefined
 }
 
 async function restoreTree(
@@ -705,7 +729,12 @@ export async function retainCheckpoints(
   const { stdout } = await run(
     'git',
     ['for-each-ref', '--format=%(refname) %(objectname)', prefix],
-    { cwd: repoPath, windowsHide: true, timeout: 20_000, maxBuffer: 8 * 1024 * 1024 },
+    {
+      cwd: repoPath,
+      windowsHide: true,
+      timeout: 20_000,
+      maxBuffer: 8 * 1024 * 1024,
+    },
   )
   const protectedCommits = new Set(
     stdout.split('\n').flatMap((line) => {
