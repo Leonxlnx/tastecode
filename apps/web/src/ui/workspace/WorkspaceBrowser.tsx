@@ -844,7 +844,9 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           // A row loads in this tab, so only the user's own tabs offer the list:
           // never the agent's, and never where no page can load.
           keepHistory && isDesktop ? (
-            <BrowserRecentPages onOpen={navigate}>{startBrowsing}</BrowserRecentPages>
+            <BrowserRecentPages onOpen={navigate} onEmptied={() => addressInput.current?.focus()}>
+              {startBrowsing}
+            </BrowserRecentPages>
           ) : (
             startBrowsing
           )

@@ -27,24 +27,32 @@ export type AgentBrowserGuest = {
 /** The tab's console, newest last, as the tab recorded it. */
 export type AgentBrowserConsole = () => readonly BrowserConsoleEntry[]
 
-/** A screenshot is scaled down to this width before it is sent. */
+/** A screenshot is scaled down to the page's width in CSS pixels, and never past this. */
 export const AGENT_SCREENSHOT_WIDTH = 1600
 
-/** Scales a PNG data URL to at most AGENT_SCREENSHOT_WIDTH and returns its base64. */
-export type ScaleScreenshot = (dataUrl: string, width: number) => Promise<string>
+/**
+ * Scales a PNG data URL to at most a width, or to exactly that width when `exact`, and returns
+ * its base64.
+ */
+export type ScaleScreenshot = (dataUrl: string, width: number, exact?: boolean) => Promise<string>
 
 /**
  * A field an agent never types into: passwords and payment details. Checked in the page itself,
  * on the element the selector names, by type, autocomplete hint and the words that label it.
+ * "card" counts as a word of its own (card_number, paymentCardNumber, Card holder), not as part
+ * of another word such as "postcards" or "scorecard"; camelCase is split into words first.
  */
 const SENSITIVE_FIELD_CHECK = `(element) => {
   if (!element) return 'missing'
-  const words = [element.type, element.name, element.id, element.placeholder,
+  const raw = [element.type, element.name, element.id, element.placeholder,
     element.getAttribute('autocomplete'), element.getAttribute('aria-label'),
     element.labels ? [...element.labels].map((label) => label.textContent).join(' ') : '']
-    .filter(Boolean).join(' ').toLowerCase()
+    .filter(Boolean).join(' ')
+  const words = raw.toLowerCase()
+  const cardWords = raw.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase()
   if (element.type === 'password') return 'password'
-  if (/\\bcc-|card|cvc|cvv|csc|security code|expir|iban|routing number|account number/.test(words)) return 'payment'
+  if (/(^|[^a-z])(payment|billing|credit|debit|gift)?card(holder(name)?|number|num|no|name|code|s)?(input)?([^a-z]|$)|kartennummer/.test(cardWords)) return 'payment'
+  if (/\\bcc-|cvc|cvv|csc|security code|expir|iban|routing number|account number/.test(words)) return 'payment'
   if (/password|passcode|passwort|\\bpin\\b|one-time-code/.test(words)) return 'password'
   return 'ok'
 }`
@@ -86,7 +94,17 @@ export async function runAgentBrowserCommand(
         return { commandId: command.commandId, ok: true, ...page() }
       }
       case 'screenshot': {
-        const png = await scale(await guest.capturePng(), AGENT_SCREENSHOT_WIDTH)
+        // A capture is in device pixels, twice the page's CSS pixels on a Retina screen, and a
+        // click takes CSS pixels. Drawn at the page's CSS width, a point read off the picture
+        // is the point to click.
+        // A probe that fails leaves the capture at the limit, as it was before it was measured.
+        const cssWidth = await guest.executeIsolated('window.innerWidth').catch(() => undefined)
+        const measured = typeof cssWidth === 'number' && cssWidth >= 1
+        const width = measured
+          ? Math.min(AGENT_SCREENSHOT_WIDTH, Math.round(cssWidth))
+          : AGENT_SCREENSHOT_WIDTH
+        // A capture narrower than the page (zoomed out) is drawn up to it, not left narrower.
+        const png = await scale(await guest.capturePng(), width, measured)
         if (png.length > BROWSER_PNG_MAX) return refuse('The screenshot is too large to send.')
         return { commandId: command.commandId, ok: true, ...page(), png }
       }
@@ -101,8 +119,14 @@ export async function runAgentBrowserCommand(
           `(() => {
             const element = ${target}
             if (!element) return 'missing'
-            element.scrollIntoView({ block: 'center', inline: 'center' })
-            element.click()
+            // An element found at a point is already in view, and scrolling would move it away
+            // from the position the agent named.
+            if (${command.selector !== undefined}) element.scrollIntoView({ block: 'center', inline: 'center' })
+            // An icon's <svg> or <path> has no click(); its click bubbles to the button it sits in.
+            // A chart reads where it was clicked, so a point click keeps the agent's position.
+            if (typeof element.click === 'function') element.click()
+            else element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window,
+              clientX: ${command.x ?? 0}, clientY: ${command.y ?? 0} }))
             return 'ok'
           })()`,
         )

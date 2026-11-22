@@ -2,6 +2,8 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
   browserVisitAddress,
+  clearBrowserHistory,
+  forgetBrowserVisit,
   readBrowserHistory,
   rememberBrowserVisit,
   subscribeBrowserHistory,
@@ -39,6 +41,30 @@ it('keeps one row for a page whose fragment moves, and stores no fragment', () =
   rememberBrowserVisit('https://docs.example/guide#install', 'Guide')
 
   expect(urls()).toEqual(['https://docs.example/guide'])
+})
+
+it("keeps a single-page app's route, one row per route, without its secrets", () => {
+  rememberBrowserVisit('http://127.0.0.1:5173/#/settings', 'App')
+  rememberBrowserVisit('http://127.0.0.1:5173/#!/inbox?tab=all', 'App')
+  rememberBrowserVisit(
+    'http://127.0.0.1:5173/#/callback?access_token=route-secret&next=home',
+    'App',
+  )
+  rememberBrowserVisit('http://127.0.0.1:5173/#/settings', 'App')
+
+  expect(urls()).toEqual([
+    'http://127.0.0.1:5173/#/settings',
+    'http://127.0.0.1:5173/#/callback?next=home',
+    'http://127.0.0.1:5173/#!/inbox?tab=all',
+  ])
+  expect(localStorage.getItem(STORAGE_KEY)).not.toContain('route-secret')
+  expect(browserVisitAddress(urls()[0]!)).toBe('127.0.0.1:5173/#/settings')
+})
+
+it('does not take the address Chromium reports for an untitled app route as a title', () => {
+  rememberBrowserVisit('http://127.0.0.1:5173/#/billing', '127.0.0.1:5173/#/billing')
+
+  expect(titles()).toEqual([''])
 })
 
 it('keeps separate rows for different paths and queries', () => {
@@ -92,6 +118,72 @@ it('never stores a sign-in code, token or key from the address', () => {
     'p1',
     'frag',
   ])
+    expect(stored).not.toContain(secret)
+})
+
+it('never stores a secret that also names an untitled page', () => {
+  const secret = 'SYNTHETIC_SECRET_1'
+  for (const reported of [
+    `https://app.example/callback?code=${secret}`,
+    `app.example/callback?code=${secret}`,
+    `Signed in with ${secret}`,
+  ])
+    rememberBrowserVisit(`https://app.example/callback?code=${secret}`, reported)
+
+  expect(titles()).toEqual([''])
+  expect(localStorage.getItem(STORAGE_KEY)).not.toContain(secret)
+})
+
+it("never stores a secret from an app route's query in its untitled title", () => {
+  rememberBrowserVisit(
+    'https://app.example/#/callback?code=ABCDEF',
+    'app.example/#/callback?code=ABCDEF',
+  )
+
+  expect(urls()).toEqual(['https://app.example/#/callback'])
+  expect(localStorage.getItem(STORAGE_KEY)).not.toContain('ABCDEF')
+})
+
+it('never stores a short sign-in code that also appears in the title', () => {
+  rememberBrowserVisit('https://app.example/verify?otp=1234', 'Code 1234')
+
+  expect(localStorage.getItem(STORAGE_KEY)).not.toContain('1234')
+})
+
+it('does not bring back a saved title that holds the secret just removed', () => {
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify([
+      { url: 'https://app.example/callback', title: 'Signed in as tok-SECRET-1', visitedAt: 1 },
+    ]),
+  )
+  rememberBrowserVisit('https://app.example/callback?token=tok-SECRET-1', '', 2)
+
+  expect(localStorage.getItem(STORAGE_KEY)).not.toContain('tok-SECRET-1')
+})
+
+it("drops a second fragment after an app's route", () => {
+  rememberBrowserVisit('https://app.example/#/callback#access_token=ABCDEF', 'App')
+
+  expect(urls()).toEqual(['https://app.example/#/callback'])
+  expect(localStorage.getItem(STORAGE_KEY)).not.toContain('ABCDEF')
+})
+
+it('keeps a title that shares a word with an anchor in the address', () => {
+  rememberBrowserVisit('https://docs.example/guide#install', 'How to install')
+
+  expect(titles()).toEqual(['How to install'])
+})
+
+it('never stores other common names for keys and tokens', () => {
+  rememberBrowserVisit(
+    'https://api.example/run?api_key=k-one&refresh_token=r-one&client_secret=c-one&X-Amz-Signature=x-one&apiKey=k-two&page=2',
+    'Run',
+  )
+
+  expect(urls()).toEqual(['https://api.example/run?page=2'])
+  const stored = localStorage.getItem(STORAGE_KEY) ?? ''
+  for (const secret of ['k-one', 'r-one', 'c-one', 'x-one', 'k-two'])
     expect(stored).not.toContain(secret)
 })
 
@@ -187,4 +279,23 @@ it.each([
   ['not a url', 'not a url'],
 ])('shows %s as %s', (url, address) => {
   expect(browserVisitAddress(url)).toBe(address)
+})
+
+it('forgets one page, or all of them, and tells subscribers', () => {
+  rememberBrowserVisit('https://one.example/', 'One', 1_000)
+  rememberBrowserVisit('https://two.example/', 'Two', 2_000)
+  rememberBrowserVisit('https://three.example/', 'Three', 3_000)
+  const onChange = vi.fn()
+  const unsubscribe = subscribeBrowserHistory(onChange)
+
+  forgetBrowserVisit('https://two.example/')
+  expect(urls()).toEqual(['https://three.example/', 'https://one.example/'])
+  forgetBrowserVisit('https://not-listed.example/')
+  expect(onChange).toHaveBeenCalledTimes(1)
+
+  clearBrowserHistory()
+  expect(readBrowserHistory()).toEqual([])
+  expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
+  expect(onChange).toHaveBeenCalledTimes(2)
+  unsubscribe()
 })
