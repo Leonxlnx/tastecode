@@ -8304,6 +8304,42 @@ describe('new chats', () => {
       expect(localStorage.getItem('harness.newChatDraftProject')).toBe('/work/other')
     })
 
+    function removableProject() {
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method === 'projects.remove') {
+          serverProjects = serverProjects.filter((project) => project.path !== '/work/project')
+          return Promise.resolve({})
+        }
+        return request(method, params)
+      })
+    }
+    const savedDrafts = () =>
+      JSON.parse(localStorage.getItem('harness.composerDrafts.v1') ?? '{}') as Record<
+        string,
+        { text: string }
+      >
+
+    it('keeps the waiting draft of a removed project for when it is added again', async () => {
+      removableProject()
+      const view = render(<App />)
+      fireEvent.change(await screen.findByPlaceholderText('Do anything'), {
+        target: { value: 'Words for project' },
+      })
+      await chooseProject('other')
+      await waitFor(() => expect(composerValue()).toBe(''))
+      const lists = () =>
+        transport.request.mock.calls.filter(([method]) => method === 'projects.list').length
+      const listed = lists()
+
+      act(() => sidebarProps().onRemoveProject('/work/project'))
+
+      // The removal has finished once the list is asked for again; closing saves the drafts.
+      await waitFor(() => expect(lists()).toBeGreaterThan(listed))
+      view.unmount()
+      expect(savedDrafts()['new-chat:/work/project']?.text).toBe('Words for project')
+    })
+
     it('returns the Creatify choice of a failed start to its own project', async () => {
       const request = transport.request.getMockImplementation()!
       let fail!: () => void

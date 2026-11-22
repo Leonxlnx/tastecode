@@ -6729,9 +6729,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       void transport
         .request('projects.remove', { path })
         .then(() => {
-          // A removed project's waiting New chat draft has nowhere to show any more.
-          threadController.forgetDraft(parkedNewChatDraftKey(path))
-          // Its live one goes to the project shown next.
+          // A removed project's waiting New chat draft stays under its folder, so adding the
+          // folder again brings it back. Its live one goes to the project shown next.
           if (newChatDraftProject.current === path) {
             newChatDraftProject.current = undefined
             threadController.saveDraftsWith(newChatDraftOwner)
