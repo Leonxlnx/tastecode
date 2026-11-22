@@ -423,6 +423,79 @@ describe('local usage history', () => {
     expect(history.totals.estimatedCostUsd).toBeCloseTo(2.403008, 8)
   })
 
+  it('decides long-context rates from each cumulative step, not the session sum', async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex')
+    const claudeRoot = path.join(root, 'claude')
+    mkdirSync(codexRoot, { recursive: true })
+    mkdirSync(claudeRoot, { recursive: true })
+    const at = new Date('2026-08-08T10:00:00.000Z').getTime()
+    const cumulative = (inputTokens: number) => ({
+      threadId: 'codex-session',
+      provider: 'codex' as const,
+      at,
+      usage: {
+        inputTokens,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: inputTokens,
+        model: 'gpt-5.6-terra',
+        cumulative: true,
+        inputIncludesCached: true,
+      },
+    })
+    const service = usageService({
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
+      // Requests of 200K, 200K and 300K input: only the last passes 272K.
+      harnessUsage: () => [cumulative(200_000), cumulative(400_000), cumulative(700_000)],
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    })
+
+    const history = await settledHistory(service, '7d')
+    expect(history.totals.uncachedInputTokens).toBe(700_000)
+    expect(history.totals.estimatedCostUsd).toBeCloseTo(0.4 + 0.4 + 1.2, 8)
+  })
+
+  it('treats a cumulative sample whose counters went back as a fresh start', async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex')
+    const claudeRoot = path.join(root, 'claude')
+    mkdirSync(codexRoot, { recursive: true })
+    mkdirSync(claudeRoot, { recursive: true })
+    const at = new Date('2026-08-08T10:00:00.000Z').getTime()
+    const cumulative = (inputTokens: number, cachedInputTokens: number) => ({
+      threadId: 'codex-session',
+      provider: 'codex' as const,
+      at,
+      usage: {
+        inputTokens,
+        cachedInputTokens,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: inputTokens,
+        model: 'gpt-5.6-terra',
+        cumulative: true,
+        inputIncludesCached: true,
+      },
+    })
+    const service = usageService({
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
+      // Input falls from 370K to 290K while uncached input rises from 150K to 200K:
+      // the counters restarted, so the second sample is one 290K request of its own.
+      harnessUsage: () => [cumulative(370_000, 220_000), cumulative(290_000, 90_000)],
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    })
+
+    const history = await settledHistory(service, '7d')
+    expect(history.totals.uncachedInputTokens).toBe(150_000 + 200_000)
+    expect(history.totals.cachedInputTokens).toBe(220_000 + 90_000)
+    // Both requests pass 272K: long-context rates of $4 input and $0.40 cached.
+    expect(history.totals.estimatedCostUsd).toBeCloseTo(0.6 + 0.088 + 0.8 + 0.036, 8)
+  })
+
   it('falls back to persisted Harness events for every provider without rich local history', async () => {
     const root = temporaryDirectory()
     const codexRoot = path.join(root, 'codex')
