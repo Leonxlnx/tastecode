@@ -643,6 +643,25 @@ describe('Grok adapter', () => {
     expect(children).toHaveLength(1)
   })
 
+  it('removes the new prompt folder when the previous turn does not stop', async () => {
+    class Unstoppable extends FakeChild {
+      override kill(): boolean {
+        throw new Error('Access is denied.')
+      }
+    }
+    const adapter = new GrokAdapter({ spawn: () => new Unstoppable() })
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'first')
+    const promptDirectories = () =>
+      readdirSync(os.tmpdir()).filter((name) => name.startsWith('harness-grok-'))
+    const before = new Set(promptDirectories())
+
+    await expect(adapter.sendTurn(thread.id, 'second')).rejects.toThrow('Access is denied.')
+
+    // It holds the user's prompt and the session instructions.
+    expect(promptDirectories().filter((name) => !before.has(name))).toEqual([])
+  })
+
   it('records how long a thought ran on the completed reasoning item', async () => {
     const child = new FakeChild()
     const adapter = new GrokAdapter({
