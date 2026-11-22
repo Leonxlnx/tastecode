@@ -65,6 +65,11 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    // The CSP has no font-src, so a font inlined as a data: URL (KaTeX_Size3
+    // is under Vite's 4 KiB limit) is blocked by default-src 'self'. Fonts
+    // always ship as files; other assets keep Vite's default limit.
+    assetsInlineLimit: (filePath) =>
+      /\.(?:woff2?|ttf|otf|eot)(?:[?#].*)?$/i.test(filePath) ? false : undefined,
     rolldownOptions: {
       output: {
         // The shell's shared modules used to become ten tiny startup chunks.
