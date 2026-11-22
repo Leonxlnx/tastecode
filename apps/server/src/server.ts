@@ -369,13 +369,6 @@ export function startServer(
       if (setupTerminals.delete(terminalId)) invalidateCliProbes()
       push.broadcast('terminal.exit', { terminalId, exitCode })
     },
-    capturePreview: (url, viewports, signal, threadId) =>
-      previewCapture.available
-        ? previewCapture.capture(url, viewports, signal, threadId)
-        : Promise.resolve(undefined),
-    // A preview on the control port or the trusted renderer's port would pass
-    // the Origin check whenever nothing else holds that port.
-    reservedPreviewPorts: new Set([port, ...httpOriginPort(rendererOrigin)]),
     beforeLimitRead: () => streamQuiet.whenQuiet(),
     accounts,
   })
@@ -2045,11 +2038,6 @@ export function allowedOrigin(
     return false
   }
   return Boolean(accessToken) || origin === rendererOrigin
-}
-
-function httpOriginPort(origin: string): number[] {
-  const url = URL.parse(origin)
-  return url?.protocol === 'http:' ? [Number(url.port || 80)] : []
 }
 
 function workspaceForRequest(

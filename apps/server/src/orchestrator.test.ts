@@ -504,19 +504,6 @@ function harness(
   const resumedIn: string[] = []
   const resumedOptions: StartOptions[] = []
   const resumeBarriers: Promise<void>[] = []
-  const capturePreview = vi.fn(
-    async (
-      _url: string,
-      viewports: Array<{ width: number; height: number }>,
-      _signal?: AbortSignal,
-      _threadId?: string,
-    ) =>
-      viewports.map((viewport) => ({
-        path: path.join(os.tmpdir(), `${viewport.width}x${viewport.height}.png`),
-        ...viewport,
-      })),
-  )
-
   /** What every provider's model list reports. */
   const models: Model[] = []
   const runtimeFor = (provider: ProviderId): ProviderRuntime => ({
@@ -597,7 +584,6 @@ function harness(
       if (credentialFailure.current) throw credentialFailure.current
       return `secret:${reference}`
     },
-    capturePreview,
     runtimeFor,
     ...(maxIdleThreadRuntimes === undefined ? {} : { maxIdleThreadRuntimes }),
     ...(idleThreadRuntimeMs === undefined ? {} : { idleThreadRuntimeMs }),
@@ -641,7 +627,6 @@ function harness(
     resumedIn,
     resumedOptions,
     resumeBarriers,
-    capturePreview,
   }
 }
 

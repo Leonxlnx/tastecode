@@ -1,4 +1,3 @@
-import type { ReviewScreenshot } from '@harness/design-agent'
 import { isDesignBriefAttachment } from '@harness/design-agent/attachment'
 import { isCreatifyAttachment } from './creatify.js'
 import { DEFAULT_ACCOUNT_ID, ProviderIdSchema } from '@harness/contracts'
@@ -580,15 +579,6 @@ export class Orchestrator {
   #onModelsChanged: (provider: ProviderId, agent: string | undefined, accountId?: AccountId) => void
   #onLifecycle: (threadId: string, lifecycle: ThreadLifecycle) => void
   #onLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void
-  #capturePreview:
-    | ((
-        url: string,
-        viewports: Array<{ width: number; height: number }>,
-        signal?: AbortSignal,
-        threadId?: string,
-      ) => Promise<ReviewScreenshot[] | undefined>)
-    | undefined
-  #reservedPreviewPorts: ReadonlySet<number>
   #inboxProjections = new Map<string, InboxProjection>()
   #inboxProjectionsLoaded = false
   #staleInboxProjectionThreads = new Set<string>()
@@ -676,14 +666,6 @@ export class Orchestrator {
       ) => void
       onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
       onLifecycleScheduleChanged?: (hint?: LifecycleScheduleHint) => void
-      capturePreview?: (
-        url: string,
-        viewports: Array<{ width: number; height: number }>,
-        signal?: AbortSignal,
-        threadId?: string,
-      ) => Promise<ReviewScreenshot[] | undefined>
-      /** Ports a Design preview must never serve on: the app's own. */
-      reservedPreviewPorts?: ReadonlySet<number>
       mcpConfig?: McpConfigStore
       customHarnesses?: CustomHarnessStore
       readCredential?: (reference: string) => string
@@ -777,8 +759,6 @@ export class Orchestrator {
     this.#onModelsChanged = handlers.onModelsChanged ?? (() => {})
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#onLifecycleScheduleChanged = handlers.onLifecycleScheduleChanged ?? (() => {})
-    this.#capturePreview = handlers.capturePreview
-    this.#reservedPreviewPorts = handlers.reservedPreviewPorts ?? new Set()
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
