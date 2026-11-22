@@ -1,5 +1,6 @@
 import { ACP_AGENTS } from '@harness/adapter-acp/agents'
-import { commandOverride, setCommandOverride, windowsCliCommand } from '@harness/proc/cli'
+import path from 'node:path'
+import { commandOverride, quoteCmdArgument, setCommandOverride } from '@harness/proc/cli'
 import { resolveProviderExecutable } from './custom-harness-launch.js'
 import { assertProviderOffered } from './provider-edition.js'
 import { providerCommand } from './provider-commands.js'
@@ -42,7 +43,13 @@ export function selectedProviderShellCommand(source: string, commandLine: string
   }
   const args = commandLine.slice(command.length).trim().split(/\s+/).filter(Boolean)
   if (process.platform === 'win32') {
-    return `"${windowsCliCommand(selected, args, /\.(?:cmd|bat)$/i.test(selected))}"`
+    // The terminal wraps the line for cmd /s /c. Quoted, the path stays one program name;
+    // with its spaces caret-escaped, an .exe still received them as separate arguments.
+    const batch = /\.(?:cmd|bat)$/i.test(selected)
+    return [
+      `"${path.win32.normalize(selected)}"`,
+      ...args.map((argument) => quoteCmdArgument(argument, batch)),
+    ].join(' ')
   }
   const quoted = `'${selected.replaceAll("'", "'\\''")}'`
   return [quoted, ...args].join(' ')

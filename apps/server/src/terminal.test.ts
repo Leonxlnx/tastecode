@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { IPty } from 'node-pty'
@@ -904,6 +912,42 @@ describe('TerminalManager', () => {
       removeTemporaryDirectory(cwd)
     }
   }, 15_000)
+
+  it.runIf(process.platform === 'win32')(
+    'runs a CLI from a quoted path with spaces, the form a chosen executable path takes',
+    async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-quoted-'))
+      let output = ''
+      let finished: (exitCode: number | null) => void = () => {}
+      const exited = new Promise<number | null>((resolve) => {
+        finished = resolve
+      })
+      const manager = new TerminalManager({
+        onOutput: (_terminalId, data) => (output += data),
+        onExit: (_terminalId, exitCode) => finished(exitCode),
+      })
+      // A copy of node.exe in a folder with a space stands for C:\Program Files\….
+      const folder = path.join(cwd, 'with space')
+      mkdirSync(folder)
+      const executable = path.join(folder, 'tool.exe')
+      copyFileSync(process.execPath, executable)
+      try {
+        manager.run(
+          'login:probe',
+          `"${executable}" -e "console.log('quoted-path-ran')"`,
+          cwd,
+          80,
+          24,
+        )
+        await expect(within(exited)).resolves.toBe(0)
+        expect(output).toContain('quoted-path-ran')
+      } finally {
+        await manager.closeAll()
+        removeTemporaryDirectory(cwd)
+      }
+    },
+    30_000,
+  )
 
   it('closes the PTY when its session closes', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-close-'))
