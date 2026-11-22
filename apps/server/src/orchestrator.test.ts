@@ -213,6 +213,7 @@ class FakeSession implements AgentSession {
   sentAttachments: string[][] = []
   sentOptions: Array<TurnOptions | undefined> = []
   steered: string[] = []
+  steeredAttachments: string[][] = []
   userInputs: Array<{ requestId: string; answers: Record<string, string[]> }> = []
   approvalModes: ApprovalMode[] = []
   mcpServers: McpServer[] = []
@@ -272,8 +273,9 @@ class FakeSession implements AgentSession {
     return this.turnIds.shift() ?? `${this.id}-turn`
   }
 
-  async steer(_threadId: string, text: string): Promise<void> {
+  async steer(_threadId: string, text: string, attachments: string[] = []): Promise<void> {
     this.steered.push(text)
+    this.steeredAttachments.push(attachments)
     const barrier = this.steerBarriers.shift()
     if (barrier) await barrier
   }
@@ -2430,6 +2432,33 @@ describe('queued Side-chat channel', () => {
       expect(received.some(({ threadId }) => threadId === side.id)).toBe(false)
 
       sessions[1]?.emit({ type: 'turn.completed', turnId: 'side-first-turn', status: 'completed' })
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('steers a prompt queued in Design mode without the Design marker as a file', async () => {
+    const { orchestrator, sessions } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      sessions[0]?.turnIds.push('running-turn')
+      const first = await orchestrator.submitTurn(thread.id, 'Fix the header.', [], {}, 'first')
+      if (first.queued) throw new Error('expected the first turn to start')
+      const queued = await orchestrator.submitTurn(
+        thread.id,
+        'Make it calmer.',
+        [DESIGN_BRIEF_ATTACHMENT],
+        {},
+        'design-queued',
+      )
+      if (!queued.queued) throw new Error('expected the prompt to queue')
+
+      await orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)
+
+      // The marker is TasteCode's own; an agent shown it as a file tries to read it.
+      expect(sessions[0]?.steered).toEqual(['Make it calmer.'])
+      expect(sessions[0]?.steeredAttachments).toEqual([[]])
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'running-turn', status: 'completed' })
     } finally {
       await orchestrator.disposeAll()
     }
