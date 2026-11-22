@@ -1,7 +1,11 @@
 // @vitest-environment happy-dom
 import type { BrowserCommand } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { runAgentBrowserCommand, type AgentBrowserGuest } from './agent-browser-executor.js'
+import {
+  runAgentBrowserCommand,
+  type AgentBrowserGuest,
+  type ScaleScreenshot,
+} from './agent-browser-executor.js'
 
 const ID = '00000000-0000-4000-8000-000000000001'
 
@@ -21,7 +25,11 @@ function guest(overrides: Partial<AgentBrowserGuest> = {}) {
   return { page }
 }
 
-const run = (command: object, page: AgentBrowserGuest, scale = async () => 'iVBORw0K') =>
+const run = (
+  command: object,
+  page: AgentBrowserGuest,
+  scale: ScaleScreenshot = async () => 'iVBORw0K',
+) =>
   runAgentBrowserCommand(
     { threadId: 'chat-1', commandId: ID, ...command } as BrowserCommand,
     page,
@@ -147,6 +155,20 @@ describe('agent browser commands', () => {
       ok: true,
       console: [{ level: 'error', text: 'new', at: 5 }],
     })
+  })
+
+  it('still sends a screenshot when the page width cannot be read', async () => {
+    const scale = vi.fn<ScaleScreenshot>(async () => 'iVBORw0K')
+    const { page } = guest({
+      executeIsolated: async () => {
+        throw new Error('Not an agent browser tab')
+      },
+    })
+    expect(await run({ action: 'screenshot' }, page, scale)).toMatchObject({
+      ok: true,
+      png: 'iVBORw0K',
+    })
+    expect(scale.mock.lastCall?.[1]).toBe(1600)
   })
 
   it('answers a failed page action with its reason instead of throwing', async () => {

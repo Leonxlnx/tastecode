@@ -89,7 +89,8 @@ export async function runAgentBrowserCommand(
         // A capture is in device pixels, twice the page's CSS pixels on a Retina screen, and a
         // click takes CSS pixels. Drawn at the page's CSS width, a point read off the picture
         // is the point to click.
-        const cssWidth = await guest.executeIsolated('window.innerWidth')
+        // A probe that fails leaves the capture at the limit, as it was before it was measured.
+        const cssWidth = await guest.executeIsolated('window.innerWidth').catch(() => undefined)
         const width =
           typeof cssWidth === 'number' && cssWidth >= 1
             ? Math.min(AGENT_SCREENSHOT_WIDTH, Math.round(cssWidth))
