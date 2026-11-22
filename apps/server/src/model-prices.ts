@@ -104,7 +104,16 @@ export const MODEL_PRICES: readonly ModelPrice[] = [
   google(['gemini-2-5-flash'], usd(0.3, 0.03, 2.5)),
   google(['gemini-2-5-flash-lite'], usd(0.1, 0.01, 0.4)),
 
+  listedOn(OPENAI_PRICING, '2026-11-20')(['gpt-6-2-astra'], usd(8, 0.4, 40), {
+    longContext: usd(16, 0.8, 60),
+  }),
+  listedOn(OPENAI_PRICING, '2026-11-20')(['gpt-6-2-sol'], usd(2, 0.1, 10), {
+    longContext: usd(4, 0.2, 15),
+  }),
   openAi(['gpt-6-astra'], usd(10, 1, 50), { longContext: usd(20, 2, 75) }),
+  listedOn(OPENAI_PRICING, '2026-11-20')(['gpt-6-1-terra'], usd(1, 0.05, 5), {
+    longContext: usd(2, 0.1, 7.5),
+  }),
   openAi(['gpt-6-1-sol'], usd(2, 0.1, 10), { longContext: usd(4, 0.2, 15) }),
   openAi(['gpt-6-sol'], usd(2, 0.2, 10), { longContext: usd(4, 0.4, 15) }),
   openAi(['gpt-6-luna'], usd(0.1, 0.01, 0.5), { longContext: usd(0.2, 0.02, 0.75) }),
