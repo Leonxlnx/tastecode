@@ -1,5 +1,14 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import {
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 import { CustomHarnessSchema, type CustomHarness } from '@harness/contracts'
 import { z } from 'zod'
@@ -23,7 +32,9 @@ function defaultLocation(): string {
 }
 
 function parseConfig(raw: string): ConfigFile {
-  const value = ConfigFileSchema.safeParse(JSON.parse(raw))
+  // Windows editors and PowerShell 5 save UTF-8 with a byte order mark, which
+  // `JSON.parse` rejects.
+  const value = ConfigFileSchema.safeParse(JSON.parse(raw.replace(/^﻿/, '')))
   if (!value.success) {
     throw new Error('invalid custom harness config: expected a version 1 harness list')
   }
@@ -80,20 +91,54 @@ export class CustomHarnessStore {
     this.#write(file)
   }
 
+  /** The last read could not parse the file; the next write sets the file aside first. */
+  #readLossy = false
+
   #read(): ConfigFile {
-    return existsSync(this.location)
-      ? parseConfig(readFileSync(this.location, 'utf8'))
-      : structuredClone(EMPTY_CONFIG)
+    this.#readLossy = false
+    if (!existsSync(this.location)) return structuredClone(EMPTY_CONFIG)
+    try {
+      return parseConfig(readFileSync(this.location, 'utf8'))
+    } catch (error) {
+      // Every ACP chat start and background source reads this file. A stray
+      // comma from a hand edit must not stop them, nor the settings page that
+      // could repair it: read it as empty, as the MCP config does.
+      console.warn(
+        `[custom-harnesses] ignoring ${this.location}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      this.#readLossy = true
+      return structuredClone(EMPTY_CONFIG)
+    }
   }
 
   #write(file: ConfigFile): void {
     mkdirSync(path.dirname(this.location), { recursive: true })
     const temporary = `${this.location}.${randomUUID()}.tmp`
     const stored = { version: file.version, harnesses: [...file.harnesses, ...file.unsupported] }
-    writeFileSync(temporary, `${JSON.stringify(stored, null, 2)}\n`, {
-      encoding: 'utf8',
-      mode: 0o600,
-    })
-    renameSync(temporary, this.location)
+    try {
+      writeFileSync(temporary, `${JSON.stringify(stored, null, 2)}\n`, {
+        encoding: 'utf8',
+        mode: 0o600,
+      })
+      // A hand-edited file we could not parse is not ours to destroy.
+      if (this.#readLossy && existsSync(this.location)) {
+        copyFileSync(
+          this.location,
+          `${this.location}.invalid-${Date.now()}-${randomUUID().slice(0, 8)}.bak`,
+          constants.COPYFILE_EXCL,
+        )
+      }
+      renameSync(temporary, this.location)
+      this.#readLossy = false
+    } catch (error) {
+      // A failed rename (an editor or antivirus holding the file on Windows)
+      // must not leave a stray temporary file on every retry.
+      try {
+        rmSync(temporary, { force: true })
+      } catch {
+        // Report the write failure, not the cleanup one.
+      }
+      throw error
+    }
   }
 }
