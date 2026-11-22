@@ -104,6 +104,41 @@ describe('PullRequestService', () => {
     expect(run).toHaveBeenCalledTimes(11)
   })
 
+  it('keeps an action taken while a list refresh was still loading', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let searches = 0
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (isMergeStateRead(args)) return mergeStatePage(args, 'CLEAN')
+      const search = args[0] === 'search' || args.some((argument) => argument.startsWith('q='))
+      if (!search) return ''
+      searches += 1
+      await gate
+      const nodes = [authored]
+      return args[0] === 'search'
+        ? JSON.stringify(nodes.map(searchItem))
+        : searchPage(nodes.filter((item) => item.state === 'OPEN'))
+    })
+    const service = new PullRequestService({
+      run,
+      installed: async () => true,
+      now: () => 100,
+      resolveProjects: async () => new Map(),
+    })
+
+    const refreshing = service.list([], true)
+    await vi.waitFor(() => expect(searches).toBeGreaterThan(0))
+    await service.action('Blueemi/harness', 7, { type: 'close' })
+    release()
+
+    // The searches ran before the close; their row must not open the pull request again.
+    expect((await refreshing).items.find((item) => item.number === 7)?.state).toBe('CLOSED')
+    expect((await service.list([])).items.find((item) => item.number === 7)?.state).toBe('CLOSED')
+  })
+
   it('pages open searches in small steps and retries a gateway timeout with a smaller page', async () => {
     const open = Array.from({ length: 7 }, (_, index) =>
       pullRequest({
@@ -178,6 +213,43 @@ describe('PullRequestService', () => {
     ])
     expect(result.items[0]?.mergeStateStatus).toBeUndefined()
     expect(result.truncated).toBe(false)
+  })
+
+  it('tells a failed account read from a sign-out', async () => {
+    const offline = 'Get "https://api.github.com/user": proxyconnect tcp: dial tcp 127.0.0.1:9'
+    let userAnswer: () => Promise<string> = async () => JSON.stringify({ login: 'Blueemi' })
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[0] === 'api' && args[1] === 'user') return userAnswer()
+      if (isMergeStateRead(args)) return mergeStatePage(args, 'CLEAN')
+      return args[0] === 'search' ? '[]' : searchPage([])
+    })
+    const service = new PullRequestService({
+      run,
+      installed: async () => true,
+      now: () => 100,
+      resolveProjects: async () => new Map(),
+    })
+
+    // Offline before any account was read: the read fails, it does not say "sign in".
+    userAnswer = async () => {
+      throw new Error(offline)
+    }
+    await expect(service.account(true)).rejects.toThrow('proxyconnect')
+
+    // Offline after one was read: the account stays.
+    userAnswer = async () => JSON.stringify({ login: 'Blueemi' })
+    await service.account(true)
+    userAnswer = async () => {
+      throw new Error(offline)
+    }
+    expect(await service.account(true)).toMatchObject({ authenticated: true, login: 'Blueemi' })
+    expect((await service.list([], true)).account.login).toBe('Blueemi')
+
+    // A token GitHub refuses is a sign-out, as gh reports it.
+    userAnswer = async () => {
+      throw new Error('gh: Bad credentials (HTTP 401)')
+    }
+    expect(await service.account(true)).toMatchObject({ authenticated: false })
   })
 
   it('keeps the searches that loaded when others fail', async () => {
@@ -535,21 +607,19 @@ describe('PullRequestService', () => {
       const endpoint = args[1] ?? ''
       if (endpoint.includes('/collaborators?')) {
         return JSON.stringify([
-          [
-            { login: 'reviewer', type: 'User' },
-            { login: 'dependabot[bot]', type: 'Bot' },
-          ],
+          { login: 'reviewer', type: 'User' },
+          { login: 'dependabot[bot]', type: 'Bot' },
         ])
       }
       if (endpoint.includes('/assignees?')) {
-        return JSON.stringify([[{ login: 'Blueemi', type: 'User' }]])
+        return JSON.stringify([{ login: 'Blueemi', type: 'User' }])
       }
       if (endpoint.includes('/labels?')) throw new Error('labels unavailable')
       if (endpoint.includes('/milestones?')) {
-        return JSON.stringify([[{ number: 3, title: 'M5 — Visual pass' }]])
+        return JSON.stringify([{ number: 3, title: 'M5 — Visual pass' }])
       }
       if (endpoint.includes('/branches?')) {
-        return JSON.stringify([[{ name: 'nightly' }, { name: 'main' }]])
+        return JSON.stringify([{ name: 'nightly' }, { name: 'main' }])
       }
       throw new Error(`Unexpected gh call: ${args.join(' ')}`)
     })
@@ -572,7 +642,36 @@ describe('PullRequestService', () => {
     })
     expect(second).toEqual(first)
     expect(run).toHaveBeenCalledTimes(5)
-    expect(run.mock.calls[0]?.[0]).toEqual(expect.arrayContaining(['--paginate', '--slurp']))
+    expect(run.mock.calls[0]?.[0]).toEqual([
+      'api',
+      'repos/Blueemi/harness/collaborators?per_page=100&page=1',
+    ])
+  })
+
+  it('stops reading metadata pages at the limit', async () => {
+    const branchPages: number[] = []
+    const run = vi.fn<GhRunner>(async (args) => {
+      const endpoint = args[1] ?? ''
+      if (endpoint.includes('/branches?')) {
+        const page = Number(/[?&]page=(\d+)/.exec(endpoint)?.[1])
+        branchPages.push(page)
+        // A repository with thousands of branches: every page is full.
+        return JSON.stringify(
+          Array.from({ length: 100 }, (_, index) => ({
+            name: `branch-${String(page).padStart(3, '0')}-${String(index).padStart(3, '0')}`,
+          })),
+        )
+      }
+      return '[]'
+    })
+    const service = new PullRequestService({ run, installed: async () => true, now: () => 100 })
+
+    const options = await service.metadataOptions('Blueemi/harness')
+
+    expect(branchPages).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    expect(options.baseBranches).toHaveLength(1_000)
+    expect(options.truncated).toBe(true)
+    expect(options.unavailable).toEqual([])
   })
 
   it('maps review, metadata, lifecycle, check, and merge actions to explicit gh operations', async () => {
@@ -808,6 +907,70 @@ describe('PullRequestService', () => {
       expect(run.mock.calls[0]?.[0]).toContain('--match-head-commit')
     },
   )
+
+  it('restarts only the runs that have finished when every check is rerun', async () => {
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[0] === 'pr' && args[1] === 'checks')
+        return JSON.stringify([
+          { bucket: 'fail', link: 'https://github.com/Blueemi/harness/actions/runs/88/job/1' },
+          { bucket: 'pass', link: 'https://github.com/Blueemi/harness/actions/runs/77/job/2' },
+          { bucket: 'pending', link: 'https://github.com/Blueemi/harness/actions/runs/77/job/3' },
+          { bucket: 'pass', link: 'https://github.com/Blueemi/harness/actions/runs/99/job/4' },
+        ])
+      return ''
+    })
+    const service = new PullRequestService({ run, installed: async () => true })
+
+    await service.action('Blueemi/harness', 7, { type: 'rerun_checks', failedOnly: false })
+
+    // GitHub refuses to restart run 77 while one of its jobs still runs.
+    expect(run.mock.calls.map(([args]) => args).filter((args) => args[0] === 'run')).toEqual([
+      ['run', 'rerun', '88', '--repo', 'Blueemi/harness'],
+      ['run', 'rerun', '99', '--repo', 'Blueemi/harness'],
+    ])
+  })
+
+  it('reloads the checks after a restart that failed for one of the runs', async () => {
+    let views = 0
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (args[1] === 'view') {
+        views += 1
+        return JSON.stringify({
+          ...authored,
+          comments: [],
+          createdAt: authored.updatedAt,
+          headRefOid: 'head',
+          baseRefOid: 'base',
+        })
+      }
+      if (args[0] === 'pr' && args[1] === 'checks')
+        return JSON.stringify([
+          { bucket: 'fail', link: 'https://github.com/Blueemi/harness/actions/runs/88/job/1' },
+          { bucket: 'fail', link: 'https://github.com/Blueemi/harness/actions/runs/99/job/2' },
+        ])
+      if (args[0] === 'run' && args[2] === '99') throw new Error('run 99 cannot be rerun')
+      return '{}'
+    })
+    const service = new PullRequestService({ run, installed: async () => true })
+    await service.detail('Blueemi/harness', 7, [])
+
+    await expect(
+      service.action('Blueemi/harness', 7, { type: 'rerun_checks', failedOnly: true }),
+    ).rejects.toThrow('run 99 cannot be rerun')
+
+    expect(run.mock.calls.map(([args]) => args)).toContainEqual([
+      'run',
+      'rerun',
+      '88',
+      '--repo',
+      'Blueemi/harness',
+      '--failed',
+    ])
+    // Run 88 did restart, so the cached detail with its old check states is gone.
+    await service.detail('Blueemi/harness', 7, [])
+    expect(views).toBe(2)
+  })
 
   it('invalidates all comparison pages and fences old file reads after a base change', async () => {
     let finishOld!: (value: string) => void
@@ -1099,9 +1262,9 @@ describe('PullRequestService', () => {
   it('keeps base branches that differ only by case', async () => {
     const run = vi.fn<GhRunner>(async (args) => {
       if (args[1]?.includes('/branches?')) {
-        return JSON.stringify([[{ name: 'release' }, { name: 'Release' }]])
+        return JSON.stringify([{ name: 'release' }, { name: 'Release' }])
       }
-      return '[[]]'
+      return '[]'
     })
     const service = new PullRequestService({ run, installed: async () => true, now: () => 100 })
     const options = await service.metadataOptions('Blueemi/harness')

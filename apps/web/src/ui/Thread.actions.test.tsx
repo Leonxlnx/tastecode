@@ -452,6 +452,46 @@ describe('provider activity labels', () => {
   })
 })
 
+describe('find in chat', () => {
+  it('opens from the message field, which usually has focus, and gives its focus back', async () => {
+    render(
+      <>
+        <div className="composer">
+          <textarea aria-label="Message" />
+        </div>
+        <input aria-label="Search settings" />
+        <Thread
+          frameStore={
+            new ThreadFrameStore({
+              ...emptyThread,
+              items: [turnItem('prompt-1', 1, { role: 'user', text: 'Find the needle' })],
+            })
+          }
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />
+      </>,
+    )
+    const field = screen.getByRole('textbox', { name: 'Message' })
+
+    // Another text field keeps the key.
+    screen.getByRole('textbox', { name: 'Search settings' }).focus()
+    fireEvent.keyDown(document.activeElement!, { key: 'f', metaKey: true })
+    expect(screen.queryByRole('textbox', { name: 'Find in thread' })).toBeNull()
+
+    field.focus()
+    fireEvent.keyDown(field, { key: 'f', metaKey: true })
+    const find = await screen.findByRole('textbox', { name: 'Find in thread' })
+    await waitFor(() => expect(document.activeElement).toBe(find))
+
+    fireEvent.keyDown(find, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Find in thread' })).toBeNull(),
+    )
+    expect(document.activeElement).toBe(field)
+  })
+})
+
 describe('empty thread', () => {
   it('explains how to start an idle thread', () => {
     const rendered = renderCompleted([])
@@ -959,7 +999,17 @@ describe('completed activity disclosure', () => {
         status: 'failed',
         text: 'github.search_issues\n{"query":"is:open"}\nrate limited',
       }),
-      turnItem('answer-1', 5, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+      // Claude Code's own tool, named like its Read and Glob.
+      turnItem('tool-4', 5, {
+        type: 'tool_call',
+        text: 'Grep\n{"pattern":"focus-ring","path":"apps/web/src"}',
+      }),
+      // A snake_case search tool reads as the verb alone.
+      turnItem('tool-5', 6, {
+        type: 'tool_call',
+        text: 'codebase_search\n{"query":"focus ring"}',
+      }),
+      turnItem('answer-1', 7, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
     ])
 
     fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
@@ -971,6 +1021,8 @@ describe('completed activity disclosure', () => {
       "Used cua_repl.js · await page.screenshot({ path: 'home.png' })",
       'Searched the web for “vite hmr css”',
       'Failed github.search_issues · is:open',
+      'Used Grep · apps/web/src',
+      'Searched',
     ])
     expect(container.querySelector('code.activity__tool')?.textContent).toBe('cua_repl.js')
     // Each call keeps its arguments and output behind its own reveal.
@@ -1025,12 +1077,28 @@ describe('completed activity disclosure', () => {
       turnItem('prompt-1', 1, { role: 'user', text: 'Look' }),
       turnItem('command-1', 2, { type: 'command', command: "/bin/zsh -lc 'cat src/motion.js'" }),
       turnItem('command-2', 3, { type: 'command', command: 'bash -c "pnpm test"', exitCode: 1 }),
-      turnItem('answer-1', 4, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+      // The joined line quotes POSIX-style, as on Windows: both ways around a quote inside.
+      turnItem('command-3', 4, {
+        type: 'command',
+        command: `/bin/zsh -lc 'rg -n '"'"'focus ring'"'"' src'`,
+      }),
+      turnItem('command-4', 5, {
+        type: 'command',
+        command: `/bin/bash -lc "git commit -m \\"fix: don't drop \\$HOME\\""`,
+      }),
+      turnItem('command-5', 6, {
+        type: 'command',
+        command: `/bin/zsh -lc 'echo '\\''done'\\'''`,
+      }),
+      turnItem('answer-1', 7, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
     ])
 
     fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
     expect(screen.getByText('cat src/motion.js')).toBeTruthy()
     expect(screen.getByText('Command failed: pnpm test')).toBeTruthy()
+    expect(screen.getByText("rg -n 'focus ring' src")).toBeTruthy()
+    expect(screen.getByText(`git commit -m "fix: don't drop $HOME"`)).toBeTruthy()
+    expect(screen.getByText("echo 'done'")).toBeTruthy()
   })
 
   it('names a command without the PowerShell that wrapped it on Windows', () => {

@@ -524,6 +524,47 @@ describe('prompting a sub-agent from its own chat', { timeout: 30_000 }, () => {
     childSession.emit({ type: 'turn.completed', turnId: childSession.turnId, status: 'completed' })
     await until(() => lastRow()?.state === 'completed')
   })
+
+  it("streams a prompt that waited behind the child's turn on the child's channel", async () => {
+    const h = harness()
+    const { childSession, childId } = await runningChild(h)
+
+    // A real engine names each turn anew; the fake answers every send with one id.
+    const secondTurn = childSession.turnId + '-again'
+    const sendTurn = childSession.sendTurn.bind(childSession)
+    childSession.sendTurn = async (threadId, text) => {
+      await sendTurn(threadId, text)
+      return secondTurn
+    }
+
+    // The detail's composer always names its submission, as here.
+    const sent = await h.orchestrator.submitTurn(
+      childId,
+      'Also check src/b.ts.',
+      [],
+      {},
+      'agent-detail-1',
+    )
+    expect(sent.queued).toBe(true)
+    childSession.emit({ type: 'turn.completed', turnId: childSession.turnId, status: 'completed' })
+    await until(() => childSession.sent.length === 2)
+    childSession.emit({
+      type: 'turn.started',
+      turn: { id: secondTurn, threadId: childId, status: 'running', createdAt: Date.now() },
+    })
+
+    const prompt = (events: Array<{ threadId: string; event: DomainEvent }>) =>
+      events.find(
+        ({ threadId, event }) =>
+          threadId === childId &&
+          event.type === 'item.completed' &&
+          event.item.role === 'user' &&
+          event.item.text === 'Also check src/b.ts.',
+      )
+    // The open sub-agent detail listens on the child's channel only.
+    await until(() => prompt(h.childEvents) !== undefined)
+    expect(prompt(h.parentEvents)).toBeUndefined()
+  })
 })
 
 /** A file the agent reports writing, as Claude Code names it. */

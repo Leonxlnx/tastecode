@@ -213,6 +213,7 @@ class FakeSession implements AgentSession {
   sentAttachments: string[][] = []
   sentOptions: Array<TurnOptions | undefined> = []
   steered: string[] = []
+  steeredAttachments: string[][] = []
   userInputs: Array<{ requestId: string; answers: Record<string, string[]> }> = []
   approvalModes: ApprovalMode[] = []
   mcpServers: McpServer[] = []
@@ -272,8 +273,9 @@ class FakeSession implements AgentSession {
     return this.turnIds.shift() ?? `${this.id}-turn`
   }
 
-  async steer(_threadId: string, text: string): Promise<void> {
+  async steer(_threadId: string, text: string, attachments: string[] = []): Promise<void> {
     this.steered.push(text)
+    this.steeredAttachments.push(attachments)
     const barrier = this.steerBarriers.shift()
     if (barrier) await barrier
   }
@@ -2430,6 +2432,33 @@ describe('queued Side-chat channel', () => {
       expect(received.some(({ threadId }) => threadId === side.id)).toBe(false)
 
       sessions[1]?.emit({ type: 'turn.completed', turnId: 'side-first-turn', status: 'completed' })
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('steers a prompt queued in Design mode without the Design marker as a file', async () => {
+    const { orchestrator, sessions } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      sessions[0]?.turnIds.push('running-turn')
+      const first = await orchestrator.submitTurn(thread.id, 'Fix the header.', [], {}, 'first')
+      if (first.queued) throw new Error('expected the first turn to start')
+      const queued = await orchestrator.submitTurn(
+        thread.id,
+        'Make it calmer.',
+        [DESIGN_BRIEF_ATTACHMENT],
+        {},
+        'design-queued',
+      )
+      if (!queued.queued) throw new Error('expected the prompt to queue')
+
+      await orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)
+
+      // The marker is TasteCode's own; an agent shown it as a file tries to read it.
+      expect(sessions[0]?.steered).toEqual(['Make it calmer.'])
+      expect(sessions[0]?.steeredAttachments).toEqual([[]])
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'running-turn', status: 'completed' })
     } finally {
       await orchestrator.disposeAll()
     }
@@ -8826,6 +8855,38 @@ describe('several sessions at once', () => {
     await expect(later).resolves.toMatchObject({ queued: true })
   })
 
+  it('starts no queued prompt while a Stop waits for a prompt on its way', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    session.turnIds = ['t1', 't2', 't3']
+    await orchestrator.submitTurn(thread.id, 'running')
+    await expect(orchestrator.submitTurn(thread.id, 'queued')).resolves.toMatchObject({
+      queued: true,
+    })
+    let prepared!: () => void
+    const preparing = new Promise<void>((resolve) => (prepared = resolve))
+    const onItsWay = orchestrator.trackSubmission(thread.id, async () => {
+      await preparing
+      return orchestrator.submitTurn(thread.id, 'on its way')
+    })
+
+    const stopping = orchestrator.interrupt(thread.id)
+    // The running turn ends by itself while the Stop waits for the prompt on its way.
+    session.emit({ type: 'turn.completed', turnId: 't1', status: 'completed' })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    prepared()
+    await expect(onItsWay).resolves.toMatchObject({ queued: true })
+    await expect(stopping).resolves.toBeUndefined()
+
+    // Without the hold, "queued" started when the turn ended, and the Stop caught it.
+    expect(session.sent).toEqual(['running'])
+    expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual([
+      'queued',
+      'on its way',
+    ])
+  })
+
   describe('prompts queued before a Stop', () => {
     async function stoppedWithQueue() {
       const context = harness()
@@ -9405,6 +9466,34 @@ describe('several sessions at once', () => {
       expect(sessions[0]!.sent).toEqual([])
       expect(sessions[1]!.sent).toEqual(['send this'])
       expect(store.hasUserSubmission('persisted-thread', 'stopped')).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
+  it('queues the second of two prompts sent while the access mode changed during a resume', async () => {
+    const { sessions, orchestrator, store, resumeBarriers, resumedIds } = harness()
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    let finishResume!: () => void
+    resumeBarriers.push(new Promise<void>((resolve) => (finishResume = resolve)))
+    try {
+      const first = orchestrator.submitTurn('persisted-thread', 'first', [], {}, 'first')
+      const second = orchestrator.submitTurn('persisted-thread', 'second', [], {}, 'second')
+      await vi.waitFor(() => expect(resumedIds).toHaveLength(1))
+      const changing = orchestrator.setThreadApproval('persisted-thread', 'full')
+      finishResume()
+      await expect(changing).resolves.toBeUndefined()
+      await expect(first).resolves.toMatchObject({ queued: false })
+      await expect(second).resolves.toMatchObject({ queued: true })
+      // Both started before: the second one's submission replaced the first one's.
+      expect(sessions.at(-1)!.sent).toEqual(['first'])
     } finally {
       await orchestrator.disposeAll()
       store.close()

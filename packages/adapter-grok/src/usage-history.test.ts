@@ -1,10 +1,11 @@
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { LocalUsageRecord } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   GROK_USAGE_HISTORY,
+  readGrokSessionUsage,
   readGrokUsageHistory,
   resumeGrokUsageHistory,
 } from './usage-history.js'
@@ -22,27 +23,132 @@ describe('Grok usage history source', () => {
     vi.unstubAllEnvs()
   })
 
-  it('reads the unified log of the given home, GROK_HOME or ~/.grok', () => {
+  it('reads the given home, GROK_HOME or ~/.grok', () => {
     const account = path.join(os.tmpdir(), 'grok-account')
-    expect(GROK_USAGE_HISTORY.root(account)).toBe(path.join(account, 'logs', 'unified.jsonl'))
+    expect(GROK_USAGE_HISTORY.root(account)).toBe(account)
 
     vi.stubEnv('GROK_HOME', path.join(os.tmpdir(), 'grok-home'))
-    expect(GROK_USAGE_HISTORY.root()).toBe(
-      path.join(os.tmpdir(), 'grok-home', 'logs', 'unified.jsonl'),
-    )
+    expect(GROK_USAGE_HISTORY.root()).toBe(path.join(os.tmpdir(), 'grok-home'))
 
     vi.stubEnv('GROK_HOME', undefined)
-    expect(GROK_USAGE_HISTORY.root()).toBe(
-      path.join(os.homedir(), '.grok', 'logs', 'unified.jsonl'),
-    )
+    expect(GROK_USAGE_HISTORY.root()).toBe(path.join(os.homedir(), '.grok'))
   })
 
   it('lists the log with the reader that continues from a checkpoint', async () => {
-    const file = logFile(temporaryDirectory(), 'unified.jsonl', ['{}'])
-    const archive = await GROK_USAGE_HISTORY.discover(file)
+    const home = temporaryDirectory()
+    mkdirSync(path.join(home, 'logs'))
+    logFile(path.join(home, 'logs'), 'unified.jsonl', ['{}'])
+    const archive = await GROK_USAGE_HISTORY.discover(home)
     expect(archive.files.map((entry) => [entry.read, entry.readFrom])).toEqual([
       [readGrokUsageHistory, resumeGrokUsageHistory],
     ])
+  })
+
+  it('lists the sessions’ usage files instead of the log once sessions have them', async () => {
+    const home = temporaryDirectory()
+    mkdirSync(path.join(home, 'logs'))
+    logFile(path.join(home, 'logs'), 'unified.jsonl', ['{}'])
+    const first = sessionUsage(home, 'E%3A%5Csite', 'a1', { sessionId: 'a1', turns: [] })
+    const second = sessionUsage(home, 'E%3A%5Cother', 'b2', { sessionId: 'b2', turns: [] })
+    mkdirSync(path.join(home, 'sessions', 'E%3A%5Csite', 'never-written'))
+    writeFileSync(path.join(home, 'sessions', 'session_search.sqlite'), 'x')
+
+    const archive = await GROK_USAGE_HISTORY.discover(home)
+
+    expect(archive.available).toBe(true)
+    expect(archive.files.map((entry) => entry.path).sort()).toEqual([first, second].sort())
+    expect(archive.files.every((entry) => entry.read === readGrokSessionUsage)).toBe(true)
+  })
+
+  it('has no archive in a home with neither', async () => {
+    await expect(GROK_USAGE_HISTORY.discover(temporaryDirectory())).rejects.toThrow()
+  })
+})
+
+describe('Grok session usage files', () => {
+  it('reads a row per turn and model, with cached reads and reasoning inside the counts', async () => {
+    const file = sessionUsage(temporaryDirectory(), 'E%3A%5Csite', 'folder-id', {
+      sessionId: 'b238d114',
+      updatedAt: '2026-11-04T08:00:00.000Z',
+      session: { inputTokens: 999_999 },
+      turns: [
+        {
+          turnNumber: 1,
+          endedAt: '2026-11-04T07:30:00.000Z',
+          primaryModelId: 'grok-4.7-build',
+          inputTokens: 1_000,
+          outputTokens: 300,
+          modelUsage: {
+            'grok-4.7-build': {
+              inputTokens: 1_000,
+              outputTokens: 300,
+              cachedReadTokens: 600,
+              reasoningTokens: 120,
+              totalTokens: 1_300,
+              modelCalls: 2,
+            },
+          },
+        },
+        {
+          turnNumber: 2,
+          endedAt: '2026-11-04T07:40:00.000Z',
+          modelUsage: {
+            'grok-4.7-build': { inputTokens: 500, outputTokens: 50, cachedReadTokens: 400 },
+            'grok-4.7-build-fast': {
+              inputTokens: 900_000,
+              outputTokens: 10,
+              modelCalls: 3,
+            },
+          },
+        },
+        { turnNumber: 3, endedAt: 'not a date', modelUsage: {} },
+      ],
+    })
+
+    const day = localDay('2026-11-04T07:30:00.000Z')
+    expect(summed(await readGrokSessionUsage(file))).toEqual({
+      [`${day}|grok-4.7-build|b238d114|false`]: {
+        uncachedInputTokens: 500,
+        cachedInputTokens: 1_000,
+        cacheWrite5mInputTokens: 0,
+        cacheWrite1hInputTokens: 0,
+        outputTokens: 350,
+        reasoningTokens: 120,
+        providerReportedCostUsd: 0,
+      },
+      [`${day}|grok-4.7-build-fast|b238d114|true`]: {
+        uncachedInputTokens: 900_000,
+        cachedInputTokens: 0,
+        cacheWrite5mInputTokens: 0,
+        cacheWrite1hInputTokens: 0,
+        outputTokens: 10,
+        reasoningTokens: 0,
+        providerReportedCostUsd: 0,
+      },
+    })
+  })
+
+  it('falls back to the primary model, and to the folder name for the session', async () => {
+    const file = sessionUsage(temporaryDirectory(), 'E%3A%5Csite', 'c3', {
+      turns: [
+        {
+          endedAt: '2026-11-05T10:00:00.000Z',
+          primaryModelId: 'grok-4.6-build',
+          inputTokens: 10,
+          outputTokens: 5,
+        },
+      ],
+    })
+
+    expect(await readGrokSessionUsage(file)).toMatchObject([
+      { model: 'grok-4.6-build', sessionId: 'c3', tokens: { uncachedInputTokens: 10 } },
+    ])
+  })
+
+  it('reads a file caught mid-write as nothing yet', async () => {
+    const file = sessionUsage(temporaryDirectory(), 'E%3A%5Csite', 'd4', {})
+    writeFileSync(file, '{"sessionId":"d4","turns":[{"endedAt"')
+    expect(await readGrokSessionUsage(file)).toEqual([])
   })
 })
 
@@ -180,6 +286,25 @@ function logFile(directory: string, name: string, rows: string[]): string {
   const file = path.join(directory, name)
   writeFileSync(file, lines(rows))
   return file
+}
+
+/** A session's usage file in the CLI's store: `<home>/sessions/<folder>/<session>/usage.json`. */
+function sessionUsage(home: string, folder: string, session: string, usage: unknown): string {
+  const directory = path.join(home, 'sessions', folder, session)
+  mkdirSync(directory, { recursive: true })
+  const file = path.join(directory, 'usage.json')
+  writeFileSync(file, JSON.stringify(usage))
+  return file
+}
+
+/** The local calendar day the usage index files a moment under. */
+function localDay(timestamp: string): string {
+  const date = new Date(timestamp)
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-')
 }
 
 function lines(rows: string[]): string {

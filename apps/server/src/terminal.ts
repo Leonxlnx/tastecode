@@ -246,14 +246,17 @@ export class TerminalManager {
   ): string {
     const args =
       globalThis.process.platform === 'win32'
-        ? ['/d', '/s', '/v:off', '/c', command]
+        ? // One command line, wrapped once for cmd /s /c. As an array, node-pty quotes the
+          // command again and turns its own quotes into \", which cmd cannot read: a CLI
+          // at a chosen path ("C:\Program Files\…") never started.
+          `/d /s /v:off /c "${command}"`
         : ['-c', command]
     return this.#spawn(key, args, cwd, columns, rows, key, env)
   }
 
   #spawn(
     key: string,
-    args: string[],
+    args: string[] | string,
     cwd: string,
     columns: number,
     rows: number,

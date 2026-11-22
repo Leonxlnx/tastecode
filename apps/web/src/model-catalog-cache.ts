@@ -116,6 +116,7 @@ export function parseModelCatalogCache(
       mark: candidate.mark,
       ...(connectionId ? { connectionId } : {}),
       ...(agent ? { agent } : {}),
+      ...(candidate.harness ? { harness: true as const } : {}),
       model: candidate.model,
     }
     const expectedKey = modelChoiceKey(
@@ -232,6 +233,7 @@ function parseCachedModelChoice(value: unknown): ModelChoice | undefined {
     mark,
     ...(connectionId === undefined ? {} : { connectionId }),
     ...(agent ? { agent } : {}),
+    ...(agent && value['harness'] === true ? { harness: true as const } : {}),
     model,
   }
 }
