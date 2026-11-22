@@ -101,10 +101,14 @@ export async function runAgentBrowserCommand(
           `(() => {
             const element = ${target}
             if (!element) return 'missing'
-            element.scrollIntoView({ block: 'center', inline: 'center' })
+            // An element found at a point is already in view, and scrolling would move it away
+            // from the position the agent named.
+            if (${command.selector !== undefined}) element.scrollIntoView({ block: 'center', inline: 'center' })
             // An icon's <svg> or <path> has no click(); its click bubbles to the button it sits in.
+            // A chart reads where it was clicked, so a point click keeps the agent's position.
             if (typeof element.click === 'function') element.click()
-            else element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+            else element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window,
+              clientX: ${command.x ?? 0}, clientY: ${command.y ?? 0} }))
             return 'ok'
           })()`,
         )

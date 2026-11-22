@@ -125,6 +125,19 @@ describe('agent browser commands', () => {
     expect(clicked).toHaveBeenCalledTimes(2)
   })
 
+  it('clicks a chart point at the position the agent named', async () => {
+    document.body.innerHTML = '<svg id="chart"><circle id="dot" r="4"/></svg>'
+    const at = vi.fn()
+    document.querySelector('#chart')!.addEventListener('click', (event) => {
+      const { clientX, clientY } = event as MouseEvent
+      at(clientX, clientY)
+    })
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(document.querySelector('#dot'))
+    const { page } = guest()
+    expect(await run({ action: 'click', x: 100, y: 50 }, page)).toMatchObject({ ok: true })
+    expect(at).toHaveBeenCalledExactlyOnceWith(100, 50)
+  })
+
   it('reads text, bounded, and treats a selector as data, not code', async () => {
     document.body.innerHTML = `<main id="main">${'word '.repeat(30_000)}</main>`
     const { page } = guest({
