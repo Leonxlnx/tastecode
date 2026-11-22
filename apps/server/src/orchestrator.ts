@@ -3489,6 +3489,20 @@ export class Orchestrator {
       const ensured = this.#ensureThread(threadId, options)
       await (stop.cancelled ? Promise.race([ensured, stop.cancelled]) : ensured)
       stoppedOnTheWay()
+      // An access mode change that came while the chat resumed. sendTurn would
+      // wait for it after the queue check below, and a prompt sent meanwhile
+      // would pass that check as well and start beside this one.
+      let waited: Promise<void> | undefined
+      for (
+        let change = this.#approvalChanges.get(threadId);
+        change !== undefined && change !== waited;
+        change = this.#approvalChanges.get(threadId)
+      ) {
+        waited = change
+        const changed = change.catch(() => undefined)
+        await (stop.cancelled ? Promise.race([changed, stop.cancelled]) : changed)
+        stoppedOnTheWay()
+      }
     } finally {
       if (resuming) this.#deleteSidebarStatus(this.#resumingForPrompt, threadId)
       if (stop.cancel) {
