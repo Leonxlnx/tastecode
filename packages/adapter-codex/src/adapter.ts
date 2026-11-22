@@ -885,6 +885,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpLogins.clear()
     const turns = [...this.#activeTurns]
     this.#activeTurns.clear()
+    // A command waiting for the turn Codex was about to start hears now that none comes.
+    for (const finish of [...this.#turnStartWaiters.values()]) finish(undefined)
     this.#subagents.endSession()
     // The provider is gone: settle cards without replying to its dead requests.
     for (const id of this.#approvals.keys()) {
@@ -1598,6 +1600,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         throw error
       }
       const startedTurn = await started.turnId
+      // Gone meanwhile: no turn of TasteCode's own stands in for the one Codex never started.
+      if (this.#rpc !== rpc)
+        throw new Error('Codex disconnected while starting the turn; resume the thread')
       turnId =
         startedTurn ??
         this.#commandReply(threadId, 'Codex accepted the compaction but reported no progress.')
@@ -1616,6 +1621,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       settle = resolve
     })
     const timer = setTimeout(() => finish(undefined), COMMAND_TURN_START_TIMEOUT_MS)
+    timer.unref?.()
     const finish = (id: string | undefined) => {
       clearTimeout(timer)
       if (this.#turnStartWaiters.get(threadId) === finish) this.#turnStartWaiters.delete(threadId)
@@ -1734,6 +1740,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#activeTurns.clear()
     this.#openItems.clear()
     this.#reviewingTurns.clear()
+    for (const finish of [...this.#turnStartWaiters.values()]) finish(undefined)
     this.#sessionThread = undefined
     // Held responders close over the dead transport; answering one after
     // disposal would write into nothing. Drop them with the process.
