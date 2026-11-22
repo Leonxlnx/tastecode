@@ -560,7 +560,7 @@ describe('recovering interrupted turns', () => {
     })
   }
 
-  it('settles every process-owned lifecycle while preserving terminal and resumable state', () => {
+  it('settles every process-owned lifecycle while preserving terminal state', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-interrupted-turn-'))
     const file = path.join(dir, 'harness.db')
     const seeded = new Store(file)
@@ -588,9 +588,11 @@ describe('recovering interrupted turns', () => {
       },
     })
 
-    seedThread(seeded, 'resumable-design', 'design-turn')
-    seeded.setDesignRun('resumable-design', { phase: 'brief' })
-    seeded.append('resumable-design', userInput('design-input', 'design-turn'))
+    // A saved run of the removed Design mode no longer answers its open question
+    // after a restart, so the question is settled like any other.
+    seedThread(seeded, 'old-design', 'design-turn')
+    seeded.setDesignRun('old-design', { phase: 'brief' })
+    seeded.append('old-design', userInput('design-input', 'design-turn'))
 
     seedThread(seeded, 'closed-thread')
     seeded.closeThread('closed-thread')
@@ -598,7 +600,7 @@ describe('recovering interrupted turns', () => {
 
     const restarted = new Store(file)
     try {
-      expect(restarted.recoverInterruptedThreads()).toEqual(['thread-1', 'resumable-design'])
+      expect(restarted.recoverInterruptedThreads()).toEqual(['thread-1', 'old-design'])
       const recovered = restarted.history('thread-1').map(({ event }) => event)
       expect(
         recovered
@@ -622,14 +624,14 @@ describe('recovering interrupted turns', () => {
         ),
       ).toHaveLength(1)
       expect(restarted.thread('thread-1')?.unread).toBe(true)
-      const designEvents = restarted.history('resumable-design').map(({ event }) => event)
+      const designEvents = restarted.history('old-design').map(({ event }) => event)
       expect(designEvents).toContainEqual({
         type: 'turn.completed',
         turnId: 'design-turn',
         status: 'interrupted',
       })
-      expect(designEvents.some((event) => event.type === 'user_input.resolved')).toBe(false)
-      expect(designEvents.some((event) => event.type === 'thread.error')).toBe(false)
+      expect(designEvents).toContainEqual({ type: 'user_input.resolved', id: 'design-input' })
+      expect(designEvents.some((event) => event.type === 'thread.error')).toBe(true)
       expect(restarted.history('closed-thread')).toHaveLength(1)
 
       const recoveredLength = restarted.history('thread-1').length

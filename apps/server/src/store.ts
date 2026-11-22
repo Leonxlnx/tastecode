@@ -290,7 +290,6 @@ type InterruptedThreadState = {
   approvals: Set<string>
   userInputs: Set<string>
   reviews: Map<string, Extract<DomainEvent, { type: 'approval.review.started' }>['review']>
-  hasResumableInput: boolean
 }
 
 const RESTART_INTERRUPTION_MESSAGE =
@@ -834,7 +833,7 @@ type PositionRow = { position: SqliteInteger }
 type AdjacentQueuedTurnRow = { queue_id: string; position: SqliteInteger }
 type QueuedTurnClaimRow = { thread_id: string; queue_id: string; intent: string }
 type DiffDecisionRow = { decision: string }
-type InterruptedThreadRow = { thread_id: string; payload: string; resumable: SqliteInteger }
+type InterruptedThreadRow = { thread_id: string; payload: string }
 type HistoryRow = { seq: SqliteInteger; payload: string }
 type HistoryKeyRow = { key: string; first_seq: SqliteInteger }
 type ThreadEventRow = { thread_id: string; payload: string }
@@ -1216,16 +1215,7 @@ export class Store {
       `INSERT INTO recovery_errors (thread_id, event_seq) VALUES (?, ?)
        ON CONFLICT (thread_id) DO UPDATE SET event_seq = excluded.event_seq`,
     )
-    const openRecoveryLifecycles = `SELECT recovery.thread_id, recovery.payload,
-              CASE WHEN recovery.event_type = 'user_input.requested'
-                AND EXISTS (
-                  SELECT 1 FROM design_runs
-                  WHERE design_runs.thread_id = recovery.thread_id
-                    AND json_extract(
-                      CASE WHEN json_valid(design_runs.payload) THEN design_runs.payload END,
-                      '$.phase'
-                    ) = 'brief'
-                ) THEN 1 ELSE 0 END AS resumable
+    const openRecoveryLifecycles = `SELECT recovery.thread_id, recovery.payload
        FROM recovery_lifecycles AS recovery
        INNER JOIN threads ON threads.id = recovery.thread_id
        LEFT JOIN recovery_errors AS errors ON errors.thread_id = recovery.thread_id
@@ -3445,7 +3435,6 @@ export class Store {
         approvals: new Set<string>(),
         userInputs: new Set<string>(),
         reviews: new Map(),
-        hasResumableInput: false,
       }
       states.set(row.thread_id, state)
 
@@ -3453,10 +3442,7 @@ export class Store {
       if (event.type === 'item.started' || event.type === 'item.completed')
         state.activeItems.set(event.item.id, event.item)
       if (event.type === 'approval.requested') state.approvals.add(event.request.id)
-      if (event.type === 'user_input.requested') {
-        if (row.resumable) state.hasResumableInput = true
-        else state.userInputs.add(event.request.id)
-      }
+      if (event.type === 'user_input.requested') state.userInputs.add(event.request.id)
       if (event.type === 'approval.review.started') {
         state.reviews.set(event.review.id, event.review)
       }
@@ -3487,13 +3473,11 @@ export class Store {
           this.#appendEvent(threadId, event, at)
         }
         if (state.openTurns.size === 0) continue
-        if (!state.hasResumableInput) {
-          this.#appendEvent(
-            threadId,
-            { type: 'thread.error', threadId, message: RESTART_INTERRUPTION_MESSAGE },
-            at,
-          )
-        }
+        this.#appendEvent(
+          threadId,
+          { type: 'thread.error', threadId, message: RESTART_INTERRUPTION_MESSAGE },
+          at,
+        )
         this.touchThread(threadId, true, at)
         recovered.push(threadId)
       }

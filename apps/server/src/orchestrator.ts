@@ -3155,11 +3155,11 @@ export class Orchestrator {
     // The words the user sent; whatever the prompt carries in front of them is not theirs.
     this.#latestUserPrompts.set(threadId, text)
     // Creatify's marker is no file. It asks for the creative skills note behind
-    // the words; without a skill installed the prompt goes as written. Such a
-    // prompt is never a Design run's, so a Design marker beside it goes too.
+    // the words; without a skill installed the prompt goes as written. The old
+    // Design marker of an earlier client or queue starts nothing; it goes too.
     const wantsCreatify = attachments.some(isCreatifyAttachment)
     const creatify = wantsCreatify ? this.#bundledSkills().creatify : ''
-    if (wantsCreatify) attachments = attachments.filter((attachment) => !isModeMarker(attachment))
+    attachments = attachments.filter((attachment) => !isModeMarker(attachment))
     // A failed change leaves the session on its last applied mode, which is
     // the mode this turn runs under. Its error belongs to whoever changed it.
     const approvalChange = this.#approvalChanges.get(threadId)
@@ -3226,108 +3226,6 @@ export class Orchestrator {
       }
       if (this.#threads.get(threadId) !== entry) {
         throw new Error('turn cancelled because the provider session changed')
-      }
-      const design = attachments.some(isDesignBriefAttachment)
-      // Resume only an explicit continuation; a new brief still starts a fresh design.
-      // "continue" sent with Creatify on is a request to the agent, not to a suspended run.
-      if (
-        !wantsCreatify &&
-        /^(?:continue|resume|retry|weiter|weitermachen|fortsetzen)(?:\s+(?:please|pls|bitte))?[.!?]*$/i.test(
-          text.trim(),
-        ) &&
-        attachments.every(isDesignBriefAttachment)
-      ) {
-        const saved = this.#store.designRun(threadId)
-        if (saved !== undefined) {
-          await loadDesignAgent()
-          const flow = parseStoredDesignFlow(saved, this.#repoPath(threadId))
-          if (flow?.suspended) {
-            // The suspension's stop may still wait for the old preview startup.
-            await this.#stopDesignPreview(threadId).catch(() => undefined)
-            this.#claimDesignFlow(threadId, flow)
-            delete flow.suspended
-            delete flow.correctionErrors
-            flow.correcting = false
-            flow.options = { ...flow.options, ...options }
-            try {
-              this.#validateApprovedDesignArtifacts(flow)
-              const prompt = await this.#readyDesignPrompt(
-                flow,
-                flow.pendingPrompt ?? this.#designPromptFor(flow),
-              )
-              delete flow.pendingPrompt
-              this.#saveDesignFlow(threadId)
-              this.#notePromptWrapping(threadId, true)
-              return await this.#sendDesignTurn(
-                threadId,
-                prompt,
-                this.#designAttachmentsFor(flow),
-                this.#designTurnOptions(threadId, flow),
-                pendingStart,
-              )
-            } catch (error) {
-              this.#failOwnedDesignFlow(threadId, flow, error, true)
-              throw error
-            }
-          }
-        }
-      }
-      if (design) {
-        const referenceAttachments = [
-          ...new Set(attachments.filter((attachment) => !isDesignBriefAttachment(attachment))),
-        ]
-        if (referenceAttachments.length > 64)
-          throw new Error('Design mode supports at most 64 supplied references')
-        if (!this.#get(threadId).session.capabilities.images) {
-          throw new Error(
-            'Design mode requires image input to inspect the selected references. Choose a provider/model that supports images, or turn off Design mode to continue ordinary coding.',
-          )
-        }
-        await loadDesignAgent()
-        const workspacePath = this.#repoPath(threadId)
-        const referenceSnapshot = designAgent().snapshotDesignFiles(referenceAttachments)
-        const { designSourceBaseline, buildFileBaseline, designScanSkipped } =
-          this.#designScanBaselines(workspacePath)
-        const designConsistencyBaseline = this.#designConsistencyBaseline(workspacePath)
-        // A preview that will not stop is logged and kept for a later retry; the
-        // new run's preview takes another port.
-        await this.#stopDesignPreview(threadId).catch(() => undefined)
-        // The flow keeps the user's own options for every phase (see #designTurnOptions).
-        const flow: DesignFlow = {
-          workspacePath,
-          originalRequest: text,
-          referenceAttachments,
-          referenceSnapshot,
-          ...(designSourceBaseline ? { designSourceBaseline } : {}),
-          ...(designConsistencyBaseline ? { designConsistencyBaseline } : {}),
-          ...(buildFileBaseline ? { buildFileBaseline } : {}),
-          ...(designScanSkipped ? { designScanSkipped } : {}),
-          options,
-          phase: 'brief',
-          askedQuestions: false,
-          explicitAnswers: [],
-          correcting: false,
-          repairAttempt: 0,
-        }
-        this.#claimDesignFlow(threadId, flow)
-        this.#saveDesignFlow(threadId)
-        this.#notePromptWrapping(threadId, true)
-        let turnId: string
-        try {
-          turnId = await this.#sendDesignTurn(
-            threadId,
-            designAgent().designBriefingPrompt(text),
-            referenceAttachments,
-            this.#designTurnOptions(threadId, flow),
-            pendingStart,
-          )
-        } catch (error) {
-          this.#deleteSidebarStatus(this.#startingTurns, threadId)
-          if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
-          else void this.#drainQueue(threadId)
-          throw error
-        }
-        return turnId
       }
       const brief = existsSync(path.join(this.#repoPath(threadId), '.taste', 'brief.json'))
       // A provider runs its own slash command only when the prompt starts with
@@ -6134,11 +6032,6 @@ export class Orchestrator {
       )
     }
 
-    // Recover Design mode before the provider can emit resumed events. Loading after attach would
-    // add an async gap where output could arrive without the persisted design flow being present.
-    const storedDesignFlow = this.#store.designRun(threadId)
-    if (storedDesignFlow !== undefined) await loadDesignAgent()
-
     // Its sessions live in its account's folder, so a chat resumes only there.
     const accountHome = threadAccountHome(this.#accounts, stored)
     const runtime = this.#runtimeFor(stored.provider, this.#onLog, accountHome)
@@ -6286,9 +6179,6 @@ export class Orchestrator {
       }
     }
     this.#markIdleRuntimeEligible(threadId)
-    if (storedDesignFlow !== undefined) {
-      this.#restoreDesignFlow(threadId, workspacePath, storedDesignFlow)
-    }
   }
 
   #restoreDesignFlow(threadId: string, workspacePath: string, storedDesignFlow: unknown): void {

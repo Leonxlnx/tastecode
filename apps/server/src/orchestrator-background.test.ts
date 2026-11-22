@@ -735,29 +735,6 @@ describe('a new chat whose provider would name it', () => {
     return titling
   }
 
-  it.each([false, true])(
-    'titles a Grok Design chat from the request, not its briefing (title asked on the way: %s)',
-    async (onItsWay) => {
-      const setup = await newChat('grok')
-      const { orchestrator, store, threadId, chat, started, prompts } = setup
-
-      await expect(sendAndTitle(setup, [DESIGN_BRIEF_ATTACHMENT], onItsWay)).resolves.toEqual({
-        title: 'Generated title',
-        applied: true,
-      })
-
-      // Grok got TasteCode's briefing, so its own name would describe that.
-      expect(chat.sent).toHaveLength(1)
-      expect(chat.sent[0]).not.toBe(request)
-      expect(prompts).toEqual([titlePrompt(request)])
-      expect(started).toEqual([{ provider: 'claude-code', model: 'claude-haiku-5-5' }])
-      expect(store.thread(threadId)?.title).toBe('Generated title')
-      // History puts the provider's name in place only of a stand-in.
-      expect(store.provisionalTitle(threadId)).toBeUndefined()
-      expect(orchestrator.awaitsProviderTitle(threadId)).toBe(false)
-    },
-  )
-
   it("titles a Grok chat from the request when a Design brief's preamble wraps its first prompt", async () => {
     const setup = await newChat('grok')
     mkdirSync(path.join(setup.root, '.taste'))
@@ -791,22 +768,6 @@ describe('a new chat whose provider would name it', () => {
       expect(orchestrator.awaitsProviderTitle(threadId)).toBe(true)
     },
   )
-
-  it('keeps the stand-in when the Design briefing goes out after the provider was left to name the chat', async () => {
-    const { orchestrator, store, threadId, chat, started } = await newChat('grok')
-    await expect(orchestrator.generateBackgroundTitle(threadId, request, standIn)).resolves.toEqual(
-      { title: standIn, applied: false },
-    )
-    expect(store.provisionalTitle(threadId)).toBe(standIn)
-
-    await orchestrator.submitTurn(threadId, request, [DESIGN_BRIEF_ATTACHMENT])
-
-    expect(chat.sent).toHaveLength(1)
-    expect(store.thread(threadId)?.title).toBe(standIn)
-    expect(store.provisionalTitle(threadId)).toBeUndefined()
-    expect(orchestrator.awaitsProviderTitle(threadId)).toBe(false)
-    expect(started).toEqual([])
-  })
 
   it.each([false, true])(
     'titles a Codex chat from the request as before (Design: %s)',
