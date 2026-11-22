@@ -180,6 +180,43 @@ describe('PullRequestService', () => {
     expect(result.truncated).toBe(false)
   })
 
+  it('tells a failed account read from a sign-out', async () => {
+    const offline = 'Get "https://api.github.com/user": proxyconnect tcp: dial tcp 127.0.0.1:9'
+    let userAnswer: () => Promise<string> = async () => JSON.stringify({ login: 'Blueemi' })
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[0] === 'api' && args[1] === 'user') return userAnswer()
+      if (isMergeStateRead(args)) return mergeStatePage(args, 'CLEAN')
+      return args[0] === 'search' ? '[]' : searchPage([])
+    })
+    const service = new PullRequestService({
+      run,
+      installed: async () => true,
+      now: () => 100,
+      resolveProjects: async () => new Map(),
+    })
+
+    // Offline before any account was read: the read fails, it does not say "sign in".
+    userAnswer = async () => {
+      throw new Error(offline)
+    }
+    await expect(service.account(true)).rejects.toThrow('proxyconnect')
+
+    // Offline after one was read: the account stays.
+    userAnswer = async () => JSON.stringify({ login: 'Blueemi' })
+    await service.account(true)
+    userAnswer = async () => {
+      throw new Error(offline)
+    }
+    expect(await service.account(true)).toMatchObject({ authenticated: true, login: 'Blueemi' })
+    expect((await service.list([], true)).account.login).toBe('Blueemi')
+
+    // A token GitHub refuses is a sign-out, as gh reports it.
+    userAnswer = async () => {
+      throw new Error('gh: Bad credentials (HTTP 401)')
+    }
+    expect(await service.account(true)).toMatchObject({ authenticated: false })
+  })
+
   it('keeps the searches that loaded when others fail', async () => {
     const run = vi.fn<GhRunner>(async (args) => {
       if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
