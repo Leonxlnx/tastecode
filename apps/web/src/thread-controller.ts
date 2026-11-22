@@ -31,6 +31,7 @@ import {
   NEW_CHAT_DRAFT_KEY,
   readComposerDraft,
   upsertComposerDraft,
+  joinComposerDraft,
   moveComposerDraft,
   parseComposerDrafts,
   serializeComposerDrafts,
@@ -239,6 +240,11 @@ export class ThreadController {
   }
   moveDraft(from: string, to: string): void {
     moveComposerDraft(this.#drafts, from, to)
+    this.#saveDraftsSoon()
+  }
+  /** Like moveDraft, but a draft already under the target is kept in front of the moved one. */
+  joinDraft(from: string, to: string): void {
+    joinComposerDraft(this.#drafts, from, to)
     this.#saveDraftsSoon()
   }
   flushDrafts(): void {

@@ -3,6 +3,14 @@ import type { ComposerResource } from './ui/ComposerResourcePicker.js'
 
 export const NEW_CHAT_DRAFT_KEY = 'new-chat'
 
+/**
+ * Each project has a New chat draft of its own. The one New chat shows is under
+ * NEW_CHAT_DRAFT_KEY; a project's draft waits here while New chat shows another project.
+ */
+export function parkedNewChatDraftKey(projectPath: string): string {
+  return `${NEW_CHAT_DRAFT_KEY}:${projectPath}`
+}
+
 export type ComposerDraft = {
   text: string
   attachments: string[]
@@ -46,6 +54,37 @@ export function moveComposerDraft(
   drafts.delete(from)
   if (!draft || drafts.has(to)) return
   drafts.set(to, draft)
+}
+
+/**
+ * Moves a draft to another key. What is already drafted there stays, in front
+ * of it: neither of two unsent prompts is dropped.
+ */
+export function joinComposerDraft(
+  drafts: Map<string, ComposerDraft>,
+  from: string,
+  to: string,
+): void {
+  if (from === to) return
+  const moving = drafts.get(from)
+  drafts.delete(from)
+  if (!moving) return
+  const kept = drafts.get(to)
+  drafts.set(
+    to,
+    kept
+      ? {
+          text: [kept.text, moving.text].filter(Boolean).join('\n\n'),
+          attachments: [...new Set([...kept.attachments, ...moving.attachments])],
+          resources: [
+            ...kept.resources,
+            ...moving.resources.filter(
+              (resource) => !kept.resources.some((held) => held.key === resource.key),
+            ),
+          ],
+        }
+      : moving,
+  )
 }
 
 const SavedComposerDraftsSchema = z.record(
