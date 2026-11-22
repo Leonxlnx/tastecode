@@ -61,7 +61,7 @@
     },
     {
       "folder": "cook",
-      "summary": "long reference-matching loops for ambitious visual builds",
+      "summary": "ambitious demos, games and 3D scenes built in long loops",
       "repository": "Leonxlnx/cook",
       "ref": "main",
       "commit": "b23cac6fd9439dfddcab61b14808e7bf72549b46",
@@ -73,6 +73,20 @@
       "treeSha256": "51681e41a3e59d2e4646e84d54d71499773f939025f63afead18277a33c7f0f4",
       "files": 10,
       "bytes": 44021
+    },
+    {
+      "folder": "earshot",
+      "summary": "sound effects made in code for apps, games and video",
+      "repository": "Leonxlnx/earshot",
+      "ref": "main",
+      "commit": "7a7f7c5c70d4a763a1eca4b3666af7c77e313f97",
+      "path": "skills/earshot",
+      "license": "MIT",
+      "licenseFile": "LICENSE",
+      "archiveSha256": "136763a49f1ad0c9d11ee3f4db8cd9afb0d838ce71366cd88e68943cadd31efa",
+      "treeSha256": "542a8dcc73b257813e349e22ac977a6ca2e4f7589257465a556a905c526e5a32",
+      "files": 2,
+      "bytes": 48833
     }
   ]
 }
