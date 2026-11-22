@@ -168,14 +168,14 @@ function merge(index: StateIndex, rows: Row[], count: number): Set<string> {
     const before = index.byId.get(row.id)
     const after = entry(row, index.sources)
     if (before !== undefined && sameEntry(before, after)) continue
-    const beforeFile = before?.session.locator && path.resolve(before.session.locator)
+    const beforeFile = before?.session.locator && rolloutKey(before.session.locator)
     if (beforeFile && index.byFile.get(beforeFile) === before) {
       index.byFile.delete(beforeFile)
       changedFiles.add(beforeFile)
     }
     index.byId.set(row.id, after)
     if (after) {
-      const file = path.resolve(after.session.locator!)
+      const file = rolloutKey(after.session.locator!)
       index.byFile.set(file, after)
       changedFiles.add(file)
     }
@@ -191,7 +191,7 @@ function compare(previous: StateIndex | undefined, next: StateIndex): Set<string
       const before = previous.byId.get(id)
       if (!before || !after || !sameEntry(before, after)) continue
       next.byId.set(id, before)
-      const file = path.resolve(after.session.locator!)
+      const file = rolloutKey(after.session.locator!)
       if (next.byFile.get(file) === after) next.byFile.set(file, before)
     }
   const changedFiles = new Set<string>()
@@ -220,6 +220,15 @@ function entry(row: Row, sources: boolean): IndexedSession | null {
       locator: withoutExtendedPrefix(row.rollout_path),
     },
   }
+}
+
+/**
+ * How the index and the rollouts found on disk name one rollout file. Windows compares
+ * paths without case, and Codex can record a drive or folder in another case than the
+ * one the files are listed under (`e:\\…` for `E:\\…`); the indexed title would be lost.
+ */
+export function rolloutKey(file: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? path.win32.resolve(file).toLowerCase() : path.resolve(file)
 }
 
 /**

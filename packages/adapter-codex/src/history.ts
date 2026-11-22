@@ -13,6 +13,7 @@ import {
   readStateIndex,
   type IndexedSession,
   type StateIndex,
+  rolloutKey,
 } from './state-index.js'
 
 type SavedFile = { file: string; archived: boolean; size: number; mtimeMs: number }
@@ -70,7 +71,9 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
         ? stats.files
         : undefined
     const files = await savedFiles(home, (file) =>
-      reusable && byFile.has(file) && !changedFiles.has(file) ? reusable.get(file) : undefined,
+      reusable && byFile.has(rolloutKey(file)) && !changedFiles.has(rolloutKey(file))
+        ? reusable.get(file)
+        : undefined,
     )
     if (!reusable) stats = { at: now, files: new Map() }
     for (const saved of files) stats!.files.set(saved.file, saved)
@@ -80,7 +83,7 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
       await Promise.all(
         files.slice(offset, offset + 32).map(async (saved) => {
           const revision = `${saved.size}:${saved.mtimeMs}`
-          const indexed = byFile.get(saved.file)
+          const indexed = byFile.get(rolloutKey(saved.file))
           // Opening every rollout at startup read the first chunk of thousands of
           // transcripts. The index already carries everything the header would add.
           let header: ProviderHistorySession | null | undefined
