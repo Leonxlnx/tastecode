@@ -136,6 +136,28 @@
       }
     ],
     "artifactName": "TasteCode-${version}-${os}-${arch}.${ext}",
+    "linux": {
+      "icon": "assets/icons",
+      "category": "Development",
+      "executableName": "tastecode",
+      "synopsis": "Local desktop workspace for coding agents",
+      "description": "A local desktop workspace for coding agents.",
+      "maintainer": "Tasteskill Team <hello@tasteskill.dev>",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "desktop": {
+        "entry": {
+          "Keywords": "coding;agents;ai;development;",
+          "StartupWMClass": "dev.tastecode.desktop"
+        }
+      }
+    },
     "win": {
       "target": [
         {
