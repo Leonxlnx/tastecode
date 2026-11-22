@@ -3971,7 +3971,12 @@ export class Orchestrator {
         submission.channel !== undefined
           ? submission.channel === 'side'
           : this.#isSideThread(threadId)
+      // A sub-agent's chat streams on its own channel, as #record sends its other
+      // events; its open detail would otherwise miss the prompt until reopened.
+      const subagentParent = this.#subagentParents.get(threadId)
       if (side) this.#onSideEvent(threadId, event, seq, serializedEvent)
+      else if (subagentParent !== undefined)
+        this.#onSubagentEvent(threadId, subagentParent, event, seq, serializedEvent)
       else this.#onEvent(threadId, event, seq, serializedEvent)
     } else {
       this.#record(threadId, event)
