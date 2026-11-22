@@ -53,6 +53,17 @@ type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type HistoryBase = { state: ThreadState; sequence: number | undefined }
 /** `write` returns whether storage took the drafts. */
 export type DraftStorage = { read(): string | null; write(drafts: string | undefined): boolean }
+/**
+ * A value saved beside the drafts that must describe the same state as the drafts on disk,
+ * as the New chat draft's project does for the New chat slots. `write` saves it before the
+ * drafts; the drafts it `keeps` are never set back to their saved versions; `undo` restores
+ * its previous value when those drafts could not be saved after all.
+ */
+export type DraftCompanion = {
+  keeps(key: string): boolean
+  write(): boolean
+  undo(): void
+}
 const DRAFT_SAVE_DELAY_MS = 300
 const BACKGROUND_COMPACTION_CHECK_CHARACTERS = 64 * 1024
 /** Whole turns in the first page of a cold open; older turns load on demand. */
@@ -81,6 +92,8 @@ export class ThreadController {
   #draftSave: ReturnType<typeof setTimeout> | undefined
   /** What the last successful save wrote. */
   #storedDrafts: ReadonlyMap<string, ComposerDraft>
+  /** A companion value not yet saved together with its drafts. */
+  #draftCompanion: DraftCompanion | undefined
   #histories = new Map<string, Set<BufferedEvent[]>>()
   #historyOwners = new Map<string, BufferedEvent[]>()
   // Live cursors can cross a gap. Keep the last safe state and cursor together
@@ -257,13 +270,29 @@ export class ThreadController {
     this.#draftSave = undefined
     this.#writeDrafts()
   }
+  /** Saves the drafts now, together with a value that must match them on disk. */
+  saveDraftsWith(companion: DraftCompanion): void {
+    this.#draftCompanion = companion
+    if (this.#draftSave !== undefined) clearTimeout(this.#draftSave)
+    this.#draftSave = undefined
+    this.#writeDrafts()
+  }
   #writeDrafts(): void {
     const storage = this.draftStorage
     if (!storage) return
-    const saved = saveComposerDrafts(this.#drafts, this.#storedDrafts, (drafts) =>
-      storage.write(drafts),
+    const companion = this.#draftCompanion
+    // Without its companion the drafts would describe another state: both wait for the next save.
+    if (companion && !companion.write()) return
+    const saved = saveComposerDrafts(
+      this.#drafts,
+      this.#storedDrafts,
+      (drafts) => storage.write(drafts),
+      companion ? (key) => companion.keeps(key) : undefined,
     )
     if (saved) this.#storedDrafts = saved
+    if (!companion) return
+    if (saved) this.#draftCompanion = undefined
+    else companion.undo()
   }
   #saveDraftsSoon(): void {
     if (!this.draftStorage) return

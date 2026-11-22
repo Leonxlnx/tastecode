@@ -284,6 +284,42 @@ describe('ThreadController lifecycle owner', () => {
       expect(storage.restart().draft('thread').text).toBe('fits again')
     })
 
+    it('saves nothing beside a companion value that could not be saved', () => {
+      const storage = quotaStorage(1_000, { 'new-chat': draftOf('words of A') })
+      const before = storage.stored
+      const controller = new ThreadController(new TestTransport(), storage)
+      controller.joinDraft('new-chat', 'new-chat:/A')
+      let owner = false
+      const companion = {
+        keeps: (key: string) => key.startsWith('new-chat'),
+        write: vi.fn(() => owner),
+        undo: vi.fn(),
+      }
+      controller.saveDraftsWith(companion)
+      expect(storage.stored).toBe(before)
+
+      // The next save writes both.
+      owner = true
+      controller.editDraft('other', { text: 'next edit' })
+      controller.flushDrafts()
+      expect(JSON.parse(storage.stored!)).toEqual({
+        'new-chat:/A': draftOf('words of A'),
+        other: draftOf('next edit'),
+      })
+      expect(companion.undo).not.toHaveBeenCalled()
+    })
+
+    it('undoes a companion value when the drafts it describes cannot be saved', () => {
+      const storage = quotaStorage(1_000, { 'new-chat': draftOf('words of A') })
+      const before = storage.stored
+      const controller = new ThreadController(new TestTransport(), storage)
+      controller.editDraft('new-chat:/A', { text: 'q'.repeat(5_000) })
+      const companion = { keeps: () => true, write: vi.fn(() => true), undo: vi.fn() }
+      controller.saveDraftsWith(companion)
+      expect(storage.stored).toBe(before)
+      expect(companion.undo).toHaveBeenCalledTimes(1)
+    })
+
     it('does not throw when storage refuses every write', () => {
       const controller = new ThreadController(new TestTransport(), {
         read: () => null,
