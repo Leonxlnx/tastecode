@@ -142,6 +142,37 @@ it('resizes the bottom panel with Up and Down', () => {
   expect(base.onWidthChange).toHaveBeenLastCalledWith(720)
 })
 
+it('saves no size when the edge is pressed and released without moving', () => {
+  reduceMotion(true)
+  const base = props()
+  // 720px of room leaves 360px for the panel: the saved 700 is drawn at 360.
+  const { container } = renderIn('workspace-layout', base)
+  Object.defineProperty(container, 'clientWidth', { configurable: true, value: 720 })
+  const edge = screen.getByRole('separator')
+  Object.defineProperty(edge, 'setPointerCapture', { configurable: true, value: vi.fn() })
+  fireEvent.pointerDown(edge, { clientX: 500, pointerId: 3 })
+  fireEvent.pointerUp(window, { clientX: 500, pointerId: 3 })
+  expect(base.onWidthChange).not.toHaveBeenCalled()
+})
+
+it('saves no size for a keyboard step that cannot move past a limit', () => {
+  reduceMotion(true)
+  const base = props()
+  const { container, rerender } = renderIn('workspace-layout', base)
+  Object.defineProperty(container, 'clientWidth', { configurable: true, value: 720 })
+  const edge = screen.getByRole('separator')
+  // Drawn at its 360px maximum: widening cannot move it.
+  fireEvent.keyDown(edge, { key: 'ArrowLeft' })
+  fireEvent.keyDown(edge, { key: 'End' })
+  rerender(<WorkspacePanel {...base} width={300} />)
+  // At the 300px minimum: narrowing cannot move it.
+  fireEvent.keyDown(edge, { key: 'ArrowRight' })
+  fireEvent.keyDown(edge, { key: 'Home' })
+  expect(base.onWidthChange).not.toHaveBeenCalled()
+  fireEvent.keyDown(edge, { key: 'ArrowLeft' })
+  expect(base.onWidthChange).toHaveBeenLastCalledWith(316)
+})
+
 it('keeps the edge of an expanded panel out of the tab order', () => {
   renderIn('workspace-layout', { ...props(), expanded: true })
   expect(screen.getByRole('separator', { hidden: true }).tabIndex).toBe(-1)
