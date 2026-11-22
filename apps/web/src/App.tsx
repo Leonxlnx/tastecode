@@ -2109,6 +2109,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     () => readSetting(NEW_CHAT_DRAFT_PROJECT_KEY) ?? undefined,
   )
   const newChatDraftProject = useRef<string | undefined>(savedNewChatDraftProject)
+  /** A removed project whose live New chat draft waits for the project shown next. */
+  const removedNewChatDraftProject = useRef<string | undefined>(undefined)
   /**
    * Saves the New chat draft's project together with the drafts it moves between the New
    * chat slots: on disk the two always describe one state. When either cannot be written,
@@ -2155,6 +2157,17 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         // The live draft becomes this project's; one it left waiting is joined to it.
         const waitingKey = parkedNewChatDraftKey(projectPath)
         const waiting = !isEmptyComposerDraft(threadController.draft(waitingKey))
+        const removed = removedNewChatDraftProject.current
+        removedNewChatDraftProject.current = undefined
+        // A removed project's draft is never joined to another project's own: it waits under
+        // its folder instead, and comes back if the folder is added again.
+        if (removed !== undefined && waiting) {
+          threadController.joinDraft(NEW_CHAT_DRAFT_KEY, parkedNewChatDraftKey(removed))
+          setDesignModes((current) => {
+            const { [NEW_CHAT_DRAFT_KEY]: left = false, ...rest } = current
+            return left ? { ...rest, [parkedNewChatDraftKey(removed)]: true } : rest
+          })
+        }
         threadController.joinDraft(waitingKey, NEW_CHAT_DRAFT_KEY)
         setDesignModes((current) => {
           if (!(waitingKey in current)) return current
@@ -6730,9 +6743,14 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         .request('projects.remove', { path })
         .then(() => {
           // A removed project's waiting New chat draft stays under its folder, so adding the
-          // folder again brings it back. Its live one goes to the project shown next.
-          if (newChatDraftProject.current === path) {
+          // folder again brings it back. Its live one goes to the project shown next, unless
+          // that project has a draft of its own (see enterNewChatDraft).
+          if (
+            newChatDraftProject.current === path ||
+            (newChatDraftProject.current === undefined && previousActivePath === path)
+          ) {
             newChatDraftProject.current = undefined
+            removedNewChatDraftProject.current = path
             threadController.saveDraftsWith(newChatDraftOwner)
           }
           return refreshProjects()

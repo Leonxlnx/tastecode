@@ -8320,6 +8320,29 @@ describe('new chats', () => {
         { text: string }
       >
 
+    it("never joins a removed project's draft to the next project's own", async () => {
+      removableProject()
+      render(<App />)
+      fireEvent.change(await screen.findByPlaceholderText('Do anything'), {
+        target: { value: 'Words for project' },
+      })
+      await chooseProject('other')
+      fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+        target: { value: 'Words for other' },
+      })
+      await chooseProject('project')
+      await waitFor(() => expect(composerValue()).toBe('Words for project'))
+
+      act(() => sidebarProps().onRemoveProject('/work/project'))
+
+      await waitFor(() => expect(composerProps().projectPath).toBe('/work/other'))
+      await waitFor(() => expect(composerValue()).toBe('Words for other'))
+      // It waits under its own folder, for the folder to be added again.
+      await waitFor(() =>
+        expect(savedDrafts()['new-chat:/work/project']?.text).toBe('Words for project'),
+      )
+    })
+
     it('keeps the waiting draft of a removed project for when it is added again', async () => {
       removableProject()
       const view = render(<App />)
