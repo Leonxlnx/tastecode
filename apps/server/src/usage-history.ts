@@ -753,6 +753,11 @@ export class UsageHistoryService {
       const sessionCount = providerSessions.get(provider)?.size ?? 0
       return { provider, available: archived || sessionCount > 0, sessionCount }
     })
+    // Net savings are summed signed: a write is repaid by later reads, possibly
+    // in another record. Where writes cost more than reads saved, nothing was saved.
+    for (const bucket of [{ totals }, ...providers, ...models, ...daily]) {
+      bucket.totals.cacheSavingsUsd = Math.max(0, bucket.totals.cacheSavingsUsd)
+    }
 
     return {
       range,
