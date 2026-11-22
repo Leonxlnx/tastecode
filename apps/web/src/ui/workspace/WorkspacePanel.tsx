@@ -401,7 +401,9 @@ function WorkspacePanelComponent(props: {
   // The agent's browser: commands for the chat this panel shows run in its own tab.
   const [agentCommand, setAgentCommand] = useState<BrowserCommand>()
   const [agentRecent, setAgentRecent] = useState(false)
-  const [agentStopped, setAgentStopped] = useState(false)
+  // Kept per chat: Stop lasts for that chat's turn, also while the panel shows another chat.
+  const [stoppedChats, setStoppedChats] = useState<ReadonlySet<string>>(() => new Set())
+  const agentStopped = props.threadId !== undefined && stoppedChats.has(props.threadId)
   const agentCommandRef = useRef(agentCommand)
   agentCommandRef.current = agentCommand
   const agentStoppedRef = useRef(agentStopped)
@@ -419,12 +421,13 @@ function WorkspacePanelComponent(props: {
     agentLinger.current = setTimeout(() => setAgentRecent(false), AGENT_BAR_LINGER_MS)
   }, [])
   useEffect(() => {
-    setAgentStopped(false)
     setAgentRecent(false)
     setAgentCommand(undefined)
   }, [props.threadId])
   useEffect(() => {
-    if (!isDesktop) return
+    // The right panel alone runs the agent's browser (the app mounts it for a command), so a
+    // bottom panel mounted later cannot take the commands, and the right panel's Stop, away.
+    if (!isDesktop || bottom) return
     // The app hears the pushes, also before this panel loaded, and hands them on here.
     return receiveAgentBrowserEvents((event) => {
       if (event.kind === 'cancel') {
@@ -443,14 +446,22 @@ function WorkspacePanelComponent(props: {
       showTool({ id: AGENT_BROWSER_TAB_ID, kind: 'browser' })
       props.onOpen()
     })
-  }, [props.threadId, props.onOpen, showTool, answerAgent, endAgentCommand])
-  // Only while stopped does the panel read the chat's events, to allow the next turn again.
+  }, [bottom, props.threadId, props.onOpen, showTool, answerAgent, endAgentCommand])
+  // Only while a chat is stopped does the panel read events, to allow its next turn again.
+  const anyStopped = stoppedChats.size > 0
   useEffect(() => {
-    if (!agentStopped) return
+    if (!anyStopped) return
     return props.transport.on('thread.event', ({ threadId, event }) => {
-      if (threadId === props.threadId && event.type === 'turn.completed') setAgentStopped(false)
+      // A new turn also ends it: Stop pressed after the turn had completed waits for no end.
+      if (event.type !== 'turn.completed' && event.type !== 'turn.started') return
+      setStoppedChats((stopped) => {
+        if (!stopped.has(threadId)) return stopped
+        const next = new Set(stopped)
+        next.delete(threadId)
+        return next
+      })
     })
-  }, [agentStopped, props.transport, props.threadId])
+  }, [anyStopped, props.transport])
   useEffect(() => () => clearTimeout(agentLinger.current), [])
   const agentLink = useMemo<AgentBrowserLink>(
     () => ({
@@ -464,12 +475,14 @@ function WorkspacePanelComponent(props: {
         const running = agentCommandRef.current
         if (running)
           answerAgent({ commandId: running.commandId, ok: false, error: STOPPED_BY_USER })
-        setAgentStopped(true)
+        const stoppedChat = props.threadId
+        if (stoppedChat !== undefined)
+          setStoppedChats((stopped) => new Set(stopped).add(stoppedChat))
         endAgentCommand()
         setAgentRecent(false)
       },
     }),
-    [agentCommand, agentRecent, answerAgent, endAgentCommand],
+    [agentCommand, agentRecent, answerAgent, endAgentCommand, props.threadId],
   )
 
   useEffect(() => () => resizeCleanup.current(), [])

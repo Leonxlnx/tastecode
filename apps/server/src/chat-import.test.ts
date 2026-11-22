@@ -617,6 +617,44 @@ describe('importing chosen chats', () => {
     expect(store.thread('external:codex:good')).toBeDefined()
   })
 
+  it('keeps an existing chat when an import from an old scan cannot read it', async () => {
+    const site = folder('site')
+    // The chat exists, but nothing has read its saved session yet.
+    store.addProviderThread('external:codex:one', 'codex', session('one', site))
+    const { service: scanner, run } = await service({
+      source: codexSource([session('one', site)], {
+        read: async () => {
+          throw new Error('locked')
+        },
+      }),
+    })
+    await scanner.scan()
+    await expect(run(['codex:one'])).resolves.toMatchObject({ failed: 1 })
+    expect(store.thread('external:codex:one')).toBeDefined()
+  })
+
+  it('still opens a chat it imported before after a retry while its source is locked', async () => {
+    const site = folder('site')
+    let readable = true
+    const { service: scanner, run } = await service({
+      source: codexSource([session('one', site)], {
+        read: async (saved) => {
+          if (!readable) throw new Error('locked')
+          return transcript(saved.id)
+        },
+      }),
+    })
+    await scanner.scan()
+    await expect(run(['codex:one'])).resolves.toMatchObject({ imported: 1 })
+
+    // The same selection again, without a new scan, while the transcript is unreadable.
+    readable = false
+    await expect(run(['codex:one'])).resolves.toMatchObject({ failed: 0 })
+    expect(store.thread('external:codex:one')).toBeDefined()
+    // Opening reads what was imported, not the locked source again.
+    await expect(history.load('external:codex:one')).resolves.toBe(false)
+  })
+
   it('imports into an existing project without announcing a new one', async () => {
     const site = folder('site')
     store.addProject(site, 'My name for it')
