@@ -752,6 +752,70 @@ describe('WorkspaceBrowser history', () => {
     await waitFor(() => expect(view.loadURL).toHaveBeenCalledWith('https://example.com/docs'))
   })
 
+  it('removes one listed page, or clears the list back to the empty state', () => {
+    rememberBrowserVisit('https://one.example/', 'One')
+    rememberBrowserVisit('https://two.example/', 'Two')
+    render(<WorkspaceBrowser active keepHistory />)
+
+    const removes = screen.getAllByRole('button', { name: /^Remove .* from Recently used$/ })
+    expect(removes).toHaveLength(2)
+    // Newest first: the first row is Two.
+    fireEvent.click(removes[0]!)
+    expect(screen.queryByRole('button', { name: /Two/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /One/ })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear recently used pages' }))
+    expect(screen.queryByText('Recently used')).toBeNull()
+    expect(screen.getByText('Start browsing')).toBeTruthy()
+  })
+
+  it('names the page each Remove button takes off the list', () => {
+    rememberBrowserVisit('https://one.example/', 'One')
+    rememberBrowserVisit('https://two.example/', 'Two')
+    render(<WorkspaceBrowser active keepHistory />)
+
+    expect(
+      screen.getByRole('button', { name: 'Remove https://two.example/ from Recently used' }),
+    ).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Remove https://one.example/ from Recently used' }),
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Clear recently used pages' })).toBeTruthy()
+  })
+
+  it('keeps keyboard focus in the list as pages are removed, then on the address', () => {
+    rememberBrowserVisit('https://a.example/', 'A')
+    rememberBrowserVisit('https://b.example/', 'B')
+    rememberBrowserVisit('https://c.example/', 'C')
+    render(<WorkspaceBrowser active keepHistory />)
+    const remove = (url: string) => {
+      const button = screen.getByRole('button', { name: `Remove ${url} from Recently used` })
+      button.focus()
+      fireEvent.click(button)
+    }
+    const removeButton = (url: string) =>
+      screen.getByRole('button', { name: `Remove ${url} from Recently used` })
+
+    // Newest first: C, B, A. The next row takes focus, else the one before.
+    remove('https://c.example/')
+    expect(document.activeElement).toBe(removeButton('https://b.example/'))
+    remove('https://a.example/')
+    expect(document.activeElement).toBe(removeButton('https://b.example/'))
+    remove('https://b.example/')
+    expect(document.activeElement).toBe(screen.getByLabelText('Browser address'))
+  })
+
+  it('puts focus on the address after Clear', () => {
+    rememberBrowserVisit('https://one.example/', 'One')
+    render(<WorkspaceBrowser active keepHistory />)
+    const clear = screen.getByRole('button', { name: 'Clear recently used pages' })
+    clear.focus()
+    fireEvent.click(clear)
+
+    expect(screen.queryByText('Recently used')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByLabelText('Browser address'))
+  })
+
   it('updates a page in the list when another tab opens one', async () => {
     render(<WorkspaceBrowser active keepHistory />)
     expect(screen.queryByText('Recently used')).toBeNull()
