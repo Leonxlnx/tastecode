@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import path from 'node:path'
 import { CustomHarnessSchema, type CustomHarness } from '@harness/contracts'
 import { z } from 'zod'
+// Apart from the node:fs import above, which the temporary-file cleanup (#2346) changes.
+import { constants, copyFileSync } from 'node:fs'
 import { configFile } from './product-paths.js'
 import { assertProviderOffered, providerOffered } from './provider-edition.js'
 
@@ -23,7 +25,9 @@ function defaultLocation(): string {
 }
 
 function parseConfig(raw: string): ConfigFile {
-  const value = ConfigFileSchema.safeParse(JSON.parse(raw))
+  // Windows editors and PowerShell 5 save UTF-8 with a byte order mark, which
+  // `JSON.parse` rejects.
+  const value = ConfigFileSchema.safeParse(JSON.parse(raw.replace(/^﻿/, '')))
   if (!value.success) {
     throw new Error('invalid custom harness config: expected a version 1 harness list')
   }
@@ -68,6 +72,7 @@ export class CustomHarnessStore {
     const index = file.harnesses.findIndex((entry) => entry.id === harness.id)
     if (index < 0) file.harnesses.push(harness)
     else file.harnesses[index] = harness
+    this.#setAsideUnreadable()
     this.#write(file)
     return harness
   }
@@ -77,13 +82,39 @@ export class CustomHarnessStore {
     const index = file.harnesses.findIndex((entry) => entry.id === id)
     if (index < 0) throw new Error(`custom harness "${id}" does not exist`)
     file.harnesses.splice(index, 1)
+    this.#setAsideUnreadable()
     this.#write(file)
   }
 
+  /** The last read could not parse the file; it is set aside before a write replaces it. */
+  #readLossy = false
+
   #read(): ConfigFile {
-    return existsSync(this.location)
-      ? parseConfig(readFileSync(this.location, 'utf8'))
-      : structuredClone(EMPTY_CONFIG)
+    this.#readLossy = false
+    if (!existsSync(this.location)) return structuredClone(EMPTY_CONFIG)
+    try {
+      return parseConfig(readFileSync(this.location, 'utf8'))
+    } catch (error) {
+      // Every ACP chat start and background source reads this file. A stray
+      // comma from a hand edit must not stop them, nor the settings page that
+      // could repair it: read it as empty, as the MCP config does.
+      console.warn(
+        `[custom-harnesses] ignoring ${this.location}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      this.#readLossy = true
+      return structuredClone(EMPTY_CONFIG)
+    }
+  }
+
+  /** A hand-edited file we could not parse is not ours to destroy. */
+  #setAsideUnreadable(): void {
+    if (!this.#readLossy || !existsSync(this.location)) return
+    copyFileSync(
+      this.location,
+      `${this.location}.invalid-${Date.now()}-${randomUUID().slice(0, 8)}.bak`,
+      constants.COPYFILE_EXCL,
+    )
+    this.#readLossy = false
   }
 
   #write(file: ConfigFile): void {

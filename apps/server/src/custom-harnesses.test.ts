@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -110,5 +110,44 @@ describe('custom harnesses', () => {
     expect(store.list()).toEqual([
       expect.objectContaining({ id: 'first', displayName: 'First updated' }),
     ])
+  })
+
+  it('reads a file saved with a byte order mark', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'harness-custom-cli-'))
+    roots.push(root)
+    const location = path.join(root, 'custom-harnesses.json')
+    const harness = {
+      id: 'fork',
+      displayName: 'Fork',
+      provider: 'codex',
+      command: 'fork',
+      args: [],
+    }
+    // Notepad and PowerShell 5 save UTF-8 this way.
+    writeFileSync(location, `﻿${JSON.stringify({ version: 1, harnesses: [harness] })}`)
+
+    expect(new CustomHarnessStore(location).list()).toEqual([harness])
+  })
+
+  it('keeps working on a file it cannot parse and sets that file aside before writing', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'harness-custom-cli-'))
+    roots.push(root)
+    const location = path.join(root, 'custom-harnesses.json')
+    // A hand edit left a trailing comma.
+    const broken = '{ "version": 1, "harnesses": [{ "id": "fork", "provider": "codex" },] }'
+    writeFileSync(location, broken)
+    const store = new CustomHarnessStore(location)
+
+    // Every ACP chat start and background source asks; none of them may throw.
+    expect(store.list()).toEqual([])
+    expect(store.find('fork')).toBeUndefined()
+
+    store.upsert({ id: 'first', displayName: 'First', provider: 'codex', command: 'c', args: [] })
+
+    expect(store.list().map((harness) => harness.id)).toEqual(['first'])
+    const parked = readdirSync(root).filter((name) => name.endsWith('.bak'))
+    expect(parked).toHaveLength(1)
+    expect(readFileSync(path.join(root, parked[0]!), 'utf8')).toBe(broken)
+    expect(readdirSync(root).some((name) => name.endsWith('.tmp'))).toBe(false)
   })
 })
