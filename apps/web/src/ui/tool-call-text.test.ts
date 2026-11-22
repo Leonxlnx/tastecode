@@ -76,6 +76,10 @@ describe('tool call text', () => {
   it('picks the argument a reader wants beside the tool name', () => {
     expect(toolArgumentSnippet({ query: 'vite  hmr\ncss' })).toBe('vite hmr css')
     expect(toolArgumentSnippet({ code: 'x'.repeat(100) }, 20)).toBe(`${'x'.repeat(19)}…`)
+    // An emoji across the cut goes whole, never as half a surrogate pair.
+    expect(toolArgumentSnippet({ query: `${'x'.repeat(18)}😀 rest` }, 20)).toBe(
+      `${'x'.repeat(18)}…`,
+    )
     expect(toolArgumentSnippet({ replace_all: true, file_path: 'src/a.ts' })).toBe('src/a.ts')
     expect(toolArgumentSnippet({ count: 3 })).toBeUndefined()
     expect(toolArgumentSnippet(undefined)).toBeUndefined()
