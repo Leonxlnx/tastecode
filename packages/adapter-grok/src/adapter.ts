@@ -462,7 +462,15 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     }
 
     // A turn already in flight would be orphaned by the reassignment below.
-    if (this.#child) await this.#stop(this.#child)
+    if (this.#child) {
+      try {
+        await this.#stop(this.#child)
+      } catch (error) {
+        // The folder holds the prompt and the session instructions.
+        rmSync(promptDirectory, { recursive: true, force: true })
+        throw error
+      }
+    }
     // dispose() can run during that wait. A child launched after it would be
     // an agent turn nobody owns, still editing the workspace.
     if (this.#disposed) {
