@@ -8826,6 +8826,38 @@ describe('several sessions at once', () => {
     await expect(later).resolves.toMatchObject({ queued: true })
   })
 
+  it('starts no queued prompt while a Stop waits for a prompt on its way', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    session.turnIds = ['t1', 't2', 't3']
+    await orchestrator.submitTurn(thread.id, 'running')
+    await expect(orchestrator.submitTurn(thread.id, 'queued')).resolves.toMatchObject({
+      queued: true,
+    })
+    let prepared!: () => void
+    const preparing = new Promise<void>((resolve) => (prepared = resolve))
+    const onItsWay = orchestrator.trackSubmission(thread.id, async () => {
+      await preparing
+      return orchestrator.submitTurn(thread.id, 'on its way')
+    })
+
+    const stopping = orchestrator.interrupt(thread.id)
+    // The running turn ends by itself while the Stop waits for the prompt on its way.
+    session.emit({ type: 'turn.completed', turnId: 't1', status: 'completed' })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    prepared()
+    await expect(onItsWay).resolves.toMatchObject({ queued: true })
+    await expect(stopping).resolves.toBeUndefined()
+
+    // Without the hold, "queued" started when the turn ended, and the Stop caught it.
+    expect(session.sent).toEqual(['running'])
+    expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual([
+      'queued',
+      'on its way',
+    ])
+  })
+
   describe('prompts queued before a Stop', () => {
     async function stoppedWithQueue() {
       const context = harness()

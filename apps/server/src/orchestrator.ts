@@ -876,8 +876,14 @@ export class Orchestrator {
   #resumeCancels = new Map<string, Array<(error: Error) => void>>()
   /** Stops that came while a chat resumed, counted per chat. */
   #resumeStops = new Map<string, number>()
-  /** The resume Stops a prompt on its way had seen when it was sent. */
-  #submissionStops = new AsyncLocalStorage<{ threadId: string; stops: number }>()
+  /** Every Stop of a chat, counted per chat. */
+  #stopRequests = new Map<string, number>()
+  /** The Stops a prompt on its way had seen when it was sent. */
+  #submissionStops = new AsyncLocalStorage<{
+    threadId: string
+    stops: number
+    stopRequests: number
+  }>()
   /** Chats whose provider session is being replaced; nothing may start a turn meanwhile. */
   #changingProvider = new Set<string>()
   /**
@@ -3412,7 +3418,11 @@ export class Orchestrator {
         outer?.threadId === threadId
           ? submit()
           : this.#submissionStops.run(
-              { threadId, stops: this.#resumeStops.get(threadId) ?? 0 },
+              {
+                threadId,
+                stops: this.#resumeStops.get(threadId) ?? 0,
+                stopRequests: this.#stopRequests.get(threadId) ?? 0,
+              },
               submit,
             )
     } catch (error) {
@@ -3451,7 +3461,11 @@ export class Orchestrator {
     // At once, before it waits for anything, and without releasing what the Stop held.
     stoppedOnTheWay()
     // The user is writing again after a Stop: what they queued before it may go, in order.
-    this.#heldQueues.delete(threadId)
+    // A prompt that was already on its way when the Stop came is not that.
+    const sentBeforeAStop =
+      tracked?.threadId === threadId &&
+      tracked.stopRequests !== (this.#stopRequests.get(threadId) ?? 0)
+    if (!sentBeforeAStop) this.#heldQueues.delete(threadId)
     if (this.#changingProvider.has(threadId)) {
       throw new Error('This chat is moving to another provider. Send again once it has moved.')
     }
@@ -4233,6 +4247,7 @@ export class Orchestrator {
   forgetDeletedThread(threadId: string): void {
     this.#latestUserPrompts.delete(threadId)
     this.#wrappedPrompts.delete(threadId)
+    this.#stopRequests.delete(threadId)
     this.#revokeAgentTools(threadId)
     this.#subagents.forget(threadId)
     // The store deleted a chat's sub-agent chats with it.
@@ -5218,6 +5233,7 @@ export class Orchestrator {
     // without any keeps the exact timing it had.
     const children = this.#subagents.stopFor(threadId)
     try {
+      this.#stopRequests.set(threadId, (this.#stopRequests.get(threadId) ?? 0) + 1)
       // Only prompts already on their way when Stop came can start the turn it stops.
       const incoming = [...(this.#incomingSubmissions.get(threadId) ?? [])]
       // "Stop" on a thread that is not live must be a no-op, not an error the
@@ -5245,7 +5261,9 @@ export class Orchestrator {
       // drops the request; the turn then ran to its end behind "Stopping…". A new
       // chat stopped while it starts sends its prompt and the Stop back to back,
       // and the Stop overtook the prompt on its way in. Wait for those prompts to
-      // start or queue first.
+      // start or queue first. The queue is held meanwhile: a turn that ends in
+      // the wait must not start a queued prompt that the Stop then catches.
+      if (this.#hasQueuedTurns(threadId)) this.#heldQueues.add(threadId)
       await Promise.allSettled(incoming)
       // Nothing goes out on its own after a Stop: what waits in the queue now
       // waits for the user, not for the stopped turn to end.
