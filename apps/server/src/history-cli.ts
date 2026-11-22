@@ -83,11 +83,17 @@ export async function runHistoryCli(
       return
     }
     const date = flags.get('--before')
-    const before =
-      typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)
-        ? Date.parse(`${date}T00:00:00.000Z`)
-        : NaN
-    if (!Number.isFinite(before) || new Date(before).toISOString().slice(0, 10) !== date)
+    const [, year, month, day] =
+      (typeof date === 'string' && /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)) || []
+    // The date is the user's day: it starts at local midnight, not UTC midnight.
+    const start = new Date(Number(year), Number(month) - 1, Number(day))
+    const before = start.getTime()
+    if (
+      !Number.isFinite(before) ||
+      start.getFullYear() !== Number(year) ||
+      start.getMonth() !== Number(month) - 1 ||
+      start.getDate() !== Number(day)
+    )
       throw new Error('Prune requires a valid --before YYYY-MM-DD date')
     const candidates = store.historyCleanupCandidates(before)
     if (!flags.has('--apply')) {
