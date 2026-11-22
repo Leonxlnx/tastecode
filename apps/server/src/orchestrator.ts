@@ -5101,7 +5101,9 @@ export class Orchestrator {
     entry: AttachedThreadRuntime,
     text: string,
   ): Promise<boolean> {
-    const name = /^\/([^/\s]\S*)(?:\s|$)/.exec(text.trimStart())?.[1]
+    // Codex runs its commands whatever their case. Taking one for prose would put text
+    // around it and break it; taking prose for a command only leaves that text out once.
+    const name = /^\/([^/\s]\S*)(?:\s|$)/.exec(text.trimStart())?.[1]?.toLowerCase()
     if (name === undefined) return false
     const inventory = await this.listCommands(
       entry.thread.provider,
@@ -5110,7 +5112,9 @@ export class Orchestrator {
     ).catch(() => undefined)
     return (
       inventory?.commands.some(
-        (command) => command.name === name || command.aliases?.includes(name),
+        (command) =>
+          command.name.toLowerCase() === name ||
+          command.aliases?.some((alias) => alias.toLowerCase() === name),
       ) === true
     )
   }

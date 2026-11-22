@@ -8846,12 +8846,15 @@ describe('provider commands', () => {
           ['compact', '/compact'],
           ['ordinary', 'Tighten the hero spacing.'],
           ['unlisted', '/foo bar'],
+          ['shouted', '/COMPACT'],
         ] as const) {
           session.turnIds.push(turnId)
           await orchestrator.sendTurn(thread.id, text)
           session.emit(turnStarted(thread.id, turnId))
           session.emit({ type: 'turn.completed', turnId, status: 'completed' })
         }
+        // Codex runs a command whatever its case; text around it would break it.
+        expect(session.sent[3]).toBe('/COMPACT')
         // The provider runs the command only when the prompt is the command itself.
         expect(session.sent[0]).toBe('/compact')
         expect(session.sent[1]).toContain('Earlier phase-only JSON protocols no longer apply')
