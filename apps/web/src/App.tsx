@@ -2035,9 +2035,31 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       if (threadId === composerDraftKey(activeIdRef.current)) {
         threadController.draftOwner = threadId
         publishComposerDraft(draft)
+        return
+      }
+      // The chat beside shows its composer as it was left, and gets that view
+      // back when it takes focus again. The words returned to it go there too,
+      // or the next keystroke in that pane would overwrite them unseen.
+      const current = splitRef.current
+      if (current && splitBesideId(current) === threadId) {
+        setSplit({
+          ...current,
+          frozen: {
+            ...current.frozen,
+            composer: {
+              ...current.frozen.composer,
+              draftRequest: {
+                text: draft.text,
+                attachments: draft.attachments,
+                resources: draft.resources,
+                request: ++composerDraftRequests.current,
+              },
+            },
+          },
+        })
       }
     },
-    [publishComposerDraft],
+    [publishComposerDraft, setSplit],
   )
   const restoreComposerDraft = useCallback(
     (key: string) => {
