@@ -1,7 +1,12 @@
 // @vitest-environment happy-dom
 import type { BrowserCommand } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { runAgentBrowserCommand, type AgentBrowserGuest } from './agent-browser-executor.js'
+import {
+  runAgentBrowserCommand,
+  type AgentBrowserGuest,
+  type ScaleScreenshot,
+} from './agent-browser-executor.js'
+import { scalePng } from './white-ground.js'
 
 const ID = '00000000-0000-4000-8000-000000000001'
 
@@ -21,7 +26,11 @@ function guest(overrides: Partial<AgentBrowserGuest> = {}) {
   return { page }
 }
 
-const run = (command: object, page: AgentBrowserGuest, scale = async () => 'iVBORw0K') =>
+const run = (
+  command: object,
+  page: AgentBrowserGuest,
+  scale: ScaleScreenshot = async () => 'iVBORw0K',
+) =>
   runAgentBrowserCommand(
     { threadId: 'chat-1', commandId: ID, ...command } as BrowserCommand,
     page,
@@ -232,18 +241,64 @@ describe('agent browser commands', () => {
     expect(hostile.ok).toBe(false)
   })
 
-  it('sends a scaled screenshot and the console since a time', async () => {
+  it('sends a screenshot at the page’s CSS width, bounded, and the console since a time', async () => {
     const scale = vi.fn(async () => 'iVBORw0K')
-    const { page } = guest()
+    let cssWidth: number | undefined = 800
+    const { page } = guest({
+      // eslint-disable-next-line no-eval -- the test document stands in for the isolated world
+      executeIsolated: async (code) => (code === 'window.innerWidth' ? cssWidth : (0, eval)(code)),
+    })
     expect(await run({ action: 'screenshot' }, page, scale)).toMatchObject({
       ok: true,
       png: 'iVBORw0K',
     })
-    expect(scale).toHaveBeenCalledWith('data:image/png;base64,AAAA', 1600)
+    // An 800 px wide page on a Retina screen captures 1600 px wide; the agent gets 800.
+    expect(scale).toHaveBeenLastCalledWith('data:image/png;base64,AAAA', 800, true)
+    cssWidth = 2400
+    await run({ action: 'screenshot' }, page, scale)
+    expect(scale).toHaveBeenLastCalledWith('data:image/png;base64,AAAA', 1600, true)
+    cssWidth = undefined
+    await run({ action: 'screenshot' }, page, scale)
+    expect(scale).toHaveBeenLastCalledWith('data:image/png;base64,AAAA', 1600, false)
     expect(await run({ action: 'console', since: 2 }, page)).toMatchObject({
       ok: true,
       console: [{ level: 'error', text: 'new', at: 5 }],
     })
+  })
+
+  it('still sends a screenshot when the page width cannot be read', async () => {
+    const scale = vi.fn<ScaleScreenshot>(async () => 'iVBORw0K')
+    const { page } = guest({
+      executeIsolated: async () => {
+        throw new Error('Not an agent browser tab')
+      },
+    })
+    expect(await run({ action: 'screenshot' }, page, scale)).toMatchObject({
+      ok: true,
+      png: 'iVBORw0K',
+    })
+    expect(scale.mock.lastCall?.[1]).toBe(1600)
+  })
+
+  it('draws a capture narrower than the page at the page’s CSS width', async () => {
+    vi.spyOn(Image.prototype, 'decode').mockResolvedValue(undefined)
+    vi.spyOn(Image.prototype, 'naturalWidth', 'get').mockReturnValue(800)
+    vi.spyOn(Image.prototype, 'naturalHeight', 'get').mockReturnValue(600)
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      fillRect: vi.fn(),
+      drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D)
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(
+      'data:image/png;base64,iVBORw0K',
+    )
+    try {
+      const { page } = guest({ executeIsolated: async () => 1000 })
+      expect(await run({ action: 'screenshot' }, page, scalePng)).toMatchObject({ ok: true })
+      const drawn = getContext.mock.contexts[0] as HTMLCanvasElement
+      expect([drawn.width, drawn.height]).toEqual([1000, 750])
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 
   it('answers a failed page action with its reason instead of throwing', async () => {
