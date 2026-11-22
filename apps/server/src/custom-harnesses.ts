@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { CustomHarnessSchema, type CustomHarness } from '@harness/contracts'
 import { z } from 'zod'
@@ -121,10 +121,21 @@ export class CustomHarnessStore {
     mkdirSync(path.dirname(this.location), { recursive: true })
     const temporary = `${this.location}.${randomUUID()}.tmp`
     const stored = { version: file.version, harnesses: [...file.harnesses, ...file.unsupported] }
-    writeFileSync(temporary, `${JSON.stringify(stored, null, 2)}\n`, {
-      encoding: 'utf8',
-      mode: 0o600,
-    })
-    renameSync(temporary, this.location)
+    try {
+      writeFileSync(temporary, `${JSON.stringify(stored, null, 2)}\n`, {
+        encoding: 'utf8',
+        mode: 0o600,
+      })
+      renameSync(temporary, this.location)
+    } catch (error) {
+      // Every attempt has a name of its own, so each failed one would leave
+      // another .tmp beside the file. mcp-config.ts does the same.
+      try {
+        rmSync(temporary, { force: true })
+      } catch {
+        // Report the write failure, not the cleanup one.
+      }
+      throw error
+    }
   }
 }

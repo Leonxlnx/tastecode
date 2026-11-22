@@ -1466,6 +1466,13 @@ async function mapWithConcurrency<T>(
 async function writeCache(filePath: string, cache: UsageCache): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true })
   const temporary = `${filePath}.${process.pid}.tmp`
-  await writeFile(temporary, JSON.stringify(cache), 'utf8')
-  await rename(temporary, filePath)
+  try {
+    await writeFile(temporary, JSON.stringify(cache), 'utf8')
+    await rename(temporary, filePath)
+  } catch (error) {
+    // The index can be tens of megabytes: a failed write or rename (disk full,
+    // a virus scanner holding the file) must not leave it behind. mcp-config.ts does the same.
+    await rm(temporary, { force: true }).catch(() => undefined)
+    throw error
+  }
 }

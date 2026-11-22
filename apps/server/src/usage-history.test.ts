@@ -2,6 +2,7 @@ import {
   appendFileSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -249,6 +250,27 @@ describe('local usage history', () => {
       outputTokens: 110,
       processedTokens: 1_210,
     })
+  })
+
+  it('leaves no temporary index behind when the index cannot be saved', async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex')
+    mkdirSync(codexRoot, { recursive: true })
+    const cacheFile = path.join(root, 'cache', 'usage.json')
+    // A folder where the index goes: its temporary file is written, the rename cannot land.
+    mkdirSync(path.join(cacheFile, 'in-the-way'), { recursive: true })
+    const service = usageService({
+      cacheFile,
+      sourceRoots: { codex: codexRoot, 'claude-code': path.join(root, 'claude') },
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    })
+
+    const history = await settledHistory(service, '7d')
+
+    expect(history.warnings).toContain(
+      'Usage was loaded, but its local scan cache could not be saved.',
+    )
+    expect(readdirSync(path.dirname(cacheFile)).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 
   it('clears the generated index and starts a true cold background rescan', async () => {
