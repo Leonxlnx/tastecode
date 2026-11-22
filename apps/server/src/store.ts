@@ -467,10 +467,12 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE TABLE IF NOT EXISTS usage_events (
-  event_seq INTEGER PRIMARY KEY REFERENCES events(seq) ON DELETE CASCADE,
-  thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
-  at        INTEGER NOT NULL,
-  payload   TEXT NOT NULL
+  event_seq  INTEGER PRIMARY KEY REFERENCES events(seq) ON DELETE CASCADE,
+  thread_id  TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  at         INTEGER NOT NULL,
+  payload    TEXT NOT NULL,
+  provider   TEXT,
+  account_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS usage_events_thread_seq ON usage_events (thread_id, event_seq);
@@ -687,6 +689,10 @@ CREATE INDEX IF NOT EXISTS threads_by_project ON threads (project_path);
  * this is for every existing one.
  */
 const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }> = [
+  // Who spent a usage report, as when it was reported: a chat can move to another provider
+  // or account later. Rows indexed before these columns, or rebuilt, read the chat's own.
+  { table: 'usage_events', column: 'provider', definition: 'TEXT' },
+  { table: 'usage_events', column: 'account_id', definition: 'TEXT' },
   { table: 'projects', column: 'pinned', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'pinned', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'worktree_path', definition: 'TEXT' },
@@ -939,7 +945,7 @@ export class Store {
   #db: DatabaseSync
   #insertEvent: StatementSync
   #insertSearchEntry: StatementSync
-  #insertUsageEvent: StatementSync
+  #insertUsageEventStatement: StatementSync | undefined
   #insertInboxEvent: StatementSync
   #deleteInboxStatus: StatementSync
   #deleteInboxRequest: StatementSync
@@ -1094,10 +1100,6 @@ export class Store {
     this.#insertSearchEntry = this.#db.prepare(
       `INSERT INTO session_search (rowid, thread_id, event_seq, turn_id, created_at, text)
        VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    this.#insertUsageEvent = this.#db.prepare(
-      `INSERT OR REPLACE INTO usage_events (event_seq, thread_id, at, payload)
-       VALUES (?, ?, ?, ?)`,
     )
     this.#insertInboxEvent = this.#db.prepare(
       `INSERT OR REPLACE INTO inbox_events (event_seq, thread_id, payload) VALUES (?, ?, ?)`,
@@ -3562,7 +3564,7 @@ export class Store {
       const seq = this.#insertEventRow(threadId, at, serializedEvent)
       this.#indexHistory(seq, threadId, event)
       if (searchEntry) this.#indexSearchEntry(seq, threadId, at, searchEntry)
-      if (usageEvent) this.#indexUsageEvent(seq, threadId, at, serializedEvent)
+      if (usageEvent) this.#indexUsageEvent(seq, threadId, at, serializedEvent, true)
       if (inboxEvent) this.#indexInboxEvent(seq, threadId, event, serializedEvent)
       if (userSubmissionId) this.#indexUserSubmission(seq, threadId, userSubmissionId)
       if (turnDiffId !== undefined) this.#indexTurnDiff(seq, threadId, turnDiffId)
@@ -3643,7 +3645,7 @@ export class Store {
     }
     this.#indexHistory(seq, threadId, event)
     if (!this.#ephemeralThreads.has(threadId)) this.#indexEvent(seq, threadId, at, event)
-    if (event.type === 'usage.updated') this.#indexUsageEvent(seq, threadId, at, payload)
+    if (event.type === 'usage.updated') this.#indexUsageEvent(seq, threadId, at, payload, true)
     if (affectsInboxProjection(event)) this.#indexInboxEvent(seq, threadId, event, payload)
     const userSubmissionId = userSubmissionItemId(event)
     if (userSubmissionId) this.#indexUserSubmission(seq, threadId, userSubmissionId)
@@ -4165,8 +4167,32 @@ export class Store {
     }
   }
 
-  #indexUsageEvent(seq: number, threadId: string, at: number, payload: string): void {
-    this.#insertUsageEvent.run(seq, threadId, at, payload)
+  /**
+   * `reportedNow`: the event is being appended, so the chat's provider and account are the
+   * ones that spent it. A rebuild or restore of older rows cannot know and records neither.
+   */
+  #indexUsageEvent(
+    seq: number,
+    threadId: string,
+    at: number,
+    payload: string,
+    reportedNow = false,
+  ): void {
+    const owner = reportedNow ? this.thread(threadId) : undefined
+    // Prepared on first use: an older database gains the columns in #migrate, after the
+    // statements the constructor prepares.
+    this.#insertUsageEventStatement ??= this.#db.prepare(
+      `INSERT OR REPLACE INTO usage_events (event_seq, thread_id, at, payload, provider, account_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    this.#insertUsageEventStatement.run(
+      seq,
+      threadId,
+      at,
+      payload,
+      owner?.provider ?? null,
+      owner ? (owner.accountId ?? null) : null,
+    )
   }
 
   #indexInboxEvent(seq: number, threadId: string, event: DomainEvent, payload: string): void {
@@ -4402,7 +4428,9 @@ export class Store {
       account_id: string | null
     }>(
       this.#db.prepare(
-        `SELECT u.thread_id, u.at, u.payload, t.provider, t.account_id
+        `SELECT u.thread_id, u.at, u.payload,
+                COALESCE(u.provider, t.provider) AS provider,
+                CASE WHEN u.provider IS NULL THEN t.account_id ELSE u.account_id END AS account_id
          FROM usage_events u JOIN threads t ON t.id = u.thread_id
          ORDER BY u.thread_id, u.event_seq`,
       ),
@@ -4496,7 +4524,7 @@ export class Store {
 
       const rows = sqliteRows<ThreadPayloadRow & { provider: string }>(
         this.#db.prepare(
-          `SELECT u.thread_id, u.payload, t.provider
+          `SELECT u.thread_id, u.payload, COALESCE(u.provider, t.provider) AS provider
            FROM usage_events u JOIN threads t ON t.id = u.thread_id
            WHERE u.at >= ?
            ORDER BY u.thread_id, u.at, u.event_seq`,

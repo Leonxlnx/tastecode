@@ -283,6 +283,43 @@ describe('durable history ownership', () => {
     expect(store.providerHistories()).toHaveLength(1)
   })
 
+  it('reads usage indexed before usage rows named their provider', () => {
+    const { store, location } = setup()
+    store.append('thread', {
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 5,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: 5,
+      },
+    })
+    store.close()
+    stores.splice(stores.indexOf(store), 1)
+    // An older build's table: the row names no provider or account.
+    const raw = new DatabaseSync(location)
+    try {
+      raw.exec('UPDATE usage_events SET provider = NULL, account_id = NULL')
+    } finally {
+      raw.close()
+    }
+    const reopened = new Store(location)
+    stores.push(reopened)
+    expect(reopened.usageEvents()).toMatchObject([{ provider: 'codex', usage: { totalTokens: 5 } }])
+    reopened.append('thread', {
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 6,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: 6,
+      },
+    })
+    expect(reopened.usageEvents()).toHaveLength(2)
+  })
+
   it('retains checkpoints and undo tails for providers absent from this build', () => {
     const { store, root, location } = setup()
     const seq = store.append('thread', message('first'))
