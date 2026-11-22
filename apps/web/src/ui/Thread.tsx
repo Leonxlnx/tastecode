@@ -410,8 +410,13 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   searchJumpRef.current = props.searchJump
   const searchJumpDone = useRef(props.onSearchJumpDone)
   searchJumpDone.current = props.onSearchJumpDone
+  /** The message field find was opened from, given its focus back when find closes. */
+  const findOpener = useRef<HTMLElement | null>(null)
   const closeFind = useCallback(() => {
     setFinding(false)
+    const opener = findOpener.current
+    findOpener.current = null
+    if (opener?.isConnected) opener.focus()
     const jump = searchJumpRef.current
     // A search jump still waiting for its turn keeps the read it shares with find.
     if (!jump || completedSearchJump.current === jump.request) cancelComplete()
@@ -905,9 +910,14 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   useEffect(() => {
     if (props.keyboardActive === false) return
     const onKey = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target)) return
+      // The chat's own message field has focus most of the time, and the key means
+      // nothing there; every other text field keeps it.
+      if (isEditableTarget(event.target) && !isChatComposerField(event.target)) return
       if (matchesShortcut(event, FIND_IN_CHAT_SHORTCUT)) {
         event.preventDefault()
+        findOpener.current = isChatComposerField(event.target)
+          ? (event.target as HTMLElement)
+          : null
         setFinding(true)
       }
     }
@@ -3764,6 +3774,15 @@ const POWERSHELL_WRAPPER =
 
 const LEADING_ABSOLUTE_CD =
   /^cd(?:\s+\/d)?\s+(?:"(?:[a-z]:|[\\/~])[^"]*"|'(?:[a-z]:|[\\/~])[^']*'|(?:[a-z]:|[\\/~])[^\s;&|]*)\s*(?:&&|;)\s*/i
+
+/** The message field of the chat on the stage, not a Temporary chat's in the workspace panel. */
+function isChatComposerField(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLTextAreaElement &&
+    target.closest('.composer') !== null &&
+    target.closest('.workspace-side-chat') === null
+  )
+}
 
 function inlineActivityText(text: string | undefined): string {
   return text?.replace(/\s+/g, ' ').trim() ?? ''
