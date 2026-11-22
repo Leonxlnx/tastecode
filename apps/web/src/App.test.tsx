@@ -10318,6 +10318,38 @@ describe('new chats', () => {
     expect(redundantWrites).toEqual([])
   })
 
+  it('keeps saved panel sizes when a smaller window clamps them at startup', () => {
+    const { innerHeight, innerWidth } = window
+    vi.useFakeTimers()
+    try {
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 500 })
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 })
+      localStorage.setItem('harness.terminal.height', '700')
+      localStorage.setItem('harness.workspacePanel.width', '900')
+      const setItem = vi.spyOn(localStorage, 'setItem')
+
+      render(
+        <StrictMode>
+          <App />
+        </StrictMode>,
+      )
+      act(() => vi.advanceTimersByTime(120))
+      window.dispatchEvent(new Event('pagehide'))
+
+      expect(
+        setItem.mock.calls.filter(
+          ([key]) => key === 'harness.terminal.height' || key === 'harness.workspacePanel.width',
+        ),
+      ).toEqual([])
+      expect(localStorage.getItem('harness.terminal.height')).toBe('700')
+      expect(localStorage.getItem('harness.workspacePanel.width')).toBe('900')
+    } finally {
+      vi.useRealTimers()
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight })
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: innerWidth })
+    }
+  })
+
   it('persists a missing default once under StrictMode', () => {
     const setItem = vi.spyOn(localStorage, 'setItem')
 

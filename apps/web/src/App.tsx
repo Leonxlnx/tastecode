@@ -1374,6 +1374,21 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const [workspacePanelHasMounted, setWorkspacePanelHasMounted] = useState(false)
   const [workspacePanelExpanded, setWorkspacePanelExpanded] = useState(false)
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(readWorkspacePanelWidth)
+  // A smaller window clamps the restored sizes above for display only. The
+  // saved sizes change when the user resizes the panel, not when they launch
+  // the app in a smaller window.
+  const [savedTerminalHeight, setSavedTerminalHeight] = useState(readSavedTerminalHeight)
+  const [savedWorkspacePanelWidth, setSavedWorkspacePanelWidth] = useState(
+    readSavedWorkspacePanelWidth,
+  )
+  const resizeTerminal = useCallback((height: number) => {
+    setTerminalHeight(height)
+    setSavedTerminalHeight(height)
+  }, [])
+  const resizeWorkspacePanel = useCallback((width: number) => {
+    setWorkspacePanelWidth(width)
+    setSavedWorkspacePanelWidth(width)
+  }, [])
   const [workspaceTerminalToggleRequest, setWorkspaceTerminalToggleRequest] = useState(0)
   const [workspaceToolRequest, setWorkspaceToolRequest] = useState<{
     request: number
@@ -1985,11 +2000,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     return () => globalThis.clearTimeout(timeout)
   }, [bottomTerminalPhase])
 
-  usePersistedSettingChange(TERMINAL_HEIGHT_KEY, String(terminalHeight))
+  usePersistedSettingChange(TERMINAL_HEIGHT_KEY, String(savedTerminalHeight))
 
   const cancelWorkspacePanelWidthPersistence = usePersistedSettingChange(
     WORKSPACE_PANEL_WIDTH_KEY,
-    String(workspacePanelWidth),
+    String(savedWorkspacePanelWidth),
     120,
   )
 
@@ -8244,7 +8259,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                       }
                       onOpen={openBottomPanel}
                       onClose={closeTerminal}
-                      onWidthChange={setTerminalHeight}
+                      onWidthChange={resizeTerminal}
                       terminalToggleRequest={bottomTerminalToggleRequest}
                       onOpenPullRequest={openCheckoutPullRequest}
                     />
@@ -8280,7 +8295,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                 }
                 onOpen={openWorkspacePanel}
                 onClose={closeWorkspacePanel}
-                onWidthChange={setWorkspacePanelWidth}
+                onWidthChange={resizeWorkspacePanel}
                 terminalToggleRequest={workspaceTerminalToggleRequest}
                 externalToolRequest={workspaceToolRequest}
                 frameStore={threadFrameStore}
@@ -8745,16 +8760,27 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path
 }
 
-function readTerminalHeight(): number {
+function readSavedTerminalHeight(): number {
   const stored = Number(readSetting(TERMINAL_HEIGHT_KEY))
-  const height = Number.isFinite(stored) && stored >= 160 ? stored : DEFAULT_BOTTOM_PANEL_HEIGHT
-  return Math.min(height, Math.max(160, Math.floor(window.innerHeight * 0.72)))
+  return Number.isFinite(stored) && stored >= 160 ? stored : DEFAULT_BOTTOM_PANEL_HEIGHT
+}
+
+function readTerminalHeight(): number {
+  return Math.min(readSavedTerminalHeight(), Math.max(160, Math.floor(window.innerHeight * 0.72)))
 }
 
 function readWorkspacePanelWidth(): number {
   return restoreWorkspacePanelWidth(
     Number(readSetting(WORKSPACE_PANEL_WIDTH_KEY)),
     window.innerWidth,
+  )
+}
+
+/** The saved width as the user left it: no window caps it. */
+function readSavedWorkspacePanelWidth(): number {
+  return restoreWorkspacePanelWidth(
+    Number(readSetting(WORKSPACE_PANEL_WIDTH_KEY)),
+    Number.POSITIVE_INFINITY,
   )
 }
 
