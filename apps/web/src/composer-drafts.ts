@@ -126,3 +126,27 @@ export function serializeComposerDrafts(
   const restorable = [...drafts].filter(([key]) => !key.startsWith('pending:'))
   return restorable.length > 0 ? JSON.stringify(Object.fromEntries(restorable)) : undefined
 }
+
+/**
+ * Saves the drafts through `write`, which says whether storage took them. When it refuses
+ * (the quota is full, say after a pasted log of several MB), the text of the largest draft
+ * is left out and the write retried until it fits, so one oversized draft never stops the
+ * rest from saving. A left-out text stays in memory for the session; the next save tries
+ * the full set again.
+ */
+export function saveComposerDrafts(
+  drafts: ReadonlyMap<string, ComposerDraft>,
+  write: (drafts: string | undefined) => boolean,
+): void {
+  if (write(serializeComposerDrafts(drafts))) return
+  const kept = new Map(drafts)
+  const largest = [...drafts]
+    .filter(([key, draft]) => draft.text !== '' && !key.startsWith('pending:'))
+    .sort(([, a], [, b]) => b.text.length - a.text.length)
+  for (const [key, draft] of largest) {
+    const withoutText = { ...draft, text: '' }
+    if (isEmptyComposerDraft(withoutText)) kept.delete(key)
+    else kept.set(key, withoutText)
+    if (write(serializeComposerDrafts(kept))) return
+  }
+}

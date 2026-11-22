@@ -34,7 +34,7 @@ import {
   joinComposerDraft,
   moveComposerDraft,
   parseComposerDrafts,
-  serializeComposerDrafts,
+  saveComposerDrafts,
   type ComposerDraft,
 } from './composer-drafts.js'
 
@@ -51,7 +51,8 @@ export type PendingSubmission = RecoverableDraft & {
 type BufferedEvent = { seq: number | undefined; event: DomainEvent }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type HistoryBase = { state: ThreadState; sequence: number | undefined }
-export type DraftStorage = { read(): string | null; write(drafts: string | undefined): void }
+/** `write` returns whether storage took the drafts. */
+export type DraftStorage = { read(): string | null; write(drafts: string | undefined): boolean }
 const DRAFT_SAVE_DELAY_MS = 300
 const BACKGROUND_COMPACTION_CHECK_CHARACTERS = 64 * 1024
 /** Whole turns in the first page of a cold open; older turns load on demand. */
@@ -251,7 +252,8 @@ export class ThreadController {
     if (this.#draftSave === undefined) return
     clearTimeout(this.#draftSave)
     this.#draftSave = undefined
-    this.draftStorage?.write(serializeComposerDrafts(this.#drafts))
+    const storage = this.draftStorage
+    if (storage) saveComposerDrafts(this.#drafts, (drafts) => storage.write(drafts))
   }
   #saveDraftsSoon(): void {
     if (!this.draftStorage) return

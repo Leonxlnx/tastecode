@@ -9185,11 +9185,13 @@ function usePersistedSettingChange(
  * ran inside layout effects, where an uncaught throw unmounts the whole app.
  * Reads were always defensive; writes get the same courtesy.
  */
-function writeSetting(key: string, value: string): void {
+function writeSetting(key: string, value: string): boolean {
   try {
     localStorage.setItem(key, value)
+    return true
   } catch {
     // A lost preference beats a white screen.
+    return false
   }
 }
 
@@ -9211,11 +9213,13 @@ function readSetting(key: string): string | null {
   }
 }
 
-function removeSetting(key: string): void {
+function removeSetting(key: string): boolean {
   try {
     localStorage.removeItem(key)
+    return true
   } catch {
     // Nothing to lose.
+    return false
   }
 }
 

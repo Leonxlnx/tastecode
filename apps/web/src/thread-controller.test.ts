@@ -211,6 +211,46 @@ describe('ThreadController lifecycle owner', () => {
     })
   })
 
+  it('keeps saving the other drafts when storage refuses the largest one', () => {
+    const quota = 1_000
+    let stored: string | null = null
+    const write = vi.fn((drafts: string | undefined) => {
+      if (drafts !== undefined && drafts.length > quota) return false
+      stored = drafts ?? null
+      return true
+    })
+    const controller = new ThreadController(new TestTransport(), { read: () => stored, write })
+    controller.editDraft('small', { text: 'keep me' })
+    controller.editDraft('log', { text: 'x'.repeat(5 * quota), attachments: ['/work/log.png'] })
+    controller.editDraft('huge', { text: 'y'.repeat(10 * quota) })
+    controller.flushDrafts()
+
+    expect(JSON.parse(stored!)).toEqual({
+      small: { text: 'keep me', attachments: [], resources: [] },
+      log: { text: '', attachments: ['/work/log.png'], resources: [] },
+    })
+    expect(controller.draft('huge').text).toHaveLength(10 * quota)
+    expect(controller.draft('log').text).toHaveLength(5 * quota)
+
+    controller.editDraft('huge', { text: '' })
+    controller.editDraft('log', { text: 'short now' })
+    controller.flushDrafts()
+    expect(JSON.parse(stored!)).toEqual({
+      small: { text: 'keep me', attachments: [], resources: [] },
+      log: { text: 'short now', attachments: ['/work/log.png'], resources: [] },
+    })
+  })
+
+  it('does not throw when storage refuses even the drafts without text', () => {
+    const controller = new ThreadController(new TestTransport(), {
+      read: () => null,
+      write: () => false,
+    })
+    controller.editDraft('thread', { text: 'unsaved', attachments: ['/work/a.png'] })
+    expect(() => controller.flushDrafts()).not.toThrow()
+    expect(controller.draft('thread').text).toBe('unsaved')
+  })
+
   it('retains bounded inactive caches and invalidates old recovery epochs', () => {
     const controller = new ThreadController(new TestTransport())
     const protectedId = 'thread-0'
