@@ -175,7 +175,7 @@ export class UsageResetController {
       session.connectionId !== entry.connectionId ||
       (session.lifecycle?.state === 'snoozed' && session.lifecycle.wakeAt !== entry.resetsAt)
     ) {
-      this.cancel(entry.threadId)
+      this.#drop(entry)
       return
     }
     const [settings, history, summary] = await Promise.all([
@@ -206,7 +206,7 @@ export class UsageResetController {
         ({ event }) => event.type === 'turn.completed' && event.status === 'failed',
       )
     ) {
-      this.cancel(entry.threadId)
+      this.#drop(entry)
       return
     }
     const source = summary.limitSource
@@ -274,6 +274,18 @@ export class UsageResetController {
         `Could not resume the snoozed chat. Open it before trying again: ${error instanceof Error ? error.message : String(error)}`,
       )
     }
+  }
+
+  /**
+   * Removes the resume after reads that took a while, only if it is still the one they were
+   * about: another window may have moved it to a later reset meanwhile.
+   */
+  #drop(entry: UsageResume): void {
+    this.#update((entries) =>
+      entries.some((each) => sameRequest(each, entry) && each.resetsAt === entry.resetsAt)
+        ? entries.filter((each) => each.threadId !== entry.threadId)
+        : entries,
+    )
   }
 
   /**

@@ -370,6 +370,33 @@ describe('resume at usage reset', () => {
     ])
   })
 
+  it('keeps a resume another window postponed while this one read the chat', async () => {
+    const { controller, request, transport, storage } = setup()
+    await controller.schedule(session, 'ask', NOW + 1000)
+    const other = secondWindow(transport, storage)
+    const original = request.getMockImplementation()!
+    let answer!: (projects: unknown) => void
+    request.mockImplementation((method) =>
+      method === 'projects.list' ? new Promise((resolve) => (answer = resolve)) : original(method),
+    )
+    vi.setSystemTime(NOW + 1000)
+    const checking = other.controller.check()
+    await vi.waitFor(() => expect(answer).toBeDefined())
+    // Meanwhile the first window moved the resume to a later reset and snoozed the chat to it.
+    const [entry] = JSON.parse(storage.read()) as Array<Record<string, unknown>>
+    storage.write(JSON.stringify([{ ...entry, resetsAt: NOW + 5000 }]))
+    answer({
+      projects: [
+        { sessions: [{ ...session, lifecycle: { state: 'snoozed', wakeAt: NOW + 5000 } }] },
+      ],
+    })
+    await checking
+    expect(JSON.parse(storage.read())).toEqual([
+      expect.objectContaining({ threadId: 'limited', resetsAt: NOW + 5000 }),
+    ])
+    expect(controller.snapshot()).toHaveLength(1)
+  })
+
   it('waits while disconnected, and consumes a rejected send without retrying it', async () => {
     const { controller, request, transport, report } = setup()
     await controller.schedule(session, 'ask', NOW + 1000)
