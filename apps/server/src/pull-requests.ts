@@ -37,6 +37,8 @@ const SEARCH_PAGE_SIZE = 20
 // A page that still times out is asked for again in this smaller size.
 const SEARCH_RETRY_PAGE_SIZE = 5
 const METADATA_OPTIONS_LIMIT = 1_000
+/** The `per_page` every metadata endpoint asks for. */
+const METADATA_PAGE_SIZE = 100
 const FILES_PAGE_SIZE = 30
 const REVIEW_THREAD_LIMIT = 500
 const DEFAULT_OUTPUT_LIMIT = 32 * 1024 * 1024
@@ -815,19 +817,25 @@ export class PullRequestService {
     return value
   }
 
+  /**
+   * One page at a time, up to the limit. `gh api --paginate` read every page
+   * before the limit applied, and a repository with thousands of branches ran
+   * into gh's timeout, leaving the picker empty.
+   */
   async #loadMetadataPages<T>(
     endpoint: string,
     itemSchema: z.ZodType<T>,
   ): Promise<{ items: T[]; truncated: boolean }> {
-    const output = await this.#run(['api', endpoint, '--paginate', '--slurp'], {
-      maxBytes: 16 * 1024 * 1024,
-    })
-    const pages = parseJson(
-      output,
-      `metadata options from ${endpoint}`,
-      z.array(z.array(itemSchema)),
-    )
-    const items = pages.flat()
+    const items: T[] = []
+    for (let page = 1; ; page += 1) {
+      const output = await this.#run(['api', `${endpoint}&page=${page}`], {
+        maxBytes: 16 * 1024 * 1024,
+      })
+      const entries = parseJson(output, `metadata options from ${endpoint}`, z.array(itemSchema))
+      if (items.length >= METADATA_OPTIONS_LIMIT) return { items, truncated: entries.length > 0 }
+      items.push(...entries)
+      if (entries.length < METADATA_PAGE_SIZE) break
+    }
     return {
       items: items.slice(0, METADATA_OPTIONS_LIMIT),
       truncated: items.length > METADATA_OPTIONS_LIMIT,

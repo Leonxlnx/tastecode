@@ -572,21 +572,19 @@ describe('PullRequestService', () => {
       const endpoint = args[1] ?? ''
       if (endpoint.includes('/collaborators?')) {
         return JSON.stringify([
-          [
-            { login: 'reviewer', type: 'User' },
-            { login: 'dependabot[bot]', type: 'Bot' },
-          ],
+          { login: 'reviewer', type: 'User' },
+          { login: 'dependabot[bot]', type: 'Bot' },
         ])
       }
       if (endpoint.includes('/assignees?')) {
-        return JSON.stringify([[{ login: 'Blueemi', type: 'User' }]])
+        return JSON.stringify([{ login: 'Blueemi', type: 'User' }])
       }
       if (endpoint.includes('/labels?')) throw new Error('labels unavailable')
       if (endpoint.includes('/milestones?')) {
-        return JSON.stringify([[{ number: 3, title: 'M5 — Visual pass' }]])
+        return JSON.stringify([{ number: 3, title: 'M5 — Visual pass' }])
       }
       if (endpoint.includes('/branches?')) {
-        return JSON.stringify([[{ name: 'nightly' }, { name: 'main' }]])
+        return JSON.stringify([{ name: 'nightly' }, { name: 'main' }])
       }
       throw new Error(`Unexpected gh call: ${args.join(' ')}`)
     })
@@ -609,7 +607,36 @@ describe('PullRequestService', () => {
     })
     expect(second).toEqual(first)
     expect(run).toHaveBeenCalledTimes(5)
-    expect(run.mock.calls[0]?.[0]).toEqual(expect.arrayContaining(['--paginate', '--slurp']))
+    expect(run.mock.calls[0]?.[0]).toEqual([
+      'api',
+      'repos/Blueemi/harness/collaborators?per_page=100&page=1',
+    ])
+  })
+
+  it('stops reading metadata pages at the limit', async () => {
+    const branchPages: number[] = []
+    const run = vi.fn<GhRunner>(async (args) => {
+      const endpoint = args[1] ?? ''
+      if (endpoint.includes('/branches?')) {
+        const page = Number(/[?&]page=(\d+)/.exec(endpoint)?.[1])
+        branchPages.push(page)
+        // A repository with thousands of branches: every page is full.
+        return JSON.stringify(
+          Array.from({ length: 100 }, (_, index) => ({
+            name: `branch-${String(page).padStart(3, '0')}-${String(index).padStart(3, '0')}`,
+          })),
+        )
+      }
+      return '[]'
+    })
+    const service = new PullRequestService({ run, installed: async () => true, now: () => 100 })
+
+    const options = await service.metadataOptions('Blueemi/harness')
+
+    expect(branchPages).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    expect(options.baseBranches).toHaveLength(1_000)
+    expect(options.truncated).toBe(true)
+    expect(options.unavailable).toEqual([])
   })
 
   it('maps review, metadata, lifecycle, check, and merge actions to explicit gh operations', async () => {
@@ -1136,9 +1163,9 @@ describe('PullRequestService', () => {
   it('keeps base branches that differ only by case', async () => {
     const run = vi.fn<GhRunner>(async (args) => {
       if (args[1]?.includes('/branches?')) {
-        return JSON.stringify([[{ name: 'release' }, { name: 'Release' }]])
+        return JSON.stringify([{ name: 'release' }, { name: 'Release' }])
       }
-      return '[[]]'
+      return '[]'
     })
     const service = new PullRequestService({ run, installed: async () => true, now: () => 100 })
     const options = await service.metadataOptions('Blueemi/harness')
