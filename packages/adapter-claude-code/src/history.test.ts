@@ -21,6 +21,7 @@ import {
   type ProviderHistorySession,
 } from '@harness/contracts'
 import { canCreateSymlinks } from '@harness/proc/symlink.test-support'
+import { claudeUserMessage } from './adapter.js'
 import { createClaudeHistorySource } from './history.js'
 
 const canSymlink = canCreateSymlinks()
@@ -571,6 +572,40 @@ describe('Claude Code saved history', { timeout: 20_000 }, () => {
       AT + 9_000_000_000_000,
     )
     expect(sessions.find((session) => session.id === SECOND)?.title).toBe('Torn')
+  })
+
+  it('reads a prompt sent with a file back as its words and the file', async () => {
+    // What claudeUserMessage sends for a prompt with an image and another file.
+    const notes = path.join(os.tmpdir(), 'claude workspace', 'notes "v2".txt')
+    const sent = claudeUserMessage('Describe these.', [notes]).message.content
+    const f = await fixture([
+      row('u1', 'user', [
+        ...(sent as unknown[]),
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/png', data: 'AA==' },
+        },
+      ]),
+      row('a1', 'assistant', [{ type: 'text', text: 'Done.' }], 'u1'),
+    ])
+    const session = (await f.source.list())[0]!
+    const prompt = items(await f.source.read(session)).find((item) => item.role === 'user')
+
+    // The local chat shows the same: the words, and the file among the attachments.
+    expect(prompt?.text).toBe('Describe these.')
+    expect(prompt?.attachments).toEqual(['data:image/png;base64,AA==', notes])
+    // The list names the chat after the words, without the paths.
+    expect(session.title).toBe('Describe these.')
+  })
+
+  it('keeps a prompt whole that only mentions attached file paths', async () => {
+    const prose = 'Why does the app write this?\n\nAttached file paths:\n- not a quoted path'
+    const f = await fixture([row('u1', 'user', prose)])
+    const session = (await f.source.list())[0]!
+    const prompt = items(await f.source.read(session)).find((item) => item.role === 'user')
+
+    expect(prompt?.text).toBe(prose)
+    expect(prompt?.attachments).toBeUndefined()
   })
 
   it('preserves Markdown, reasoning, attachments, typed tool output, native times, and distinct turns', async () => {

@@ -1,4 +1,5 @@
 import type { Item } from '@harness/contracts'
+import { splitAttachedFilePaths } from './attached-files.js'
 import { toolUseItemFields } from './events.js'
 
 export type SavedRecord = Record<string, unknown>
@@ -147,17 +148,27 @@ export function historyItems(
   const base = { turnId, status: 'completed' as const, createdAt: at }
   const rowItems: Item[] = []
   if (row.type === 'user' && isPrompt(row)) {
-    const attachments = blocks.flatMap((block) => {
-      const ref = attachment(block)
-      return ref ? [ref] : []
-    })
-    const text =
-      slashCommandPrompt(row) ??
-      promptText(
-        blocks
-          .filter((block) => block.type !== 'tool_result' && !attachment(block))
-          .map((block) => string(block.text) ?? JSON.stringify(block)),
-      )
+    const command = slashCommandPrompt(row)
+    // A file that is no image went as a path at the end of the text; it is an attachment
+    // again here, so the prompt reads as it was written.
+    const written =
+      command === undefined
+        ? splitAttachedFilePaths(
+            promptText(
+              blocks
+                .filter((block) => block.type !== 'tool_result' && !attachment(block))
+                .map((block) => string(block.text) ?? JSON.stringify(block)),
+            ),
+          )
+        : { text: command, files: [] }
+    const text = written.text
+    const attachments = [
+      ...blocks.flatMap((block) => {
+        const ref = attachment(block)
+        return ref ? [ref] : []
+      }),
+      ...written.files,
+    ]
     rowItems.push({
       ...base,
       id: rowId,
