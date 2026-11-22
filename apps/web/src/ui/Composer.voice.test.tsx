@@ -83,7 +83,7 @@ describe('Composer voice dictation', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
       await screen.findByRole('button', { name: 'Stop and transcribe voice note' })
       expect(screen.queryByRole('button', { name: 'Permissions' })).toBeNull()
-      expect(screen.queryByRole('button', { name: 'Design' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Creatify' })).toBeNull()
       const add = screen.getByRole('button', { name: 'Attach files' })
       expect((add as HTMLButtonElement).disabled).toBe(false)
       fireEvent.click(add)
@@ -94,7 +94,7 @@ describe('Composer voice dictation', () => {
         expect(onSend).toHaveBeenCalledWith('spoken words', ['/work/reference.txt']),
       )
       expect(screen.getByRole('button', { name: 'Permissions' })).toBeTruthy()
-      expect(screen.getByRole('button', { name: 'Design' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Creatify' })).toBeTruthy()
     } finally {
       window.prompt = originalPrompt
     }

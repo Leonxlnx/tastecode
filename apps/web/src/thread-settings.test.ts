@@ -29,7 +29,7 @@ describe('a chat setup shared through the server', () => {
   it('reads the model id back out of a choice key', () => {
     expect(modelIdFromKey(modelChoiceKey('codex', 'gpt-5.5/fast'))).toBe('gpt-5.5/fast')
     expect(modelIdFromKey(modelChoiceKey('acp:kimi', ''))).toBe('')
-    expect(sharedSetup({ modelKey: 'codex:gpt-5.5', effort: 'high', designMode: true })).toEqual({
+    expect(sharedSetup({ modelKey: 'codex:gpt-5.5', effort: 'high', creatify: true })).toEqual({
       model: 'gpt-5.5',
       effort: 'high',
     })
@@ -37,7 +37,7 @@ describe('a chat setup shared through the server', () => {
 
   it('follows a setup another client chose, keeping what only this window has', () => {
     const choices = [choice('gpt-5.5'), choice('gpt-5.5-mini')]
-    const saved = { modelKey: 'codex:gpt-5.5', effort: 'high', designMode: true }
+    const saved = { modelKey: 'codex:gpt-5.5', effort: 'high', creatify: true }
     expect(
       adoptedSelection(
         { model: 'gpt-5.5-mini', effort: 'low' },
@@ -45,7 +45,7 @@ describe('a chat setup shared through the server', () => {
         { provider: 'codex' },
         choices,
       ),
-    ).toEqual({ modelKey: 'codex:gpt-5.5-mini', effort: 'low', designMode: true })
+    ).toEqual({ modelKey: 'codex:gpt-5.5-mini', effort: 'low', creatify: true })
     // Exactly what the window shows already: nothing to do, so nothing echoes back.
     expect(
       adoptedSelection({ model: 'gpt-5.5', effort: 'high' }, saved, { provider: 'codex' }, choices),

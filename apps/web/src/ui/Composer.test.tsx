@@ -2333,12 +2333,12 @@ describe('Composer permissions', () => {
   })
 })
 
-describe('Composer Design mode', () => {
+describe('Composer Creatify toggle', () => {
   it('exposes a pressed toggle through its callback', () => {
     const onDesignModeChange = vi.fn()
     const view = renderComposer(vi.fn(), { onDesignModeChange })
 
-    const design = screen.getByRole('button', { name: 'Design' })
+    const design = screen.getByRole('button', { name: 'Creatify' })
     expect(design.getAttribute('aria-pressed')).toBe('false')
     expect(design.closest('.composer__design-beam')?.hasAttribute('data-active')).toBe(false)
     expect(design.closest('.composer__design-button-beam')?.hasAttribute('data-active')).toBe(false)
@@ -2351,7 +2351,7 @@ describe('Composer Design mode', () => {
 
     view.unmount()
     renderComposer(vi.fn(), { designMode: true })
-    const activeDesign = screen.getByRole('button', { name: 'Design' })
+    const activeDesign = screen.getByRole('button', { name: 'Creatify' })
     expect(activeDesign.getAttribute('aria-pressed')).toBe('true')
     expect(activeDesign.closest('.composer__design-beam')?.hasAttribute('data-active')).toBe(true)
     expect(activeDesign.closest('.composer__design-button-beam')?.hasAttribute('data-active')).toBe(

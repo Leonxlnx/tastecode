@@ -161,7 +161,7 @@ import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
 import { useDeferredArchiveQueue } from './ui/useDeferredArchiveQueue.js'
 import { serverBaseUrl } from './server-url.js'
-import { addDesignBriefing } from './design-agent/briefing.js'
+import { withCreatify } from './creatify.js'
 import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 import { pollUsageLimits, UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
@@ -347,6 +347,8 @@ const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
 /** Last effort used per model of a source, whichever of its accounts ran it. */
 const EFFORT_BY_MODEL_KEY = 'harness.effortByModel'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
+/** Creatify for a chat without a saved model setup, which keeps the choice otherwise. */
+const CREATIFY_BY_THREAD_PREFIX = 'harness.creatifyByThread:'
 const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const EMPTY_PROVIDER_ROSTER: ProviderRoster = []
@@ -1301,13 +1303,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const designMode = useMemo(
     () =>
       designModes[activeId ?? NEW_CHAT_DRAFT_KEY] ??
-      readThreadModelSelection(activeId)?.designMode ??
-      false,
+      readThreadModelSelection(activeId)?.creatify ??
+      readThreadCreatify(activeId),
     [activeId, designModes],
   )
   const setThreadDesignMode = useCallback((threadId: string | undefined, enabled: boolean) => {
     const saved = readThreadModelSelection(threadId)
-    if (threadId && saved) writeThreadModelSelection(threadId, { ...saved, designMode: enabled })
+    if (threadId && saved) writeThreadModelSelection(threadId, { ...saved, creatify: enabled })
+    // A chat on its provider's automatic model has no saved setup to keep the choice in.
+    else if (threadId) writeThreadCreatify(threadId, enabled)
     setDesignModes((current) => ({ ...current, [threadId ?? NEW_CHAT_DRAFT_KEY]: enabled }))
   }, [])
   const changeDesignMode = useCallback(
@@ -2405,7 +2409,6 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     flushPendingLifecyclePushes.current = flushLifecyclePushes
     const offEvents = transport.on('thread.event', (data) => {
       const { threadId, event } = data
-      if (endsDesignBriefing(event)) setThreadDesignMode(threadId, false)
       const next = threadController.receive(data, isThreadCacheProtected)
       if (!next) return
       // Every window that hears of a move shows the chat on its new provider.
@@ -4049,7 +4052,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       return
     const selection = {
       modelKey: selectedModelChoice.key,
-      designMode,
+      creatify: designMode,
       ...(selectedEffort ? { effort: selectedEffort } : {}),
       ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
     }
@@ -4720,7 +4723,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         publishComposerDraft(next)
         newChatDraftProject.current = projectPath
       } else enterNewChatDraft(projectPath)
-      // Design is a choice for one chat; the next new chat starts without it.
+      // Creatify is a choice for one chat; the next new chat starts without it.
       setThreadDesignMode(undefined, false)
       setNotice(undefined)
       setActionError(undefined)
@@ -4849,12 +4852,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         )
         return
       }
-      // Design briefing questions are TasteCode-owned and answered by the server,
-      // so they work for every provider that can complete a text turn — no
-      // structured-input capability gate here (that gates provider-originated
-      // input only).
-      const briefing = designMode
-      const turnAttachments = briefing ? addDesignBriefing(attachments) : attachments
+      // Creatify marks the prompt; the server puts the creative skills note in
+      // front of it, for every provider that can run a text turn.
+      const turnAttachments = designMode ? withCreatify(attachments) : attachments
       let workspaceStartId = activeId
       let workspaceStartToken: number | undefined
       if (activePath && workspaceStartId) {
@@ -4898,11 +4898,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         }
         writeThreadModelSelection(provisionalId, {
           modelKey: choice.key,
-          designMode,
+          creatify: designMode,
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
         })
-        // The chat keeps Design; the next new chat starts without it.
+        // The chat keeps Creatify; the next new chat starts without it.
         setThreadDesignMode(undefined, false)
         workspaceStartId = provisionalId
         workspaceStartToken = holdWorkspaceStart(provisionalId, activePath)
@@ -4965,7 +4965,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           }
           releasePendingStart()
           restoreDraftAfterFailedStart()
-          // The words return to the new chat's composer, and with them the Design choice.
+          // The words return to the new chat's composer, and with them the Creatify choice.
           setThreadDesignMode(undefined, designMode)
           return
         }
@@ -5988,6 +5988,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       threadController.invalidateHistory(id)
       // Thread ids are never reused, so a saved setup outlives its chat forever.
       removeSetting(`${MODEL_BY_THREAD_PREFIX}${id}`)
+      removeSetting(`${CREATIFY_BY_THREAD_PREFIX}${id}`)
       setProjects((current) => removeSession(current, id))
       if (!splitRemovals.current.chats([id]) && activeIdRef.current === id) {
         activeIdRef.current = undefined
@@ -7069,9 +7070,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         if (activePath) toggleWorkspacePanel()
       },
       toggleFastMode,
-      toggleDesignMode: () => {
-        if (!thread.running) changeDesignMode(!designMode)
-      },
+      // Creatify, under the id the Design toggle had, so a shortcut set for it still works.
+      toggleDesignMode: () => changeDesignMode(!designMode),
       toggleIsolatedSession: () => {
         if (!activeId) setIsolateSession((enabled) => !enabled)
       },
@@ -7610,13 +7610,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     provider,
     ...(sourceAgent ? { custom: true } : {}),
     ...(selectedModelChoice?.model.id ? { model: selectedModelChoice.model.id } : {}),
-    surface: settingsOpen
-      ? 'settings'
-      : surface === 'pull-requests'
-        ? 'pull_requests'
-        : designMode
-          ? 'design'
-          : 'chat',
+    surface: settingsOpen ? 'settings' : surface === 'pull-requests' ? 'pull_requests' : 'chat',
   }
   /** Lets the person send an error they saw to the team. Opening the dialog sends nothing. */
   const reportable = <T extends ComposerError>(
@@ -8627,24 +8621,6 @@ function providerName(id: ProviderId, sourceName?: string): string {
   return providerDisplayName(id)
 }
 
-/**
- * A finished design run — built, failed, or rejected — releases the toggle,
- * so the next prompt in the thread is a normal turn instead of restarting
- * the whole design flow from scratch.
- */
-function endsDesignBriefing(event: DomainEvent): boolean {
-  if (event.type === 'thread.error') return event.message.startsWith('Design mode failed')
-  if (event.type !== 'item.completed' || event.item.role !== 'assistant') return false
-  const text = event.item.text ?? ''
-  return (
-    text.trim() ===
-      'Design mode was turned off because this request is not a website design task.' ||
-    text.startsWith('Website built.') ||
-    text.startsWith('Dashboard built.') ||
-    text.includes('DEBUG FINISHED · NO WEBSITE BUILT')
-  )
-}
-
 function affectsSessionStatus(event: DomainEvent): boolean {
   return (
     event.type === 'turn.started' ||
@@ -8821,7 +8797,7 @@ type SourceSelection = {
   serviceTier?: string
 }
 
-type ThreadSelection = SourceSelection & { designMode?: boolean }
+type ThreadSelection = SourceSelection & { creatify?: boolean }
 
 function readThreadModelSelection(threadId: string | undefined): ThreadSelection | undefined {
   if (!threadId) return undefined
@@ -8832,14 +8808,15 @@ function readThreadModelSelection(threadId: string | undefined): ThreadSelection
       typeof value['modelKey'] !== 'string' ||
       (value['effort'] !== undefined && typeof value['effort'] !== 'string') ||
       (value['serviceTier'] !== undefined && typeof value['serviceTier'] !== 'string') ||
-      (value['designMode'] !== undefined && typeof value['designMode'] !== 'boolean')
+      (value['creatify'] !== undefined && typeof value['creatify'] !== 'boolean')
     )
       return undefined
     return {
       modelKey: value['modelKey'],
       ...(value['effort'] !== undefined ? { effort: value['effort'] } : {}),
       ...(value['serviceTier'] !== undefined ? { serviceTier: value['serviceTier'] } : {}),
-      ...(value['designMode'] !== undefined ? { designMode: value['designMode'] } : {}),
+      // A saved `designMode` is the Design toggle Creatify replaced; it is not carried over.
+      ...(value['creatify'] !== undefined ? { creatify: value['creatify'] } : {}),
     }
   } catch {
     return undefined
@@ -8848,6 +8825,15 @@ function readThreadModelSelection(threadId: string | undefined): ThreadSelection
 
 function writeThreadModelSelection(threadId: string, selection: ThreadSelection): void {
   writeSetting(`${MODEL_BY_THREAD_PREFIX}${threadId}`, JSON.stringify(selection))
+}
+
+function readThreadCreatify(threadId: string | undefined): boolean {
+  return threadId !== undefined && readSetting(`${CREATIFY_BY_THREAD_PREFIX}${threadId}`) === '1'
+}
+
+function writeThreadCreatify(threadId: string, enabled: boolean): void {
+  if (enabled) writeSetting(`${CREATIFY_BY_THREAD_PREFIX}${threadId}`, '1')
+  else removeSetting(`${CREATIFY_BY_THREAD_PREFIX}${threadId}`)
 }
 
 type ApprovalPreferences = Partial<Record<DefaultsScope, ApprovalMode>>

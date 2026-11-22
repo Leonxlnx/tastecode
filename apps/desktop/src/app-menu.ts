@@ -127,7 +127,7 @@ export function createApplicationMenuTemplate(options: AppMenuOptions): MenuItem
       label: 'Workspace',
       submenu: [
         action('Toggle Fast Mode', 'toggleFastMode'),
-        action('Toggle Design Mode', 'toggleDesignMode'),
+        action('Toggle Creatify', 'toggleDesignMode'),
         action('Toggle Isolated Checkout', 'toggleIsolatedSession'),
       ],
     },

@@ -34,6 +34,7 @@ import {
   type DemoPlatform,
   type DemoTurn,
 } from './demo-data.js'
+import { CREATIFY_ATTACHMENT } from '../creatify.js'
 
 /**
  * An in-memory stand-in for the local server, for the design sandbox. It
@@ -532,7 +533,8 @@ export class DemoServer {
     const submission: Submission = {
       id: params.clientSubmissionId ?? `prompt-${randomId()}`,
       text: params.text,
-      attachments: params.attachments ?? [],
+      // Creatify's marker is no file; the real server takes it off the same way.
+      attachments: (params.attachments ?? []).filter((path) => path !== CREATIFY_ATTACHMENT),
       createdAt: this.#now(),
     }
     // Writing again after a Stop lets the prompts it held go, in order.

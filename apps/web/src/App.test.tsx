@@ -13,7 +13,7 @@ import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
 import { ACCOUNT_CHECK_SEND_GRACE_MS, App, resolveSendAvailability, titleFrom } from './App.js'
 import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
-import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
+import { CREATIFY_ATTACHMENT } from './creatify.js'
 import { serializeModelCatalogCache as serializeCatalogWithinLimits } from './model-catalog-cache.js'
 import { choicesFor, type ModelChoice } from './model-catalog.js'
 import { parseModelVisibility, type ModelVisibilityRecord } from './model-catalog-visibility.js'
@@ -7827,7 +7827,7 @@ describe('new chats', () => {
     render(<App />)
 
     expect(document.querySelector('.stage__body.is-new-session .composer')).not.toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Creatify' }))
 
     const composer = await screen.findByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Start building' } })
@@ -7838,77 +7838,40 @@ describe('new chats', () => {
     })
     expect(transport.request).toHaveBeenCalledWith(
       'thread.sendTurn',
-      expect.objectContaining({ attachments: [DESIGN_BRIEF_ATTACHMENT] }),
+      expect.objectContaining({ attachments: [CREATIFY_ATTACHMENT] }),
     )
     expect(document.querySelector('.stage__conversation > .composer')).not.toBeNull()
-    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Creatify' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
 
+    // It stays as the user set it: no answer and no error switches it off, as the
+    // Design toggle it replaced did when its run ended.
     emitThreadEvent('thread-1', {
       type: 'item.completed',
       item: {
-        id: 'design-guard',
+        id: 'answer',
         turnId: 'turn-1',
         type: 'message',
         role: 'assistant',
         status: 'completed',
-        text: 'Design mode was turned off because this request is not a website design task.',
+        text: 'Website built. Preview ready at http://127.0.0.1:5173/.',
         createdAt: 1,
       },
     })
-    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
-      'false',
-    )
-
-    // A finished or failed run releases the toggle too, so a follow-up prompt
-    // is a normal turn instead of restarting the whole design flow.
-    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
-    emitThreadEvent('thread-1', {
-      type: 'item.completed',
-      item: {
-        id: 'design-complete',
-        turnId: 'turn-2',
-        type: 'message',
-        role: 'assistant',
-        status: 'completed',
-        text: 'Website built. Preview ready at http://127.0.0.1:5173/.',
-        createdAt: 2,
-      },
-    })
-    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
-      'false',
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
-    emitThreadEvent('thread-1', {
-      type: 'item.completed',
-      item: {
-        id: 'dashboard-complete',
-        turnId: 'turn-3',
-        type: 'message',
-        role: 'assistant',
-        status: 'completed',
-        text: 'Dashboard built. Preview ready at http://127.0.0.1:5173/.',
-        createdAt: 3,
-      },
-    })
-    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
-      'false',
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
     emitThreadEvent('thread-1', {
       type: 'thread.error',
       threadId: 'thread-1',
       message: 'Design mode failed: preview command is not allowed',
     })
-    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
-      'false',
+    expect(screen.getByRole('button', { name: 'Creatify' }).getAttribute('aria-pressed')).toBe(
+      'true',
     )
   })
 
-  it('sends the design brief through a provider without structured input', async () => {
-    // Briefing questions are TasteCode-owned and answered by the server, so a
-    // provider that never declares `userInput` must still be able to submit.
+  it('sends a Creatify prompt through a provider without structured input', async () => {
+    // The server adds the creative skills note itself, so a provider that never
+    // declares `userInput` must still be able to submit.
     localStorage.setItem('harness.provider', 'claude-code')
     serverProviders = [
       {
@@ -7947,7 +7910,7 @@ describe('new chats', () => {
     ]
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Design' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Creatify' }))
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Design a landing page' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
@@ -7955,10 +7918,12 @@ describe('new chats', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith(
         'thread.sendTurn',
-        expect.objectContaining({ attachments: [DESIGN_BRIEF_ATTACHMENT] }),
+        expect.objectContaining({ attachments: [CREATIFY_ATTACHMENT] }),
       ),
     )
-    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Creatify' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
     expect(screen.queryByRole('alert')).toBeNull()
     expect((composer as HTMLTextAreaElement).value).toBe('')
   })
@@ -8089,25 +8054,89 @@ describe('new chats', () => {
     expect(start?.[1]).not.toHaveProperty('isolate')
   })
 
-  it('starts the next new chat without Design', async () => {
+  it('starts the next new chat without Creatify', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
     ]
     render(<App />)
     await screen.findByPlaceholderText('Do anything')
-    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Creatify' }))
     submitTurn('Design a landing page')
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
     )
-    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Creatify' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
 
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
+      expect(screen.getByRole('button', { name: 'Creatify' }).getAttribute('aria-pressed')).toBe(
         'false',
       ),
     )
+  })
+
+  it('does not turn Creatify on for a chat that was saved with the old Design toggle on', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'old-chat', title: 'Old chat', provider: 'codex', createdAt: 1 }],
+      },
+    ]
+    localStorage.setItem(
+      'harness.modelByThread:old-chat',
+      JSON.stringify({ modelKey: 'codex:gpt-6.1-sol', designMode: true }),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
+    await screen.findByTestId('thread')
+
+    expect(screen.getByRole('button', { name: 'Creatify' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    )
+    // The rest of the saved setup still counts.
+    expect(JSON.parse(localStorage.getItem('harness.modelByThread:old-chat')!).modelKey).toBe(
+      'codex:gpt-6.1-sol',
+    )
+  })
+
+  it('keeps Creatify for a chat that has no saved model setup', async () => {
+    const request = transport.request.getMockImplementation()!
+    // No model to choose, so the chat never gets a saved setup to keep the choice in.
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list' ? Promise.resolve({ models: [] }) : request(method, params),
+    )
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'bare-chat', title: 'Bare chat', provider: 'codex', createdAt: 1 }],
+      },
+    ]
+    const view = render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Bare chat,/ }))
+    await screen.findByTestId('thread')
+    fireEvent.click(screen.getByRole('button', { name: 'Creatify' }))
+    expect(localStorage.getItem('harness.modelByThread:bare-chat')).toBeNull()
+    expect(localStorage.getItem('harness.creatifyByThread:bare-chat')).toBe('1')
+
+    view.unmount()
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Bare chat,/ }))
+    await screen.findByTestId('thread')
+    expect(screen.getByRole('button', { name: 'Creatify' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
+
+    // Turned off again, nothing is left behind for the chat.
+    fireEvent.click(screen.getByRole('button', { name: 'Creatify' }))
+    expect(localStorage.getItem('harness.creatifyByThread:bare-chat')).toBeNull()
   })
 
   it("does not carry a failed new chat prompt into another project's new chat", async () => {
@@ -11324,9 +11353,9 @@ describe('new chats', () => {
           expect(
             screen.getByRole('button', { name: fast ? 'Disable fast mode' : 'Enable fast mode' }),
           ).toBeTruthy()
-          expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
-            String(fast),
-          )
+          expect(
+            screen.getByRole('button', { name: 'Creatify' }).getAttribute('aria-pressed'),
+          ).toBe(String(fast))
           expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
             fast ? 'Auto' : 'Ask first',
           )
@@ -11341,7 +11370,7 @@ describe('new chats', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Mini through Codex' }))
       fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
       fireEvent.click(screen.getByRole('button', { name: 'Enable fast mode' }))
-      fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Creatify' }))
       fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
       fireEvent.click(screen.getByRole('menuitem', { name: /Auto-approve/ }))
       await expectSetup(sameModel ? '5.6 Sol' : '5.6 Mini', 'High', true)
@@ -11366,28 +11395,7 @@ describe('new chats', () => {
       await expectSetup(sameModel ? '5.6 Sol' : '5.6 Mini', 'High', true)
       fireEvent.click(screen.getByRole('button', { name: /^Chat A,/ }))
       await expectSetup('5.6 Sol', 'Low', false)
-      emitThreadEvent('chat-b', {
-        type: 'item.completed',
-        item: {
-          id: 'design-done',
-          turnId: 'design-turn',
-          type: 'message',
-          role: 'assistant',
-          status: 'completed',
-          text: 'Website built. Checks passed.',
-          createdAt: 3,
-        },
-      })
-      expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
-        'false',
-      )
-      fireEvent.click(screen.getByRole('button', { name: /^Chat B,/ }))
-      expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
-        'false',
-      )
-      expect(JSON.parse(localStorage.getItem('harness.modelByThread:chat-b')!).designMode).toBe(
-        false,
-      )
+      expect(JSON.parse(localStorage.getItem('harness.modelByThread:chat-b')!).creatify).toBe(true)
     },
   )
 
@@ -11712,7 +11720,7 @@ describe('new chats', () => {
     await waitFor(() => expect(finishStart).toBeTypeOf('function'))
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
-    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Creatify' }))
     fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
     fireEvent.click(screen.getByRole('menuitem', { name: /Ask first/ }))
     expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Ask first')
@@ -11722,7 +11730,7 @@ describe('new chats', () => {
       expect(JSON.parse(localStorage.getItem('harness.modelByThread:thread-1') ?? 'null')).toEqual({
         modelKey: 'codex:gpt-6.1-sol',
         effort: 'high',
-        designMode: true,
+        creatify: true,
       }),
     )
     expect(
@@ -11740,7 +11748,9 @@ describe('new chats', () => {
         'Effort: High',
       ),
     )
-    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Creatify' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
         'Ask first',
