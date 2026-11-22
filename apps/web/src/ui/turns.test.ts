@@ -503,6 +503,64 @@ describe('turn boundaries', () => {
     expect(completed.presentations.get('old')).toBe(initial.presentations.get('old'))
   })
 
+  it('reprojects only the last turn when a tool call before its last row completes', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('old-user', 'old'), role: 'user', text: 'Old question' },
+      { ...item('old-answer', 'old'), role: 'assistant', text: 'Old answer' },
+      { ...item('user', 'active'), role: 'user', text: 'New question' },
+      { ...item('read', 'active'), type: 'tool_call', status: 'started', text: 'Read a.ts' },
+      { ...item('grep', 'active'), type: 'tool_call', status: 'started', text: 'Grep b' },
+    ]
+    const initial = project(items, undefined, 'active')
+    // Parallel tool calls: the first one completes while the second is still the last row.
+    const completedItems = [...items]
+    completedItems[3] = { ...items[3]!, status: 'completed' }
+    const completed = project(completedItems, undefined, 'active')
+
+    expect(completed).toEqual(projectThreadItems(completedItems, undefined, 'active'))
+    expect(completed.presentations.get('old')).toBe(initial.presentations.get('old'))
+  })
+
+  it('reprojects only the last turn when a row follows one that was still streaming', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('old-user', 'old'), role: 'user', text: 'Old question' },
+      { ...item('old-answer', 'old'), role: 'assistant', text: 'Old answer' },
+      { ...item('user', 'active'), role: 'user', text: 'New question' },
+      { ...item('answer', 'active'), role: 'assistant', status: 'started', text: 'Hel' },
+    ]
+    const initial = project(items, undefined, 'active')
+    // The streaming row is replaced as it settles, and the next row arrives with it.
+    const nextItems: Item[] = [
+      ...items.slice(0, -1),
+      { ...items[3]!, status: 'completed', text: 'Hello.' },
+      { ...item('tool', 'active'), type: 'tool_call', status: 'started', text: 'Read a.ts' },
+    ]
+    const next = project(nextItems, undefined, 'active')
+
+    expect(next).toEqual(projectThreadItems(nextItems, undefined, 'active'))
+    expect(next.presentations.get('old')).toBe(initial.presentations.get('old'))
+  })
+
+  it('still projects every turn again when an earlier turn changed', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('old-user', 'old'), role: 'user', text: 'Old question' },
+      { ...item('old-answer', 'old'), role: 'assistant', text: 'Old answer' },
+      { ...item('user', 'active'), role: 'user', text: 'New question' },
+      { ...item('tool', 'active'), type: 'tool_call', status: 'started', text: 'Read a.ts' },
+    ]
+    project(items, undefined, 'active')
+    const editedItems = [...items]
+    editedItems[1] = { ...items[1]!, text: 'Old answer, edited' }
+    editedItems[3] = { ...items[3]!, status: 'completed' }
+
+    expect(project(editedItems, undefined, 'active')).toEqual(
+      projectThreadItems(editedItems, undefined, 'active'),
+    )
+  })
+
   it('keeps a running turn whole around a steered prompt the server has not confirmed', () => {
     const project = createThreadProjector()
     const items: Item[] = [
@@ -591,6 +649,67 @@ describe('turn boundaries', () => {
     const idle = project(items)
 
     expect(project(items, undefined, 'local-turn:1')).toBe(idle)
+  })
+
+  it('matches a full projection after any sequence of transcript changes', () => {
+    // Deterministic, so a failure names a sequence that can be replayed.
+    let seed = 7
+    const random = (below: number) => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648
+      return seed % below
+    }
+    const kinds: Array<Pick<Item, 'type' | 'role' | 'phase'>> = [
+      { type: 'message', role: 'assistant' },
+      { type: 'message', role: 'assistant', phase: 'commentary' },
+      { type: 'tool_call' },
+      { type: 'command' },
+      { type: 'reasoning' },
+    ]
+    for (let sequence = 0; sequence < 200; sequence += 1) {
+      const project = createThreadProjector()
+      let items: Item[] = []
+      let turn = 0
+      let rowId = 0
+      // The turn each steer echo was sent into, which the server confirms it as.
+      const steeredInto = new Map<string, string>()
+      const row = (turnId: string, fields: Partial<Item>): Item => ({
+        ...item(`row-${(rowId += 1)}`, turnId),
+        status: random(2) === 0 ? 'started' : 'completed',
+        text: `text ${rowId}`,
+        ...fields,
+      })
+      for (let step = 0; step < 30; step += 1) {
+        const lastTurn = `turn-${turn}`
+        const operation = items.length === 0 ? 0 : random(7)
+        if (operation === 0) {
+          turn += 1
+          items = [...items, row(`turn-${turn}`, { role: 'user', status: 'completed' })]
+        } else if (operation <= 2) {
+          items = [...items, row(lastTurn, kinds[random(kinds.length)]!)]
+        } else if (operation === 3) {
+          // A steer echo without a turn id, confirmed later by operation 5.
+          const echo = row('', { role: 'user', status: 'completed' })
+          steeredInto.set(echo.id, lastTurn)
+          items = [...items, echo]
+        } else {
+          const index =
+            operation === 6
+              ? random(items.length)
+              : items.length - 1 - random(Math.min(3, items.length))
+          const changed = items[index]!
+          const fields: Partial<Item> =
+            operation === 5 && changed.turnId === ''
+              ? { turnId: steeredInto.get(changed.id)! }
+              : { status: 'completed', text: `${changed.text ?? ''}+` }
+          items = items.map((entry, at) => (at === index ? { ...entry, ...fields } : entry))
+          if (random(2) === 0) items = [...items, row(lastTurn, kinds[random(kinds.length)]!)]
+        }
+        const active = random(3) === 0 ? undefined : `turn-${turn}`
+        expect(project(items, undefined, active), `sequence ${sequence}, step ${step}`).toEqual(
+          projectThreadItems(items, undefined, active),
+        )
+      }
+    }
   })
 })
 
