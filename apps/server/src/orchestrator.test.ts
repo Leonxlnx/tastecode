@@ -6319,7 +6319,7 @@ describe('several sessions at once', () => {
 
 describe('sidebar inbox lifecycle', () => {
   it('prioritizes approvals and questions over an active turn and its queue', async () => {
-    const { orchestrator, sessions } = harness()
+    const { orchestrator, sessions, received } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
     sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
     await orchestrator.submitTurn(thread.id, 'queued')
@@ -6343,6 +6343,13 @@ describe('sidebar inbox lifecycle', () => {
       },
     })
     expect(orchestrator.inboxStatus(thread.id)).toBe('input')
+    // The question goes to the user; TasteCode never answers it on their behalf.
+    expect(
+      received.some(
+        ({ threadId, event }) => threadId === thread.id && event.type === 'user_input.requested',
+      ),
+    ).toBe(true)
+    expect(sessions[0]!.userInputs).toEqual([])
     sessions[0]!.emit({
       type: 'approval.requested',
       request: { id: 'approval', kind: 'command', createdAt: 1 },
