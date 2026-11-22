@@ -191,6 +191,27 @@ describe('history maintenance', () => {
     reopened.close()
     expect(existsSync(path.join(root, 'tastecode.db'))).toBe(true)
   })
+
+  it('reads a bare --before date as midnight where the user is, not in UTC', async () => {
+    const timeZone = process.env['TZ']
+    process.env['TZ'] = 'America/New_York'
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      // 23:00 on 14 January in New York, already 15 January in UTC.
+      vi.setSystemTime(new Date('2026-01-15T04:00:00.000Z'))
+      const { store, root } = setup()
+      store.close()
+      const output: string[] = []
+      await runHistoryCli(['prune', '--before', '2026-01-15'], { HARNESS_DATA_DIR: root }, (line) =>
+        output.push(line),
+      )
+      expect(JSON.parse(output[0]!)).toMatchObject({ dryRun: true, threadIds: ['old'] })
+    } finally {
+      vi.useRealTimers()
+      if (timeZone === undefined) delete process.env['TZ']
+      else process.env['TZ'] = timeZone
+    }
+  })
   it('prunes past a recorded checkpoint directory that is no longer a Git repository', async () => {
     const { root, store, commits, refs, prune, thread } = await checkpointed()
     const stale = path.join(root, 'stale')
