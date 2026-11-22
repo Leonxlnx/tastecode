@@ -2022,7 +2022,7 @@ describe('default skills', () => {
           CREATIFY_ATTACHMENT,
         ])
 
-        // No Design brief prompt, and neither marker handed over as a file.
+        // Neither marker is handed over as a file.
         expect(sessions[0]!.sent).toEqual(['Build a site.'])
         expect(sessions[0]!.sentAttachments[0]).toEqual([])
       } finally {
@@ -8014,7 +8014,7 @@ describe('rolling a session back', () => {
     await orchestrator.disposeAll()
   })
 
-  it('releases the shared checkout when a Design start throws before the agent accepts it', async () => {
+  it('releases the shared checkout when a start with the old Design marker throws before the agent accepts it', async () => {
     const { orchestrator, sessions } = harness()
     try {
       const first = await orchestrator.startThread('codex', repo)

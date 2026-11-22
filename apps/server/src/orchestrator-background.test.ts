@@ -153,7 +153,7 @@ class TitleSession implements AgentSession {
   }
 }
 
-/** A chat's own session: it takes prompts, Design ones included, and never answers. */
+/** A chat's own session: it takes prompts and never answers. */
 class ChatSession implements AgentSession {
   readonly capabilities = { ...CAPABILITIES, images: true }
   readonly sent: string[] = []
@@ -770,7 +770,7 @@ describe('a new chat whose provider would name it', () => {
   )
 
   it.each([false, true])(
-    'titles a Codex chat from the request as before (Design: %s)',
+    'titles a Codex chat from the request as before (old Design marker: %s)',
     async (design) => {
       const setup = await newChat('codex')
 
