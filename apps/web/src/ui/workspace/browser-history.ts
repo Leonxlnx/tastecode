@@ -32,9 +32,6 @@ const SECRET_PARAMS = new Set([
 // Names that carry a secret wherever they appear, as in api_key, refresh_token or X-Amz-Signature.
 const SECRET_PARAM_PART =
   /token|secret|passw|signature|credential|api[-_]?key|private[-_]?key|session[-_]?id/
-// A removed value this short also turns up in ordinary titles, so a title is not judged by it.
-const MIN_SECRET_IN_TITLE = 6
-
 function secretParam(name: string): boolean {
   const lower = name.toLowerCase()
   return SECRET_PARAMS.has(lower) || SECRET_PARAM_PART.test(lower)
@@ -112,11 +109,12 @@ export function rememberBrowserVisit(url: string, title: string, now = Date.now(
   // is the address before the secrets came out, so the title must not bring them back.
   const reported = title.trim()
   const untitled = [reportedAt, browserVisitAddress(reportedAt), browserVisitAddress(page.href)]
-  const ownTitle =
-    untitled.includes(reported) ||
-    removed.some((value) => value.length >= MIN_SECRET_IN_TITLE && reported.includes(value))
-      ? ''
-      : reported
+  // Any removed value counts, however short: a lost title costs less than a stored code.
+  const holdsSecret = (text: string) =>
+    removed.some(
+      (value) => value !== '' && (text.includes(value) || text.includes(encodeURIComponent(value))),
+    )
+  const ownTitle = untitled.includes(reported) || holdsSecret(reported) ? '' : reported
   const visit: BrowserVisit = {
     url: page.href,
     title: ownTitle.slice(0, MAX_TITLE_LENGTH) || (earlier?.title ?? ''),

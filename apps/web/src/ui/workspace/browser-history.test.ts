@@ -142,6 +142,12 @@ it("never stores a secret from an app route's query in its untitled title", () =
   expect(localStorage.getItem(STORAGE_KEY)).not.toContain('ABCDEF')
 })
 
+it('never stores a short sign-in code that also appears in the title', () => {
+  rememberBrowserVisit('https://app.example/verify?otp=1234', 'Code 1234')
+
+  expect(localStorage.getItem(STORAGE_KEY)).not.toContain('1234')
+})
+
 it('keeps a title that shares a word with an anchor in the address', () => {
   rememberBrowserVisit('https://docs.example/guide#install', 'How to install')
 
