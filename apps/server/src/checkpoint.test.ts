@@ -20,6 +20,7 @@ import {
   checkpointRepository,
   clearSnapshotRefs,
   NotARepositoryForCheckpoint,
+  patchSince,
   retainCheckpoint,
   retainCheckpoints,
   restoreSnapshot,
@@ -178,6 +179,27 @@ describe('takeSnapshot', () => {
     expect(git('log', '-1', '--format=%an <%ae>', snapshot.commit).trim()).toBe(
       'TasteCode checkpoint <checkpoint@tastecode.invalid>',
     )
+  })
+})
+
+describe('patchSince', () => {
+  it('gives Undo a patch git can apply back, whatever the diff settings', async () => {
+    // A user's own setting; a textconv driver would change the contents the same way.
+    git('config', 'diff.noprefix', 'true')
+    const before = await takeSnapshot(repo)
+    write('tracked.txt', 'changed\n')
+    writeFileSync(path.join(repo, 'image.bin'), Buffer.from([0, 1, 2, 255, 254, 0, 9, 10, 0, 7]))
+
+    const patch = await patchSince(repo, before.commit, ['tracked.txt', 'image.bin'])
+
+    expect(patch).toContain('diff --git a/tracked.txt b/tracked.txt')
+    expect(patch).toContain('GIT binary patch')
+    // What Undo does with it: reverse the edit block's changes.
+    execFileSync('git', ['apply', '-R', '--check', '-'], {
+      cwd: repo,
+      input: patch,
+      windowsHide: true,
+    })
   })
 })
 
