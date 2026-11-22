@@ -1309,8 +1309,14 @@ function harnessUsageRecords(
     const account = event.accountId ?? DEFAULT_ACCOUNT_ID
     if (richerLocalAccounts.get(event.provider)?.has(account)) continue
     const sessionKey = `${event.provider}:${event.threadId}`
-    const current = usageTokenCounts(event.usage)
     const prior = previous.get(sessionKey)
+    const counted = usageTokenCounts(event.usage)
+    // A running total without a cost leaves the cost where it was; read as $0, the next
+    // cost would look like a fresh start and count the earlier spend again.
+    const current =
+      event.usage.cumulative && event.usage.costUsd === undefined && prior
+        ? { ...counted, providerReportedCostUsd: prior.providerReportedCostUsd }
+        : counted
     // Counters that went back restarted: the whole sample is a fresh start, as
     // in the Codex rollout reader. Subtracting counter by counter would mix
     // the old run's counters with the new one's.

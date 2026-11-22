@@ -726,6 +726,66 @@ describe('local usage history', () => {
     expect(reported.providers[0]!.totals.estimatedCostUsd).toBeCloseTo(0.4 + estimate, 8)
   })
 
+  describe('a cost a provider reports', () => {
+    const at = new Date('2026-08-08T10:00:00.000Z').getTime()
+    const model = 'gpt-5.6-luna'
+    const tokens = (
+      offset: number,
+      extra: { costUsd?: number; provider?: 'acp' | 'grok' } = {},
+    ) => ({
+      threadId: 'chat',
+      provider: extra.provider ?? ('acp' as const),
+      at: at + offset,
+      usage: {
+        inputTokens: 1_000,
+        cachedInputTokens: 200,
+        outputTokens: 100,
+        reasoningTokens: 0,
+        totalTokens: 1_100,
+        model,
+        inputIncludesCached: true,
+        ...(extra.costUsd === undefined ? {} : { costUsd: extra.costUsd }),
+      },
+    })
+    // ACP's session update: a context reading, and the running cost when it has one.
+    const session = (offset: number, costUsd?: number) => ({
+      threadId: 'chat',
+      provider: 'acp' as const,
+      at: at + offset,
+      usage: {
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: 40_000,
+        model,
+        cumulative: true,
+        contextWindow: 200_000,
+        ...(costUsd === undefined ? {} : { costUsd }),
+      },
+    })
+    const history = async (events: StoredUsageEvent[]) => {
+      const root = temporaryDirectory()
+      return settledHistory(
+        usageService({
+          cacheFile: path.join(root, 'cache', 'usage.json'),
+          sourceRoots: {
+            codex: path.join(root, 'missing-codex'),
+            'claude-code': path.join(root, 'missing-claude'),
+          },
+          harnessUsage: () => events,
+          now: () => new Date('2026-08-08T12:00:00.000Z'),
+        }),
+        '7d',
+      )
+    }
+
+    it('keeps the running cost across an update that carries none', async () => {
+      const result = await history([session(0, 0.1), session(1), session(2, 0.15)])
+      expect(result.totals.providerReportedCostUsd).toBeCloseTo(0.15, 8)
+    })
+  })
+
   it('prices public Grok and Gemini models with cache and long-context rates', async () => {
     const root = temporaryDirectory()
     const at = new Date('2026-08-08T10:00:00.000Z').getTime()

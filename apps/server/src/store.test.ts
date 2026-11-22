@@ -2971,6 +2971,19 @@ describe('usage totals', () => {
     }
   })
 
+  it('keeps a running cost across a running total that reports none', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'one', projectPath: '/repo', provider: 'acp', title: 'One' })
+    store.append('one', usage(0, 0.1, true))
+    // ACP's context-only update: a running total without a cost.
+    store.append('one', usage(0, undefined, true))
+    store.append('one', usage(0, 0.15, true))
+
+    const summary = store.usageSummary('one', 0)
+    expect(summary.session.costUsd).toBeCloseTo(0.15, 8)
+    expect(summary.today.costUsd).toBeCloseTo(0.15, 8)
+  })
+
   it('counts no context reading and seeds the day from the last cumulative update', () => {
     vi.useFakeTimers()
     try {
