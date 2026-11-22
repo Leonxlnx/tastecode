@@ -280,19 +280,30 @@ export class ThreadController {
   #writeDrafts(): void {
     const storage = this.draftStorage
     if (!storage) return
+    const write = (drafts: string | undefined) => storage.write(drafts)
     const companion = this.#draftCompanion
-    // Without its companion the drafts would describe another state: both wait for the next save.
-    if (companion && !companion.write()) return
-    const saved = saveComposerDrafts(
-      this.#drafts,
-      this.#storedDrafts,
-      (drafts) => storage.write(drafts),
-      companion ? (key) => companion.keeps(key) : undefined,
-    )
+    if (companion?.write()) {
+      const saved = saveComposerDrafts(this.#drafts, this.#storedDrafts, write, (key) =>
+        companion.keeps(key),
+      )
+      if (saved) {
+        this.#storedDrafts = saved
+        this.#draftCompanion = undefined
+        return
+      }
+      companion.undo()
+    }
+    // A companion that could not be saved with its drafts leaves disk at the last pair that
+    // matched: its drafts stay exactly as stored, and only the others are saved. One oversized
+    // draft there never stops the rest; the next save tries the full set again.
+    const drafts = companion
+      ? new Map([
+          ...[...this.#drafts].filter(([key]) => !companion.keeps(key)),
+          ...[...this.#storedDrafts].filter(([key]) => companion.keeps(key)),
+        ])
+      : this.#drafts
+    const saved = saveComposerDrafts(drafts, this.#storedDrafts, write)
     if (saved) this.#storedDrafts = saved
-    if (!companion) return
-    if (saved) this.#draftCompanion = undefined
-    else companion.undo()
   }
   #saveDraftsSoon(): void {
     if (!this.draftStorage) return

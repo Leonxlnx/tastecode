@@ -320,6 +320,57 @@ describe('ThreadController lifecycle owner', () => {
       expect(companion.undo).toHaveBeenCalledTimes(1)
     })
 
+    it('still saves other drafts when an oversized New chat draft cannot move with its project', () => {
+      const storage = quotaStorage(1_000, {
+        'new-chat': draftOf('words of A'),
+        'new-chat:/B': draftOf('words of B'),
+        'thread-1': draftOf('old words'),
+      })
+      // The project the live New chat draft belongs to, saved beside the drafts as the app does.
+      let project = '/A'
+      const disk = { project: '/A', previous: '/A' }
+      const owner = {
+        keeps: (key: string) => key === 'new-chat' || key.startsWith('new-chat:'),
+        write: () => {
+          disk.previous = disk.project
+          disk.project = project
+          return true
+        },
+        undo: () => {
+          disk.project = disk.previous
+        },
+      }
+      const controller = new ThreadController(new TestTransport(), storage)
+      // An oversized prompt pasted into A's New chat: storage keeps A's saved words.
+      controller.editDraft('new-chat', { text: 'x'.repeat(5_000) })
+      controller.flushDrafts()
+      // Switch to B: A's prompt waits for A, B's comes back to New chat.
+      project = '/B'
+      controller.joinDraft('new-chat', 'new-chat:/A')
+      controller.joinDraft('new-chat:/B', 'new-chat')
+      controller.saveDraftsWith(owner)
+      // A small edit in an existing chat.
+      controller.editDraft('thread-1', { text: 'small edit' })
+      controller.flushDrafts()
+
+      const restarted = storage.restart()
+      expect(restarted.draft('thread-1').text).toBe('small edit')
+      // Disk still holds the pair from before the switch.
+      expect(disk.project).toBe('/A')
+      expect(restarted.draft('new-chat').text).toBe('words of A')
+      expect(restarted.draft('new-chat:/B').text).toBe('words of B')
+      expect(restarted.draft('new-chat:/A').text).toBe('')
+      // Memory keeps the moved drafts, and a save that fits writes them with B.
+      expect(controller.draft('new-chat').text).toBe('words of B')
+      controller.editDraft('new-chat:/A', { text: 'short again' })
+      controller.flushDrafts()
+      expect(disk.project).toBe('/B')
+      const moved = storage.restart()
+      expect(moved.draft('new-chat').text).toBe('words of B')
+      expect(moved.draft('new-chat:/A').text).toBe('short again')
+      expect(moved.draft('thread-1').text).toBe('small edit')
+    })
+
     it('does not throw when storage refuses every write', () => {
       const controller = new ThreadController(new TestTransport(), {
         read: () => null,
