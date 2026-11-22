@@ -57,6 +57,30 @@ describe('preview plan', () => {
     ).toMatchObject({ kind: 'static', entry: 'index.html', url: 'http://127.0.0.1:4173/site/' })
   })
 
+  it('reads a static url that names the entry page or its folder without the slash', () => {
+    const staticPlan = (url: string, entry = 'index.html') =>
+      parsePreviewPlan({
+        version: 1,
+        kind: 'static',
+        entry,
+        cwd: '.',
+        url,
+        viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+      })
+    expect(staticPlan('http://127.0.0.1:4173/index.html').url).toBe('http://127.0.0.1:4173/')
+    expect(staticPlan('http://127.0.0.1:4173/site/index.html').url).toBe(
+      'http://127.0.0.1:4173/site/',
+    )
+    expect(staticPlan('http://127.0.0.1:4173/pages/index.html', 'pages/index.html').url).toBe(
+      'http://127.0.0.1:4173/',
+    )
+    expect(staticPlan('http://127.0.0.1:4173/site').url).toBe('http://127.0.0.1:4173/site/')
+    // Another page than the entry names no folder.
+    expect(() => staticPlan('http://127.0.0.1:4173/about.html')).toThrow(
+      'static preview url must end with /',
+    )
+  })
+
   it('keeps a static entry inside its preview root', () => {
     expect(() =>
       parsePreviewPlan({

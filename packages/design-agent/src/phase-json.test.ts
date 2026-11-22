@@ -40,10 +40,24 @@ describe('phase JSON', () => {
     })
   })
 
-  it('still throws the parse error for an answer that holds no JSON', () => {
+  it('still throws the parse error for an answer that holds no JSON or is cut off mid-value', () => {
     expect(() => parsePhaseJson('I could not finish the brand.')).toThrow(SyntaxError)
     expect(() => parsePhaseJson('{"a":1,"b":')).toThrow(SyntaxError)
-    // Truncated, not closed early: nothing after the close to continue with.
-    expect(() => parsePhaseJson('{"a":{"b":1}')).toThrow(SyntaxError)
+    expect(() => parsePhaseJson('{"a":{"b":1},')).toThrow(SyntaxError)
+    expect(() => parsePhaseJson('{"a":{"b":"cut off mid')).toThrow(SyntaxError)
+    // More missing closes than a model leaves out reads as cut off.
+    expect(() => parsePhaseJson('{"a":{"b":{"c":[1]')).toThrow(SyntaxError)
+  })
+
+  it('closes an answer that leaves out its last closing brackets', () => {
+    // The shape of a real Claude Code Brand answer: prose, then the JSON one brace short.
+    expect(
+      parsePhaseJson(
+        'Checked the project.\n\n{"version":1,"voice":{"avoid":["Exclamation marks"]}',
+      ),
+    ).toEqual({ version: 1, voice: { avoid: ['Exclamation marks'] } })
+    expect(parsePhaseJson('{"a":{"b":1}')).toEqual({ a: { b: 1 } })
+    // Closed one brace early and left the last one out: the reported "after JSON" failure.
+    expect(parsePhaseJson('{"a":1},"b":{"c":2}')).toEqual({ a: 1, b: { c: 2 } })
   })
 })

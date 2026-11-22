@@ -8,6 +8,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs'
@@ -20,6 +21,7 @@ import {
   checkpointRepository,
   clearSnapshotRefs,
   NotARepositoryForCheckpoint,
+  patchSince,
   retainCheckpoint,
   retainCheckpoints,
   restoreSnapshot,
@@ -178,6 +180,27 @@ describe('takeSnapshot', () => {
     expect(git('log', '-1', '--format=%an <%ae>', snapshot.commit).trim()).toBe(
       'TasteCode checkpoint <checkpoint@tastecode.invalid>',
     )
+  })
+})
+
+describe('patchSince', () => {
+  it('gives Undo a patch git can apply back, whatever the diff settings', async () => {
+    // A user's own setting; a textconv driver would change the contents the same way.
+    git('config', 'diff.noprefix', 'true')
+    const before = await takeSnapshot(repo)
+    write('tracked.txt', 'changed\n')
+    writeFileSync(path.join(repo, 'image.bin'), Buffer.from([0, 1, 2, 255, 254, 0, 9, 10, 0, 7]))
+
+    const patch = await patchSince(repo, before.commit, ['tracked.txt', 'image.bin'])
+
+    expect(patch).toContain('diff --git a/tracked.txt b/tracked.txt')
+    expect(patch).toContain('GIT binary patch')
+    // What Undo does with it: reverse the edit block's changes.
+    execFileSync('git', ['apply', '-R', '--check', '-'], {
+      cwd: repo,
+      input: patch,
+      windowsHide: true,
+    })
   })
 })
 
@@ -475,6 +498,41 @@ describe('restoreSnapshot', () => {
     expect(read(' victim.txt')).toBe('agent file\n')
   })
 
+  it('backs up a file that became ignored after the checkpoint before overwriting it', async () => {
+    write('.env', 'checkpoint secret\n')
+    const before = await takeSnapshot(repo)
+    write('.gitignore', '.env\n')
+    write('.env', 'newer secret\n')
+
+    const replaced = await restoreSnapshot(repo, before.commit)
+    expect(read('.env')).toBe('checkpoint secret\n')
+    expect(existsSync(path.join(repo, '.gitignore'))).toBe(false)
+    expect(git('show', `${replaced.commit}:.env`)).toBe('newer secret\n')
+
+    await restoreSnapshot(repo, replaced.commit)
+    expect(read('.env')).toBe('newer secret\n')
+    expect(read('.gitignore')).toBe('.env\n')
+  })
+
+  it('still restores when a checkpointed folder became a link to another folder', async (context) => {
+    mkdirSync(path.join(repo, 'assets'))
+    write('assets/logo.txt', 'checkpoint\n')
+    write('notes.txt', 'checkpoint\n')
+    const before = await takeSnapshot(repo)
+    renameSync(path.join(repo, 'assets'), path.join(repo, 'shared'))
+    try {
+      symlinkSync('shared', path.join(repo, 'assets'), 'dir')
+    } catch {
+      // Windows without Developer Mode or admin rights cannot create one.
+      context.skip()
+    }
+    write('notes.txt', 'agent\n')
+
+    await restoreSnapshot(repo, before.commit)
+
+    expect(read('notes.txt')).toBe('checkpoint\n')
+  })
+
   it('backs up working edits to force-staged ignored files without changing their index', async () => {
     write('.gitignore', 'local.txt\n')
     git('add', '.gitignore')
@@ -752,6 +810,64 @@ describe('nested repositories', () => {
     write('tracked.txt', 'agent edit\n')
 
     expect(await changedSince(repo, checkpoint.commit)).toEqual(['tracked.txt'])
+  })
+
+  it('refuses to restore a file where a nested repository now has its folder', async () => {
+    write('app', 'a file at the checkpoint\n')
+    const checkpoint = await takeSnapshot(repo)
+    rmSync(path.join(repo, 'app'))
+    initNested(true)
+    write('tracked.txt', 'agent edit\n')
+
+    await expect(restoreSnapshot(repo, checkpoint.commit)).rejects.toThrow('"app" is a folder now')
+
+    expect(nestedGit('log', '--format=%s')).toBe('scaffold\n')
+    expect(read(path.join('app', 'index.js'))).toBe('x\n')
+    expect(read('tracked.txt')).toBe('agent edit\n')
+  })
+
+  it('refuses to restore a file where a committed submodule now has its folder', async () => {
+    write('app', 'a file at the checkpoint\n')
+    git('add', 'app')
+    git('commit', '-q', '-m', 'app file')
+    const checkpoint = await takeSnapshot(repo)
+    git('rm', '-q', 'app')
+    initNested(true)
+    git('add', 'app')
+    git('commit', '-q', '-m', 'app repository')
+
+    await expect(restoreSnapshot(repo, checkpoint.commit)).rejects.toThrow('"app" is a folder now')
+
+    expect(nestedGit('log', '--format=%s')).toBe('scaffold\n')
+  })
+
+  it('refuses to restore a file where a folder now holds ignored files', async () => {
+    write('.gitignore', '*.log\n')
+    git('add', '.gitignore')
+    git('commit', '-q', '-m', 'ignore logs')
+    write('tool', 'a file at the checkpoint\n')
+    const checkpoint = await takeSnapshot(repo)
+    rmSync(path.join(repo, 'tool'))
+    mkdirSync(path.join(repo, 'tool'))
+    write(path.join('tool', 'run.log'), 'ignored\n')
+
+    await expect(restoreSnapshot(repo, checkpoint.commit)).rejects.toThrow('"tool" is a folder now')
+
+    expect(read(path.join('tool', 'run.log'))).toBe('ignored\n')
+  })
+
+  it('restores a file over a folder whose files the undo brings back', async () => {
+    write('tool', 'a file at the checkpoint\n')
+    const checkpoint = await takeSnapshot(repo)
+    rmSync(path.join(repo, 'tool'))
+    mkdirSync(path.join(repo, 'tool'))
+    write(path.join('tool', 'main.js'), 'agent\n')
+
+    const replaced = await restoreSnapshot(repo, checkpoint.commit)
+    expect(read('tool')).toBe('a file at the checkpoint\n')
+
+    await restoreSnapshot(repo, replaced.commit)
+    expect(read(path.join('tool', 'main.js'))).toBe('agent\n')
   })
 })
 

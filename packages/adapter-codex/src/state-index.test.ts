@@ -219,4 +219,34 @@ describe('Codex state index', () => {
     expect(second.index!.byId.get('old')?.session.title).toBe('New title')
     old.close()
   })
+
+  it('files a row under its rollout when Codex recorded the extended-length path', async () => {
+    // Threads started through Codex's app server on Windows (seen in a real state_5.sqlite,
+    // 80 of 7,029 rows) keep `\\?\E:\…` paths; listing finds the same rollouts as `E:\…`.
+    const { db, rollout, read } = await stateStore()
+    db.prepare(
+      `INSERT INTO threads (id, rollout_path, created_at, updated_at, source, cwd, title,
+         created_at_ms, updated_at_ms, preview, name) VALUES (?, ?, ?, ?, 'vscode', ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'long',
+      String.raw`\\?\ `.trim() + rollout('long'),
+      Math.floor(at / 1000),
+      Math.floor(at / 1000),
+      '/project',
+      'Recreate this scene',
+      at,
+      at,
+      'Recreate this scene',
+      'Scene rebuild',
+    )
+
+    const { index } = await read()
+
+    expect(index!.byId.get('long')?.session.locator).toBe(rollout('long'))
+    expect(index!.byFile.get(path.resolve(rollout('long')))).toMatchObject({
+      name: 'Scene rebuild',
+      session: { id: 'long', title: 'Recreate this scene' },
+    })
+    db.close()
+  })
 })
