@@ -1173,6 +1173,7 @@ describe('OpenCode adapter', () => {
             totalTokens: 20,
             costUsd: 0.01,
             inputIncludesCached: false,
+            cumulative: true,
           },
         }),
         expect.objectContaining({ type: 'turn.completed', status: 'completed' }),
