@@ -1298,11 +1298,13 @@ function harnessUsageRecords(
 ): AttributedUsageRecord[] {
   const records: AttributedUsageRecord[] = []
   const previous = new Map<string, TokenCounts>()
-  // A provider can report a session's tokens and its cost in separate events. Where
-  // it reports the cost, pricing the tokens as well would count the session twice.
+  // A provider can report a session's running cost apart from its tokens, as ACP does.
+  // Where it does, pricing the tokens as well would count the session twice. A cost
+  // reported with one response covers only that response, and $0 is a reported cost.
   const costReported = new Set<string>()
   for (const event of events) {
-    if ((event.usage.costUsd ?? 0) > 0) costReported.add(`${event.provider}:${event.threadId}`)
+    if (event.usage.cumulative && event.usage.costUsd !== undefined)
+      costReported.add(`${event.provider}:${event.threadId}`)
   }
 
   for (const event of events) {
@@ -1345,7 +1347,8 @@ function harnessUsageRecords(
       sessionId: event.threadId,
       longContext: inputForThreshold > longContextThreshold(model),
       tokens,
-      ...(costReported.has(sessionKey) && tokens.providerReportedCostUsd <= 0
+      ...((costReported.has(sessionKey) || event.usage.costUsd !== undefined) &&
+      tokens.providerReportedCostUsd <= 0
         ? { costReportedElsewhere: true }
         : {}),
     })

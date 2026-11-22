@@ -784,6 +784,22 @@ describe('local usage history', () => {
       const result = await history([session(0, 0.1), session(1), session(2, 0.15)])
       expect(result.totals.providerReportedCostUsd).toBeCloseTo(0.15, 8)
     })
+
+    it('takes a reported $0.00 as the cost, not as a reason to estimate one', async () => {
+      const result = await history([tokens(0), session(1, 0)])
+      expect(result.totals.estimatedCostUsd).toBe(0)
+    })
+
+    it('still estimates a response whose provider reported a cost only for another', async () => {
+      const estimate = (await history([tokens(0, { provider: 'grok' })])).totals.estimatedCostUsd
+      expect(estimate).toBeGreaterThan(0)
+
+      const result = await history([
+        tokens(0, { provider: 'grok', costUsd: 0.25 }),
+        tokens(1, { provider: 'grok' }),
+      ])
+      expect(result.totals.estimatedCostUsd).toBeCloseTo(0.25 + estimate, 8)
+    })
   })
 
   it('prices public Grok and Gemini models with cache and long-context rates', async () => {
