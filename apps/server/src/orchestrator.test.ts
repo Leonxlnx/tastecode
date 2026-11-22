@@ -9472,6 +9472,34 @@ describe('several sessions at once', () => {
     }
   })
 
+  it('queues the second of two prompts sent while the access mode changed during a resume', async () => {
+    const { sessions, orchestrator, store, resumeBarriers, resumedIds } = harness()
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    let finishResume!: () => void
+    resumeBarriers.push(new Promise<void>((resolve) => (finishResume = resolve)))
+    try {
+      const first = orchestrator.submitTurn('persisted-thread', 'first', [], {}, 'first')
+      const second = orchestrator.submitTurn('persisted-thread', 'second', [], {}, 'second')
+      await vi.waitFor(() => expect(resumedIds).toHaveLength(1))
+      const changing = orchestrator.setThreadApproval('persisted-thread', 'full')
+      finishResume()
+      await expect(changing).resolves.toBeUndefined()
+      await expect(first).resolves.toMatchObject({ queued: false })
+      await expect(second).resolves.toMatchObject({ queued: true })
+      // Both started before: the second one's submission replaced the first one's.
+      expect(sessions.at(-1)!.sent).toEqual(['first'])
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
   describe('a Stop while the chat is still resuming', () => {
     // A persisted Codex chat whose resumes wait for the returned openers, in order.
     const resumingChat = (resumes: number) => {
