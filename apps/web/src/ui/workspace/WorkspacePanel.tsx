@@ -425,7 +425,9 @@ function WorkspacePanelComponent(props: {
     setAgentCommand(undefined)
   }, [props.threadId])
   useEffect(() => {
-    if (!isDesktop) return
+    // The right panel alone runs the agent's browser (the app mounts it for a command), so a
+    // bottom panel mounted later cannot take the commands, and the right panel's Stop, away.
+    if (!isDesktop || bottom) return
     // The app hears the pushes, also before this panel loaded, and hands them on here.
     return receiveAgentBrowserEvents((event) => {
       if (event.kind === 'cancel') {
@@ -444,7 +446,7 @@ function WorkspacePanelComponent(props: {
       showTool({ id: AGENT_BROWSER_TAB_ID, kind: 'browser' })
       props.onOpen()
     })
-  }, [props.threadId, props.onOpen, showTool, answerAgent, endAgentCommand])
+  }, [bottom, props.threadId, props.onOpen, showTool, answerAgent, endAgentCommand])
   // Only while a chat is stopped does the panel read events, to allow its next turn again.
   const anyStopped = stoppedChats.size > 0
   useEffect(() => {

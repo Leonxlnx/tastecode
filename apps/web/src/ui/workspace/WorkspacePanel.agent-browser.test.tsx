@@ -151,3 +151,15 @@ it('keeps Stop for a chat while the panel shows another chat', async () => {
   act(() => deliverAgentBrowserEvent({ kind: 'command', command: allowed }))
   expect(agent.link?.command).toEqual(allowed)
 })
+
+it('keeps Stop when the bottom panel mounts during the stopped turn', async () => {
+  const { transport, props, answers } = panel()
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: command() }))
+  await screen.findByTestId('browser-surface')
+  act(() => agent.link!.onStop())
+  render(<WorkspacePanel {...props} placement="bottom" transport={transport} threadId="chat-1" />)
+
+  const later = command()
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: later }))
+  expect(answers()).toContainEqual({ commandId: later.commandId, ok: false, error: STOPPED })
+})
