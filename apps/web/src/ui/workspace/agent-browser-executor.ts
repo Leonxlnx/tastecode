@@ -36,15 +36,20 @@ export type ScaleScreenshot = (dataUrl: string, width: number) => Promise<string
 /**
  * A field an agent never types into: passwords and payment details. Checked in the page itself,
  * on the element the selector names, by type, autocomplete hint and the words that label it.
+ * "card" counts as a word of its own (card_number, paymentCardNumber, Card holder), not as part
+ * of another word such as "postcards" or "scorecard"; camelCase is split into words first.
  */
 const SENSITIVE_FIELD_CHECK = `(element) => {
   if (!element) return 'missing'
-  const words = [element.type, element.name, element.id, element.placeholder,
+  const raw = [element.type, element.name, element.id, element.placeholder,
     element.getAttribute('autocomplete'), element.getAttribute('aria-label'),
     element.labels ? [...element.labels].map((label) => label.textContent).join(' ') : '']
-    .filter(Boolean).join(' ').toLowerCase()
+    .filter(Boolean).join(' ')
+  const words = raw.toLowerCase()
+  const cardWords = raw.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase()
   if (element.type === 'password') return 'password'
-  if (/\\bcc-|card|cvc|cvv|csc|security code|expir|iban|routing number|account number/.test(words)) return 'payment'
+  if (/(^|[^a-z])(payment|billing|credit|debit|gift)?card(holder(name)?|number|num|no|name|code|s)?(input)?([^a-z]|$)|kartennummer/.test(cardWords)) return 'payment'
+  if (/\\bcc-|cvc|cvv|csc|security code|expir|iban|routing number|account number/.test(words)) return 'payment'
   if (/password|passcode|passwort|\\bpin\\b|one-time-code/.test(words)) return 'password'
   return 'ok'
 }`
