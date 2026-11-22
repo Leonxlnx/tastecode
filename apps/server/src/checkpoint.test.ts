@@ -589,6 +589,17 @@ describe('restoreSnapshot', () => {
     expect(read('config')).toBe('unsaved settings\n')
   })
 
+  it('restores a project folder to the moment before its first file', async () => {
+    mkdirSync(path.join(repo, 'empty-project'))
+    const project = path.join(repo, 'empty-project')
+    const before = await takeSnapshot(project)
+    writeFileSync(path.join(project, 'first.js'), 'agent change\n')
+
+    await restoreSnapshot(project, before.commit)
+    expect(existsSync(path.join(project, 'first.js'))).toBe(false)
+    expect(read('tracked.txt')).toBe('original\n')
+  })
+
   it('still restores when a checkpointed folder became a link to another folder', async (context) => {
     mkdirSync(path.join(repo, 'assets'))
     write('assets/logo.txt', 'checkpoint\n')

@@ -526,6 +526,12 @@ async function restoreTree(
     if ((await lstat(target).catch(() => undefined))?.isDirectory()) continue
     await rm(target, { force: true })
   }
+  // A checkpoint taken before the folder held any file has nothing to write back,
+  // and git refuses a pathspec that matches nothing in the source. Removing what
+  // was added since is then the whole restore.
+  const held = await git(repoPath, ['ls-tree', '-r', '--name-only', commit, '--', scope])
+  if (held === undefined) throw new Error('could not read the checkpoint to restore')
+  if (held === '') return
   // `restore --worktree` rather than `checkout`: checkout writes the index as
   // well, so a rollback would stage everything it touched and hand the user a
   // staging area they did not arrange. Nothing here moves HEAD or the branch
