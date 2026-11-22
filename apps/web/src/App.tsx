@@ -2088,9 +2088,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
    * draft of a project New chat is not showing waits under parkedNewChatDraftKey, and it
    * is saved which project the live one belongs to, so a restart shows each under its own.
    */
-  const newChatDraftProject = useRef<string | undefined>(
-    readSetting(NEW_CHAT_DRAFT_PROJECT_KEY) ?? undefined,
+  // Read once: a ref's argument is evaluated on every render, and this one reads storage.
+  const [savedNewChatDraftProject] = useState(
+    () => readSetting(NEW_CHAT_DRAFT_PROJECT_KEY) ?? undefined,
   )
+  const newChatDraftProject = useRef<string | undefined>(savedNewChatDraftProject)
   /** Where a project's New chat draft is right now: live, or waiting for its project. */
   const newChatDraftSlot = useCallback((projectPath: string) => {
     const owner = newChatDraftProject.current ?? activePathRef.current
