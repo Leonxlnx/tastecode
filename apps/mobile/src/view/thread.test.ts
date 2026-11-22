@@ -7,6 +7,7 @@ import {
   relative,
   rowView,
   stepRuns,
+  commandTitle,
   stepView,
   summarize,
   toolName,
@@ -147,6 +148,25 @@ describe('thread rows', () => {
     expect(
       stepView(step({ id: 'r', type: 'tool_call', text: 'Read\n{"file_path":"/x/a.ts"}' })),
     ).toMatchObject({ kind: 'read', title: 'Read a.ts' })
+  })
+
+  it('names a command without the shell that wrapped it, as the desktop does', () => {
+    // As Codex reports them: the argv joined into one POSIX-quoted line.
+    expect(commandTitle("/bin/zsh -lc 'npm test'")).toBe('npm test')
+    expect(commandTitle(`/bin/zsh -lc 'rg -n '"'"'focus ring'"'"' src'`)).toBe(
+      "rg -n 'focus ring' src",
+    )
+    expect(
+      commandTitle(
+        '"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe" -Command \'git diff -- index.html\'',
+      ),
+    ).toBe('git diff -- index.html')
+    // Claude Code's cd into the project, which a relative cd is not.
+    expect(commandTitle('cd "/Users/me/app" && pnpm build')).toBe('pnpm build')
+    expect(commandTitle('cd web && pnpm build')).toBe('cd web && pnpm build')
+    expect(
+      stepView(step({ id: 'c', type: 'command', command: "bash -lc 'ls -la'" })),
+    ).toMatchObject({ kind: 'command', title: 'ls -la' })
   })
 
   it('summarizes steps of every kind in reading order', () => {
