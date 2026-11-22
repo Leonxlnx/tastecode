@@ -15,13 +15,14 @@ export function paintWhiteGround(
 /**
  * Scales a PNG data URL down to at most a width and returns its base64, on white: a narrower
  * capture is redrawn too, so a page without its own background never goes out transparent.
+ * With `exact`, it is drawn at exactly that width, scaled up if it is narrower.
  */
-export async function scalePng(dataUrl: string, width: number): Promise<string> {
+export async function scalePng(dataUrl: string, width: number, exact = false): Promise<string> {
   const image = new Image()
   image.src = dataUrl
   await image.decode()
   const canvas = document.createElement('canvas')
-  canvas.width = Math.min(width, image.naturalWidth)
+  canvas.width = exact ? width : Math.min(width, image.naturalWidth)
   canvas.height = Math.round((image.naturalHeight * canvas.width) / image.naturalWidth)
   const context = canvas.getContext('2d')
   if (!context) return dataUrl.slice(dataUrl.indexOf(',') + 1)
