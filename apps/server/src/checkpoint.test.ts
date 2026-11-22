@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -201,6 +202,22 @@ describe('patchSince', () => {
       input: patch,
       windowsHide: true,
     })
+  })
+})
+
+describe('patchSince in a project inside a repository', () => {
+  it('names files by absolute path, so Undo knows they are in the project', async () => {
+    mkdirSync(path.join(repo, 'pkg'))
+    const project = path.join(repo, 'pkg')
+    writeFileSync(path.join(project, 'app.txt'), 'before\n')
+    const before = await takeSnapshot(project)
+    writeFileSync(path.join(project, 'app.txt'), 'after\n')
+
+    const patch = await patchSince(project, before.commit, ['app.txt'])
+
+    const absolute = realpathSync(project).split(path.sep).join('/')
+    expect(patch).toContain(`--- a/${absolute}/app.txt`)
+    expect(patch).toContain(`+++ b/${absolute}/app.txt`)
   })
 })
 

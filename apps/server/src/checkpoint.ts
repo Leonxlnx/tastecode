@@ -592,9 +592,11 @@ export async function changedSince(repoPath: string, commit: string): Promise<st
 }
 
 /**
- * How `files` (relative to `repoPath`) changed since a snapshot, as one patch
- * with paths relative to `repoPath`, the form provider turn diffs have. Empty
- * when they did not change; undefined when git cannot say.
+ * How `files` (relative to `repoPath`) changed since a snapshot, as one patch.
+ * Empty when they did not change; undefined when git cannot say. In a project
+ * that is a subfolder of its repository, paths are absolute, as Codex writes
+ * them: relative to the folder, a path such as `pkg/a.txt` can also name a file
+ * from the repository root, and Undo could not tell which one it meant.
  */
 export async function patchSince(
   repoPath: string,
@@ -618,9 +620,13 @@ export async function patchSince(
       // Undo applies this patch in reverse: the user's diff.noprefix or a textconv
       // driver would give it headers or contents git apply cannot read back.
       '--no-textconv',
-      '--src-prefix=a/',
-      '--dst-prefix=b/',
-      ...(scope === '' ? [] : [`--relative=${posix(scope)}`]),
+      ...(scope === ''
+        ? ['--src-prefix=a/', '--dst-prefix=b/']
+        : [
+            `--src-prefix=a/${posix(realpathSync(repoPath))}/`,
+            `--dst-prefix=b/${posix(realpathSync(repoPath))}/`,
+            `--relative=${posix(scope)}`,
+          ]),
       commit,
       now.commit,
       '--',
