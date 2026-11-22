@@ -140,6 +140,9 @@ export class ProviderHistory {
   ) {
     const threadId = `external:${provider}:${session.id}`
     const created = !this.store.thread(threadId)
+    // A chat this service already links keeps what it read; adopting it again would mark its
+    // transcript unread, and opening it would then depend on the source being readable.
+    if (!created && this.#byThread.has(threadId)) return { threadId, created }
     if (created) {
       this.store.addProviderThread(
         threadId,
