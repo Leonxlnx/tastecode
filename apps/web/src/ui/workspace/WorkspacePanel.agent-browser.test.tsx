@@ -163,3 +163,34 @@ it('keeps Stop when the bottom panel mounts during the stopped turn', async () =
   act(() => deliverAgentBrowserEvent({ kind: 'command', command: later }))
   expect(answers()).toContainEqual({ commandId: later.commandId, ok: false, error: STOPPED })
 })
+
+it('lets the next turn use the browser after a Stop pressed once the turn had ended', async () => {
+  const { transport, answers } = panel()
+  const done = command()
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: done }))
+  await screen.findByTestId('browser-surface')
+  act(() => agent.link!.onResult({ commandId: done.commandId, ok: true }))
+  act(() =>
+    transport.emit('thread.event', {
+      threadId: 'chat-1',
+      seq: 1,
+      event: { type: 'turn.completed', turnId: 't1', status: 'completed' },
+    }),
+  )
+  // The bar lingers after the turn, and Stop is still there to press.
+  act(() => agent.link!.onStop())
+  act(() =>
+    transport.emit('thread.event', {
+      threadId: 'chat-1',
+      seq: 2,
+      event: {
+        type: 'turn.started',
+        turn: { id: 't2', threadId: 'chat-1', status: 'running', createdAt: 2 },
+      },
+    }),
+  )
+  const next = command()
+  act(() => deliverAgentBrowserEvent({ kind: 'command', command: next }))
+  expect(answers()).not.toContainEqual({ commandId: next.commandId, ok: false, error: STOPPED })
+  expect(agent.link?.command).toEqual(next)
+})

@@ -452,7 +452,8 @@ function WorkspacePanelComponent(props: {
   useEffect(() => {
     if (!anyStopped) return
     return props.transport.on('thread.event', ({ threadId, event }) => {
-      if (event.type !== 'turn.completed') return
+      // A new turn also ends it: Stop pressed after the turn had completed waits for no end.
+      if (event.type !== 'turn.completed' && event.type !== 'turn.started') return
       setStoppedChats((stopped) => {
         if (!stopped.has(threadId)) return stopped
         const next = new Set(stopped)
