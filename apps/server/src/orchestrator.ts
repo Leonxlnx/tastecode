@@ -231,7 +231,12 @@ type QueuedTurnEntry = QueuedTurn & {
   channel?: QueuedTurnChannel
 }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
-type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
+type PendingTurnStart = {
+  acceptedAt: number
+  submission?: UserSubmission
+  /** How many Stops the chat had been asked for when this turn's prompt was sent. */
+  stopsBefore: number
+}
 type QueueDrain = { queueId: string; completedTurnId?: string }
 type TurnStartBarrier = { done: Promise<void>; release: () => void; turnCompleted?: boolean }
 /** How a prompt still on its way to its session hears a Stop; set once it starts listening. */
@@ -470,6 +475,11 @@ export class Orchestrator {
   #agentToolGrants = new Map<string, AgentToolsGrant>()
   #activeTurns = new Set<string>()
   #activeTurnIds = new Map<string, string>()
+  /**
+   * For each chat's active turn, how many Stops had been asked for when its prompt was sent.
+   * A Stop ends only a turn whose prompt came before it.
+   */
+  #activeTurnStopsBefore = new Map<string, number>()
   #serverOwnedUserTurns = new Set<string>()
   #suppressedUserItems = new Map<string, Set<string>>()
   #inFlightSubmissionIds = new Map<string, Set<string>>()
@@ -3403,6 +3413,9 @@ export class Orchestrator {
     if (event.type === 'turn.started') {
       this.#touchThreadRuntime(threadId)
       this.#addSidebarStatus(this.#activeTurns, threadId)
+      // A turn the agent began without a prompt of ours dates from now.
+      if (this.#activeTurnIds.get(threadId) !== event.turn.id)
+        this.#activeTurnStopsBefore.set(threadId, this.#stopRequests.get(threadId) ?? 0)
       this.#activeTurnIds.set(threadId, event.turn.id)
       this.#turnWrittenPaths.delete(threadId)
     }
@@ -3421,6 +3434,7 @@ export class Orchestrator {
       const activeTurnId =
         event.type === 'turn.completed' ? event.turnId : this.#activeTurnIds.get(threadId)
       this.#activeTurnIds.delete(threadId)
+      this.#activeTurnStopsBefore.delete(threadId)
       if (activeTurnId) this.#serverOwnedUserTurns.delete(userTurnKey(threadId, activeTurnId))
       this.#suppressedUserItems.delete(threadId)
       this.#recordedTurnDiffs.delete(threadId)
@@ -4770,7 +4784,8 @@ export class Orchestrator {
     // without any keeps the exact timing it had.
     const children = this.#subagents.stopFor(threadId)
     try {
-      this.#stopRequests.set(threadId, (this.#stopRequests.get(threadId) ?? 0) + 1)
+      const stopsBefore = this.#stopRequests.get(threadId) ?? 0
+      this.#stopRequests.set(threadId, stopsBefore + 1)
       // Only prompts already on their way when Stop came can start the turn it stops.
       const incoming = [...(this.#incomingSubmissions.get(threadId) ?? [])]
       // "Stop" on a thread that is not live must be a no-op, not an error the
@@ -4813,6 +4828,13 @@ export class Orchestrator {
       await barrier
       const entry = this.#threads.get(threadId)
       if (!entry) return
+      // While the Stop waited, the turn it was for may have ended and a prompt sent after the
+      // click started another. That one is not this Stop's to end.
+      if (
+        this.#activeTurnIds.has(threadId) &&
+        (this.#activeTurnStopsBefore.get(threadId) ?? 0) > stopsBefore
+      )
+        return
       // The chat shows the turn stopped now. An agent can take seconds to confirm a Stop,
       // or never do so, and the chat must not keep running behind "Stopping…" meanwhile.
       const stop = this.#settleStoppedTurn(threadId, entry)
@@ -5254,6 +5276,7 @@ export class Orchestrator {
     this.#deleteSidebarStatus(this.#activeTurns, threadId)
     const activeTurnId = this.#activeTurnIds.get(threadId)
     this.#activeTurnIds.delete(threadId)
+    this.#activeTurnStopsBefore.delete(threadId)
     if (activeTurnId) this.#serverOwnedUserTurns.delete(userTurnKey(threadId, activeTurnId))
     this.#suppressedUserItems.delete(threadId)
     this.#recordedTurnDiffs.delete(threadId)
@@ -5712,6 +5735,7 @@ export class Orchestrator {
     if (this.#pendingTurnStarts.get(threadId) !== pendingStart) return
     this.#pendingTurnStarts.delete(threadId)
     this.#activeTurnIds.set(threadId, turnId)
+    this.#activeTurnStopsBefore.set(threadId, pendingStart.stopsBefore)
     const starts = this.#acceptedTurnStarts.get(threadId) ?? new Map<string, PendingTurnStart>()
     starts.set(turnId, pendingStart)
     this.#acceptedTurnStarts.set(threadId, starts)
@@ -5723,9 +5747,15 @@ export class Orchestrator {
   #beginTurnStart(threadId: string, submission?: UserSubmission): PendingTurnStart {
     const sentAt = this.#resumedPromptSentAt.get(threadId)
     this.#resumedPromptSentAt.delete(threadId)
+    // A prompt on its way since before a Stop counts from when it was sent.
+    const tracked = this.#submissionStops.getStore()
     const pending = {
       acceptedAt: sentAt ?? Date.now(),
       ...(submission ? { submission } : {}),
+      stopsBefore:
+        tracked?.threadId === threadId
+          ? tracked.stopRequests
+          : (this.#stopRequests.get(threadId) ?? 0),
     }
     this.#pendingTurnStarts.set(threadId, pending)
     return pending
