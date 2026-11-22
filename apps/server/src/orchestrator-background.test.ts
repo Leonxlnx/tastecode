@@ -153,7 +153,7 @@ class TitleSession implements AgentSession {
   }
 }
 
-/** A chat's own session: it takes prompts, Design ones included, and never answers. */
+/** A chat's own session: it takes prompts and never answers. */
 class ChatSession implements AgentSession {
   readonly capabilities = { ...CAPABILITIES, images: true }
   readonly sent: string[] = []
@@ -735,42 +735,51 @@ describe('a new chat whose provider would name it', () => {
     return titling
   }
 
+  /** A project with a Design brief: every prompt goes out behind the follow-up notice. */
+  function addDesignBrief(root: string) {
+    mkdirSync(path.join(root, '.taste'))
+    writeFileSync(path.join(root, '.taste', 'brief.json'), '{}')
+  }
+
   it.each([false, true])(
-    'titles a Grok Design chat from the request, not its briefing (title asked on the way: %s)',
+    "titles a Grok chat from the request when a Design brief's preamble wraps its first prompt (title asked on the way: %s)",
     async (onItsWay) => {
       const setup = await newChat('grok')
-      const { orchestrator, store, threadId, chat, started, prompts } = setup
+      addDesignBrief(setup.root)
 
-      await expect(sendAndTitle(setup, [DESIGN_BRIEF_ATTACHMENT], onItsWay)).resolves.toEqual({
+      await expect(sendAndTitle(setup, [], onItsWay)).resolves.toEqual({
         title: 'Generated title',
         applied: true,
       })
 
-      // Grok got TasteCode's briefing, so its own name would describe that.
-      expect(chat.sent).toHaveLength(1)
-      expect(chat.sent[0]).not.toBe(request)
-      expect(prompts).toEqual([titlePrompt(request)])
-      expect(started).toEqual([{ provider: 'claude-code', model: 'claude-haiku-5-5' }])
-      expect(store.thread(threadId)?.title).toBe('Generated title')
+      // Grok got the notice in front of the words, so its own name would describe that.
+      expect(setup.chat.sent).toHaveLength(1)
+      expect(setup.chat.sent[0]).toMatch(/^This is an ordinary user turn/)
+      expect(setup.prompts).toEqual([titlePrompt(request)])
+      expect(setup.started).toEqual([{ provider: 'claude-code', model: 'claude-haiku-5-5' }])
+      expect(setup.store.thread(setup.threadId)?.title).toBe('Generated title')
       // History puts the provider's name in place only of a stand-in.
-      expect(store.provisionalTitle(threadId)).toBeUndefined()
-      expect(orchestrator.awaitsProviderTitle(threadId)).toBe(false)
+      expect(setup.store.provisionalTitle(setup.threadId)).toBeUndefined()
+      expect(setup.orchestrator.awaitsProviderTitle(setup.threadId)).toBe(false)
     },
   )
 
-  it("titles a Grok chat from the request when a Design brief's preamble wraps its first prompt", async () => {
-    const setup = await newChat('grok')
-    mkdirSync(path.join(setup.root, '.taste'))
-    writeFileSync(path.join(setup.root, '.taste', 'brief.json'), '{}')
+  it("keeps the stand-in when a Design brief's preamble goes out after the provider was left to name the chat", async () => {
+    const { orchestrator, store, threadId, chat, started, root } = await newChat('grok')
+    await expect(orchestrator.generateBackgroundTitle(threadId, request, standIn)).resolves.toEqual(
+      { title: standIn, applied: false },
+    )
+    expect(store.provisionalTitle(threadId)).toBe(standIn)
 
-    await expect(sendAndTitle(setup, [], false)).resolves.toEqual({
-      title: 'Generated title',
-      applied: true,
-    })
+    addDesignBrief(root)
+    await orchestrator.submitTurn(threadId, request)
 
-    expect(setup.chat.sent[0]).toMatch(/^This is an ordinary user turn/)
-    expect(setup.prompts).toEqual([titlePrompt(request)])
-    expect(setup.store.provisionalTitle(setup.threadId)).toBeUndefined()
+    expect(chat.sent).toHaveLength(1)
+    expect(chat.sent[0]).toMatch(/^This is an ordinary user turn/)
+    expect(store.thread(threadId)?.title).toBe(standIn)
+    expect(store.provisionalTitle(threadId)).toBeUndefined()
+    expect(orchestrator.awaitsProviderTitle(threadId)).toBe(false)
+    expect(started).toEqual([])
   })
 
   it.each([false, true])(
@@ -792,24 +801,8 @@ describe('a new chat whose provider would name it', () => {
     },
   )
 
-  it('keeps the stand-in when the Design briefing goes out after the provider was left to name the chat', async () => {
-    const { orchestrator, store, threadId, chat, started } = await newChat('grok')
-    await expect(orchestrator.generateBackgroundTitle(threadId, request, standIn)).resolves.toEqual(
-      { title: standIn, applied: false },
-    )
-    expect(store.provisionalTitle(threadId)).toBe(standIn)
-
-    await orchestrator.submitTurn(threadId, request, [DESIGN_BRIEF_ATTACHMENT])
-
-    expect(chat.sent).toHaveLength(1)
-    expect(store.thread(threadId)?.title).toBe(standIn)
-    expect(store.provisionalTitle(threadId)).toBeUndefined()
-    expect(orchestrator.awaitsProviderTitle(threadId)).toBe(false)
-    expect(started).toEqual([])
-  })
-
   it.each([false, true])(
-    'titles a Codex chat from the request as before (Design: %s)',
+    'titles a Codex chat from the request as before (old Design marker: %s)',
     async (design) => {
       const setup = await newChat('codex')
 

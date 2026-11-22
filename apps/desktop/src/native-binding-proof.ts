@@ -159,7 +159,6 @@ async function loadPackagedNativeModules(): Promise<PackagedNativeModules> {
   const runtimeEntries = Object.keys(dependencies)
     .filter((name) => name.startsWith('@harness/'))
     .map((name) => serverRequire.resolve(name))
-  runtimeEntries.push(path.join(serverDirectory, 'design-static-preview.js'))
   for (const entry of runtimeEntries) await import(pathToFileURL(entry).href)
   const pty: PtyModule = serverRequire('node-pty')
   const keyring: KeyringModule = serverRequire('@napi-rs/keyring')
