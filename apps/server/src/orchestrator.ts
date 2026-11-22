@@ -3698,7 +3698,13 @@ export class Orchestrator {
     }
     try {
       this.#latestUserPrompts.set(threadId, item.text)
-      await session.steer(threadId, item.text, item.attachments)
+      // A prompt queued with Design mode on carries TasteCode's brief marker. It is no
+      // file: an agent handed it as one tries to read tastecode://design-brief-v1.
+      await session.steer(
+        threadId,
+        item.text,
+        item.attachments.filter((attachment) => !isDesignBriefAttachment(attachment)),
+      )
       if (!current()) return
       // An acknowledged steer belongs to the captured turn even when that turn
       // finished before this continuation ran; restoring it would run it twice.
