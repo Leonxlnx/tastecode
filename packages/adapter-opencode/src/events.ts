@@ -382,7 +382,7 @@ function v2Usage(data: Record<string, JsonRpcValue>, model?: string): DomainEven
       outputTokens: normalizedOutput,
       reasoningTokens: reasoning,
       totalTokens: input + number(cache['read']) + number(cache['write']) + normalizedOutput,
-      costUsd: number(data['cost']),
+      ...(typeof data['cost'] === 'number' ? { costUsd: number(data['cost']) } : {}),
       inputIncludesCached: false,
     },
   }
