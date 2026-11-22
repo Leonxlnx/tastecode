@@ -507,6 +507,90 @@ describe('local usage history', () => {
     expect(history.totals.estimatedCostUsd).toBeCloseTo(0.08, 8)
   })
 
+  it('counts a session whose provider reports its cost once, without a price estimate on top', async () => {
+    const at = new Date('2026-08-08T10:00:00.000Z').getTime()
+    const model = 'gpt-5.6-luna'
+    // An ACP agent's turn: tokens without a cost at the end of the turn, then the
+    // session's running cost with no tokens.
+    const turnTokens = (threadId: string, offset: number) => ({
+      threadId,
+      provider: 'acp' as const,
+      at: at + offset,
+      usage: {
+        inputTokens: 1_000,
+        cachedInputTokens: 200,
+        outputTokens: 100,
+        reasoningTokens: 0,
+        totalTokens: 1_100,
+        model,
+        inputIncludesCached: true,
+      },
+    })
+    const sessionCost = (threadId: string, offset: number, costUsd: number) => ({
+      threadId,
+      provider: 'acp' as const,
+      at: at + offset,
+      usage: {
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: 40_000,
+        model,
+        cumulative: true,
+        contextWindow: 200_000,
+        costUsd,
+      },
+    })
+    const history = async (events: StoredUsageEvent[]) => {
+      const root = temporaryDirectory()
+      return settledHistory(
+        usageService({
+          cacheFile: path.join(root, 'cache', 'usage.json'),
+          sourceRoots: {
+            codex: path.join(root, 'missing-codex'),
+            'claude-code': path.join(root, 'missing-claude'),
+          },
+          harnessUsage: () => events,
+          now: () => new Date('2026-08-08T12:00:00.000Z'),
+        }),
+        '7d',
+      )
+    }
+
+    const unreported = await history([turnTokens('estimated', 0)])
+    const estimate = unreported.totals.estimatedCostUsd
+    expect(estimate).toBeGreaterThan(0)
+    expect(unreported.totals.pricedTokens).toBe(1_100)
+
+    const reported = await history([
+      turnTokens('reported', 0),
+      sessionCost('reported', 1, 0.25),
+      turnTokens('reported', 2),
+      sessionCost('reported', 3, 0.4),
+      turnTokens('estimated', 4),
+    ])
+    expect(reported.totals).toMatchObject({
+      uncachedInputTokens: 2_400,
+      cachedInputTokens: 600,
+      outputTokens: 300,
+      processedTokens: 3_300,
+      providerReportedTokens: 2_200,
+      pricedTokens: 1_100,
+      unpricedTokens: 0,
+    })
+    expect(reported.totals.providerReportedCostUsd).toBeCloseTo(0.4, 8)
+    expect(reported.totals.estimatedCostUsd).toBeCloseTo(0.4 + estimate, 8)
+    const day = reported.daily.find((entry) => entry.date === '2026-08-08')!
+    expect(day.totals.estimatedCostUsd).toBeCloseTo(0.4 + estimate, 8)
+    expect(day.providers).toEqual([
+      { provider: 'acp', tokens: 3_300, estimatedCostUsd: expect.closeTo(0.4 + estimate, 8) },
+    ])
+    expect(reported.models).toHaveLength(1)
+    expect(reported.models[0]!.totals.estimatedCostUsd).toBeCloseTo(0.4 + estimate, 8)
+    expect(reported.providers[0]!.totals.estimatedCostUsd).toBeCloseTo(0.4 + estimate, 8)
+  })
+
   it('prices public Grok and Gemini models with cache and long-context rates', async () => {
     const root = temporaryDirectory()
     const at = new Date('2026-08-08T10:00:00.000Z').getTime()
