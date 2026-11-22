@@ -216,6 +216,7 @@ import {
   composerDraftKey,
   isEmptyComposerDraft,
   NEW_CHAT_DRAFT_KEY,
+  parkedNewChatDraftKey,
   type ComposerDraft,
 } from './composer-drafts.js'
 import type { ComposerResource } from './ui/ComposerResourcePicker.js'
@@ -350,6 +351,8 @@ const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 /** Creatify for a chat without a saved model setup, which keeps the choice otherwise. */
 const CREATIFY_BY_THREAD_PREFIX = 'harness.creatifyByThread:'
 const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
+/** The project whose New chat draft is the one under NEW_CHAT_DRAFT_KEY. */
+const NEW_CHAT_DRAFT_PROJECT_KEY = 'harness.newChatDraftProject'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const EMPTY_PROVIDER_ROSTER: ProviderRoster = []
 const NO_STOPPING_ROWS: ReadonlyMap<string, number> = new Map()
@@ -2080,23 +2083,74 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     },
     [publishComposerDraft],
   )
-  /** The project the new-chat draft was written for; another project starts without it. */
-  const newChatDraftProject = useRef<string | undefined>(undefined)
+  /**
+   * The project whose New chat draft is the live one. Every project keeps its own: the
+   * draft of a project New chat is not showing waits under parkedNewChatDraftKey, and it
+   * is saved which project the live one belongs to, so a restart shows each under its own.
+   */
+  const newChatDraftProject = useRef<string | undefined>(
+    readSetting(NEW_CHAT_DRAFT_PROJECT_KEY) ?? undefined,
+  )
+  /** Where a project's New chat draft is right now: live, or waiting for its project. */
+  const newChatDraftSlot = useCallback((projectPath: string) => {
+    const owner = newChatDraftProject.current ?? activePathRef.current
+    return owner === undefined || owner === projectPath
+      ? NEW_CHAT_DRAFT_KEY
+      : parkedNewChatDraftKey(projectPath)
+  }, [])
   const enterNewChatDraft = useCallback(
     (projectPath: string) => {
       // Until a draft is tied to a project, it is the one on screen's.
-      const owner = newChatDraftProject.current ?? activePathRef.current
-      newChatDraftProject.current = projectPath
-      if (owner === undefined || owner === projectPath) return
-      const next = threadController.editDraft(NEW_CHAT_DRAFT_KEY, {
-        text: '',
-        attachments: [],
-        resources: [],
+      const known = newChatDraftProject.current
+      const owner = known ?? activePathRef.current
+      if (known !== projectPath) {
+        newChatDraftProject.current = projectPath
+        writeSetting(NEW_CHAT_DRAFT_PROJECT_KEY, projectPath)
+      }
+      if (owner === undefined || owner === projectPath) {
+        if (known !== undefined) return
+        // The live draft becomes this project's; one it left waiting is joined to it.
+        const waitingKey = parkedNewChatDraftKey(projectPath)
+        const waiting = !isEmptyComposerDraft(threadController.draft(waitingKey))
+        threadController.joinDraft(waitingKey, NEW_CHAT_DRAFT_KEY)
+        setDesignModes((current) => {
+          if (!(waitingKey in current)) return current
+          const {
+            [waitingKey]: back = false,
+            [NEW_CHAT_DRAFT_KEY]: live = false,
+            ...rest
+          } = current
+          return { ...rest, [NEW_CHAT_DRAFT_KEY]: live || back }
+        })
+        if (waiting && activeIdRef.current === undefined)
+          publishComposerDraft(threadController.draft(NEW_CHAT_DRAFT_KEY))
+        return
+      }
+      // The project left keeps its draft and its Creatify choice; this one gets its own back.
+      threadController.joinDraft(NEW_CHAT_DRAFT_KEY, parkedNewChatDraftKey(owner))
+      threadController.joinDraft(parkedNewChatDraftKey(projectPath), NEW_CHAT_DRAFT_KEY)
+      setDesignModes((current) => {
+        const {
+          [NEW_CHAT_DRAFT_KEY]: left = false,
+          [parkedNewChatDraftKey(projectPath)]: back = false,
+          ...rest
+        } = current
+        return {
+          ...rest,
+          ...(left ? { [parkedNewChatDraftKey(owner)]: true } : {}),
+          [NEW_CHAT_DRAFT_KEY]: back,
+        }
       })
-      if (activeIdRef.current === undefined) publishComposerDraft(next)
+      if (activeIdRef.current === undefined)
+        publishComposerDraft(threadController.draft(NEW_CHAT_DRAFT_KEY))
     },
     [publishComposerDraft],
   )
+  // Whichever way the shown project changes (a chat of another project, the first
+  // list after a start), New chat's live draft is that project's.
+  useEffect(() => {
+    if (activePath !== undefined) enterNewChatDraft(activePath)
+  }, [activePath, enterNewChatDraft])
   const handleComposerReady = useCallback(() => {
     restoreComposerDraft(composerDraftKey(activeIdRef.current))
   }, [restoreComposerDraft])
@@ -4671,9 +4725,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         const laterDraft = threadController.draft(provisionalId)
         threadController.forgetDraft(provisionalId)
         if (!isEmptyComposerDraft(laterDraft)) {
-          newChatDraftProject.current = projectPath
-          const recovered = threadController.recoverDraft(NEW_CHAT_DRAFT_KEY, laterDraft)
-          threadController.editDraft(NEW_CHAT_DRAFT_KEY, {
+          // Back to its own project's New chat, which may not be the one on screen now.
+          const slot = newChatDraftSlot(projectPath)
+          const recovered = threadController.recoverDraft(slot, laterDraft)
+          threadController.editDraft(slot, {
             resources: [...recovered.resources, ...laterDraft.resources],
           })
         }
@@ -4711,20 +4766,18 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const beginSession = useCallback(
     (projectPath: string, draft?: string) => {
       setSurface('chat')
+      enterNewChatDraft(projectPath)
       if (draft !== undefined) {
-        const next = threadController.editDraft(NEW_CHAT_DRAFT_KEY, {
+        // Added to what is drafted there already: an unsent prompt is never replaced.
+        const next = threadController.recoverDraft(NEW_CHAT_DRAFT_KEY, {
           text: draft,
           attachments: [],
-          resources: [],
         })
         threadController.draftOwner = NEW_CHAT_DRAFT_KEY
         composerDraftKeyRef.current = NEW_CHAT_DRAFT_KEY
         injectedDraftTransition.current = activeIdRef.current !== undefined
         publishComposerDraft(next)
-        newChatDraftProject.current = projectPath
-      } else enterNewChatDraft(projectPath)
-      // Creatify is a choice for one chat; the next new chat starts without it.
-      setThreadDesignMode(undefined, false)
+      }
       setNotice(undefined)
       setActionError(undefined)
       setActivePath(projectPath)
@@ -4744,7 +4797,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       }
       setComposerFocusRequest((request) => request + 1)
     },
-    [publishComposerDraft, applyProviderDefault, setThreadDesignMode, enterNewChatDraft],
+    [publishComposerDraft, applyProviderDefault, enterNewChatDraft],
   )
 
   const updateQueue = useCallback(
@@ -4799,8 +4852,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       const restoreDraft = () =>
         restoreRejectedDraft(composerDraftKey(activeId), { text, attachments })
       const restoreDraftAfterFailedStart = () => {
-        if (activePath) newChatDraftProject.current = activePath
-        restoreRejectedDraft(NEW_CHAT_DRAFT_KEY, { text, attachments })
+        const slot = activePath ? newChatDraftSlot(activePath) : NEW_CHAT_DRAFT_KEY
+        restoreRejectedDraft(slot, { text, attachments })
+        return slot
       }
       if (activeId) pendingDeletionChecks.current.delete(activeId)
       if (askFirstBlockRef.current) {
@@ -4964,9 +5018,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
             publishThread(provisionalId, next)
           }
           releasePendingStart()
-          restoreDraftAfterFailedStart()
+          const slot = restoreDraftAfterFailedStart()
           // The words return to the new chat's composer, and with them the Creatify choice.
-          setThreadDesignMode(undefined, designMode)
+          // When another project is on screen by now, both wait for their own project.
+          if (slot === NEW_CHAT_DRAFT_KEY) setThreadDesignMode(undefined, designMode)
+          else setDesignModes((current) => ({ ...current, [slot]: designMode }))
           return
         }
         workspaceStartId = threadId
@@ -6627,7 +6683,16 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       }
       void transport
         .request('projects.remove', { path })
-        .then(refreshProjects)
+        .then(() => {
+          // A removed project's waiting New chat draft has nowhere to show any more.
+          threadController.forgetDraft(parkedNewChatDraftKey(path))
+          // Its live one goes to the project shown next.
+          if (newChatDraftProject.current === path) {
+            newChatDraftProject.current = undefined
+            removeSetting(NEW_CHAT_DRAFT_PROJECT_KEY)
+          }
+          return refreshProjects()
+        })
         .catch((error) => {
           removedProjectPaths.current.delete(path)
           reportError(error instanceof Error ? error.message : String(error))
