@@ -909,6 +909,7 @@ describe('Claude Code saved history', { timeout: 20_000 }, () => {
                   type: 'image',
                   source: { type: 'base64', media_type: 'image/png', data: 'AA==' },
                 },
+                { type: 'image', file_path: 'shots/after.png' },
               ],
             },
           ],
@@ -919,11 +920,13 @@ describe('Claude Code saved history', { timeout: 20_000 }, () => {
     const result = items(await f.source.read((await f.source.list())[0]!)).find(
       (item) => item.id === 'a1:0',
     )
+    // An inline image on a tool result is never shown and live items carry none;
+    // a file reference stays.
     expect(result).toMatchObject({
       type: 'file_change',
       path: 'src/example.ts',
       status: 'completed',
-      attachments: ['data:image/png;base64,AA=='],
+      attachments: ['shots/after.png'],
     })
     expect(result?.text).toMatch(/-before\n\+after$/)
     expect(result?.text).not.toContain('base64')
