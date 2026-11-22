@@ -3156,6 +3156,10 @@ export class Store {
     }
   }
 
+  /**
+   * A saved run of the removed Design mode. Nothing in the app reads or writes these any
+   * more; old rows stay until their chat is deleted, and tests seed them to prove that.
+   */
   setDesignRun(threadId: string, payload: unknown): void {
     this.#db
       .prepare(
@@ -3172,10 +3176,6 @@ export class Store {
     )
     if (!row) return undefined
     return parseJsonValue(row.payload)
-  }
-
-  deleteDesignRun(threadId: string): void {
-    this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(threadId)
   }
 
   // ---- queued turns -----------------------------------------------------
