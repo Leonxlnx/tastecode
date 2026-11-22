@@ -16343,6 +16343,33 @@ describe('split view', () => {
     await waitFor(() => expect(lastComposer(false).threadId).toBe('left-thread'))
     expect(lastComposer(true).threadId).toBe('right-thread')
   })
+  it('shows a prompt the server sent back in its own pane after focus moved away', async () => {
+    const request = transport.request.getMockImplementation()!
+    let rejectSend!: (error: Error) => void
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.sendTurn' && rpcCount('thread.sendTurn') === 1)
+        return new Promise((_resolve, reject) => (rejectSend = reject))
+      return request(method, params)
+    })
+    await openSplit()
+    const composerIn = (title: string) =>
+      within(pane(title)).getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    fireEvent.change(composerIn('Left chat'), { target: { value: 'Words for the left chat' } })
+    fireEvent.keyDown(composerIn('Left chat'), { key: 'Enter' })
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+
+    // Focus moves to the other pane before the server turns the prompt down.
+    fireEvent.pointerDown(transcriptIn('Right chat'), { button: 0 })
+    await waitFor(() => expect(isFocused('Right chat')).toBe(true))
+    act(() => rejectSend(new Error('rejected')))
+
+    await waitFor(() => expect(composerIn('Left chat').value).toBe('Words for the left chat'))
+    fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    expect(composerIn('Left chat').value).toBe('Words for the left chat')
+  })
   it('answers an approval in the unfocused pane on that pane’s chat', async () => {
     await openSplit()
     act(() => threadPropsById.get('left-thread')!.onDecide('approval-1', 'approve'))
