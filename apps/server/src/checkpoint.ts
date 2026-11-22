@@ -68,12 +68,16 @@ export class RestoreSnapshotError extends AggregateError {
  * `retainIn` also keeps the snapshot as a checkpoint of that namespace (see
  * retainCheckpoint), written in the same git run as the reference that
  * protects it.
+ *
+ * `ignoredFiles` (relative to the checkout root) are captured although Git
+ * ignores them.
  */
 export async function takeSnapshot(
   repoPath: string,
-  options: { retainIn?: string } = {},
+  options: { retainIn?: string; ignoredFiles?: readonly string[] } = {},
 ): Promise<Snapshot> {
   const retainIn = options.retainIn
+  const ignoredFiles = options.ignoredFiles ?? []
   if (retainIn !== undefined && !/^[a-zA-Z0-9-]+$/.test(retainIn))
     throw new Error('invalid checkpoint namespace')
   const scope = path.relative(canonicalCheckoutRoot(repoPath), realpathSync(repoPath)) || '.'
@@ -84,7 +88,12 @@ export async function takeSnapshot(
   const [base, status] = await Promise.all([snapshotBase(repoPath), cleanStatus(repoPath, scope)])
   // Before the first commit there is no HEAD; snapshots then start from the empty tree.
   const head = base.head
-  if (head && status === '' && (await indexTrustsWorkingTree(repoPath))) {
+  if (
+    head &&
+    status === '' &&
+    ignoredFiles.length === 0 &&
+    (await indexTrustsWorkingTree(repoPath))
+  ) {
     await protectSnapshot(repoPath, head, retainIn)
     return { commit: head, clean: true }
   }
@@ -146,16 +155,23 @@ export async function takeSnapshot(
     ]
     // Through stdin: one pathspec per nested repository could outgrow the
     // Windows command line.
-    await new Promise<void>((resolve, reject) => {
-      const child = execFile(
-        'git',
-        ['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'],
-        { cwd: repoPath, env, windowsHide: true, timeout: 60_000 },
-        (error) => (error ? reject(error) : resolve()),
+    const add = (flag: string, specs: readonly string[]) =>
+      new Promise<void>((resolve, reject) => {
+        const child = execFile(
+          'git',
+          ['add', flag, '--pathspec-from-file=-', '--pathspec-file-nul'],
+          { cwd: repoPath, env, windowsHide: true, timeout: 60_000 },
+          (error) => (error ? reject(error) : resolve()),
+        )
+        child.stdin?.on('error', reject)
+        child.stdin?.end(specs.join('\0') + '\0')
+      })
+    await add('-A', pathspecs)
+    if (ignoredFiles.length > 0)
+      await add(
+        '--force',
+        ignoredFiles.map((file) => `:(literal)${file}`),
       )
-      child.stdin?.on('error', reject)
-      child.stdin?.end(pathspecs.join('\0') + '\0')
-    })
     const { stdout: tree } = await run('git', ['write-tree'], {
       cwd: repoPath,
       env,
@@ -361,10 +377,22 @@ export async function restoreSnapshot(
   commit: string,
   namespace?: string,
 ): Promise<Snapshot> {
-  const replaced = await takeSnapshot(repoPath, namespace ? { retainIn: namespace } : {})
+  const folder = repoPath
+  let replaced = await takeSnapshot(folder)
   const scope = path.relative(canonicalCheckoutRoot(repoPath), realpathSync(repoPath)) || '.'
   repoPath = canonicalCheckoutRoot(repoPath)
   assertCommit(commit)
+
+  // `add -A` leaves out a file that became ignored after the checkpoint, yet
+  // the restore below overwrites it with the checkpoint's version. The
+  // snapshot of what the restore replaces has to hold it.
+  const ignoredSince = await ignoredSinceCheckpoint(repoPath, commit, replaced.commit, scope)
+  if (ignoredSince.length > 0)
+    replaced = await takeSnapshot(folder, {
+      ...(namespace ? { retainIn: namespace } : {}),
+      ignoredFiles: ignoredSince,
+    })
+  else if (namespace) await retainCheckpoint(repoPath, namespace, replaced.commit)
 
   // Anything that exists now and did not exist at the checkpoint. Computed
   // against the snapshot we just took rather than the live tree, so untracked
@@ -396,6 +424,11 @@ export async function restoreSnapshot(
     `:(literal)${scope}`,
   ])
   if (rollbackAdded === undefined) throw new Error('could not list files for restore rollback')
+  const blocking = await folderNoSnapshotHolds(repoPath, commit, replaced.commit, scope)
+  if (blocking !== undefined)
+    throw new Error(
+      `Cannot restore: "${blocking}" is a folder now and holds files or a repository that no checkpoint can bring back. Move the folder elsewhere, then restore again.`,
+    )
   try {
     await restoreTree(repoPath, commit, scope, added)
   } catch (error) {
@@ -408,6 +441,51 @@ export async function restoreSnapshot(
   }
 
   return replaced
+}
+
+/**
+ * Files a checkpoint holds that a later snapshot of the same checkout does
+ * not, although they are on disk: Git ignores them now. A path below a
+ * symbolic link stays out; `git add` refuses it and the restore would fail.
+ */
+async function ignoredSinceCheckpoint(
+  root: string,
+  checkpoint: string,
+  snapshot: string,
+  scope: string,
+): Promise<string[]> {
+  const missing = await git(root, [
+    'diff',
+    '--no-renames',
+    '--name-only',
+    '-z',
+    '--diff-filter=D',
+    checkpoint,
+    snapshot,
+    '--',
+    `:(literal)${scope}`,
+  ])
+  if (missing === undefined) throw new Error('could not list files to restore')
+  const folders = new Map<string, Promise<boolean>>()
+  const realFolder = (folder: string): Promise<boolean> => {
+    if (folder === '.') return Promise.resolve(true)
+    let known = folders.get(folder)
+    if (known === undefined) {
+      known = (async () => {
+        const entry = await lstat(path.join(root, folder)).catch(() => undefined)
+        return entry?.isDirectory() === true && (await realFolder(path.posix.dirname(folder)))
+      })()
+      folders.set(folder, known)
+    }
+    return known
+  }
+  const files: string[] = []
+  for (const file of missing.split('\0').filter(Boolean)) {
+    if (!(await realFolder(path.posix.dirname(file)))) continue
+    const entry = await lstat(path.join(root, file)).catch(() => undefined)
+    if (entry !== undefined && !entry.isDirectory()) files.push(file)
+  }
+  return files
 }
 
 async function restoreTree(
@@ -433,6 +511,66 @@ async function restoreTree(
     windowsHide: true,
     timeout: 60_000,
   })
+}
+
+/**
+ * The first file of a checkpoint whose path is a folder now, holding something
+ * the snapshot of the current state leaves out: ignored files, a nested
+ * repository or a submodule. To write the file, `git restore` deletes the
+ * whole folder, and nothing could bring those back.
+ */
+async function folderNoSnapshotHolds(
+  root: string,
+  checkpoint: string,
+  snapshot: string,
+  scope: string,
+): Promise<string | undefined> {
+  // Deleted, or changed type: a file the snapshot holds as a submodule's gitlink.
+  const replaced = await git(root, [
+    'diff',
+    '--no-renames',
+    '--name-only',
+    '-z',
+    '--diff-filter=DT',
+    checkpoint,
+    snapshot,
+    '--',
+    `:(literal)${scope}`,
+  ])
+  if (replaced === undefined) throw new Error('could not list files to restore')
+  for (const file of replaced.split('\0').filter(Boolean)) {
+    if (!(await lstat(path.join(root, file)).catch(() => undefined))?.isDirectory()) continue
+    const inside = `:(literal)${file}/`
+    const ignored = await git(root, [
+      'ls-files',
+      '--others',
+      '--ignored',
+      '--exclude-standard',
+      '--directory',
+      '-z',
+      '--',
+      inside,
+    ])
+    // Untracked nested repositories are listed as folders, ending in "/".
+    const untracked = await git(root, [
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '-z',
+      '--',
+      inside,
+    ])
+    const tracked = await git(root, ['ls-files', '--stage', '-z', '--', inside])
+    if (ignored === undefined || untracked === undefined || tracked === undefined)
+      throw new Error('could not list files to restore')
+    if (
+      ignored !== '' ||
+      untracked.split('\0').some((entry) => entry.endsWith('/')) ||
+      tracked.split('\0').some((entry) => entry.startsWith('160000 '))
+    )
+      return file
+  }
+  return undefined
 }
 
 /** Files that differ between a snapshot and the working tree right now. */
@@ -470,19 +608,29 @@ export async function patchSince(
   const root = canonicalCheckoutRoot(repoPath)
   const scope = path.relative(root, realpathSync(repoPath))
   const posix = (value: string) => value.split(path.sep).join('/')
-  const out = await git(root, [
-    'diff',
-    '--binary',
-    '--no-color',
-    '--no-ext-diff',
-    ...(scope === '' ? [] : [`--relative=${posix(scope)}`]),
-    commit,
-    now.commit,
-    '--',
-    ...files.map((file) => `:(literal)${posix(path.join(scope, file))}`),
-  ])
+  const out = await git(
+    root,
+    [
+      'diff',
+      '--binary',
+      '--no-color',
+      '--no-ext-diff',
+      // Undo applies this patch in reverse: the user's diff.noprefix or a textconv
+      // driver would give it headers or contents git apply cannot read back.
+      '--no-textconv',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
+      ...(scope === '' ? [] : [`--relative=${posix(scope)}`]),
+      commit,
+      now.commit,
+      '--',
+      ...files.map((file) => `:(literal)${posix(path.join(scope, file))}`),
+    ],
+    // A binary hunk ends in an empty line; trimmed, git apply calls the patch corrupt.
+    { untrimmed: true },
+  )
   if (out === undefined) return undefined
-  return out === '' ? '' : `${out}\n`
+  return out.trim() === '' ? '' : out
 }
 
 const protectedSnapshots = new Map<string, { repoPath: string; commit: string }>()
@@ -629,7 +777,11 @@ export async function syncCheckpointRefs(
   }
 }
 
-async function git(cwd: string, args: string[]): Promise<string | undefined> {
+async function git(
+  cwd: string,
+  args: string[],
+  { untrimmed = false }: { untrimmed?: boolean } = {},
+): Promise<string | undefined> {
   try {
     // Path lists after an agent generated thousands of files outgrow Node's
     // 1 MiB default, and the failed call would make undo unavailable.
@@ -639,7 +791,7 @@ async function git(cwd: string, args: string[]): Promise<string | undefined> {
       timeout: 20000,
       maxBuffer: 256 * 1024 * 1024,
     })
-    return args.includes('-z') ? stdout : stdout.trim()
+    return untrimmed || args.includes('-z') ? stdout : stdout.trim()
   } catch {
     return undefined
   }

@@ -410,8 +410,13 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   searchJumpRef.current = props.searchJump
   const searchJumpDone = useRef(props.onSearchJumpDone)
   searchJumpDone.current = props.onSearchJumpDone
+  /** The message field find was opened from, given its focus back when find closes. */
+  const findOpener = useRef<HTMLElement | null>(null)
   const closeFind = useCallback(() => {
     setFinding(false)
+    const opener = findOpener.current
+    findOpener.current = null
+    if (opener?.isConnected) opener.focus()
     const jump = searchJumpRef.current
     // A search jump still waiting for its turn keeps the read it shares with find.
     if (!jump || completedSearchJump.current === jump.request) cancelComplete()
@@ -905,9 +910,14 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   useEffect(() => {
     if (props.keyboardActive === false) return
     const onKey = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target)) return
+      // The chat's own message field has focus most of the time, and the key means
+      // nothing there; every other text field keeps it.
+      if (isEditableTarget(event.target) && !isChatComposerField(event.target)) return
       if (matchesShortcut(event, FIND_IN_CHAT_SHORTCUT)) {
         event.preventDefault()
+        findOpener.current = isChatComposerField(event.target)
+          ? (event.target as HTMLElement)
+          : null
         setFinding(true)
       }
     }
@@ -3273,11 +3283,13 @@ function toolCallHeadline(item: Item): string {
 /**
  * Tool names some agents use for reading and searching read as verbs. Any
  * other identifier stays exactly as the agent named it: `cua_repl.js` is a
- * tool, not "Cua repl.js".
+ * tool, not "Cua repl.js". The match is exact: Claude's `Grep` is an
+ * identifier like its `Read` and `Glob`, and a bare "Searched" would then be
+ * taken for one too and read "Used Searched".
  */
 function humanToolHeadline(raw: string): string {
   const space = raw.indexOf(' ')
-  const token = (space === -1 ? raw : raw.slice(0, space)).toLowerCase()
+  const token = space === -1 ? raw : raw.slice(0, space)
   const rest = space === -1 ? '' : raw.slice(space + 1)
   if (token === 'read_file') return rest ? `Read ${rest}` : 'Read file'
   if (token === 'grep' || token === 'codebase_search') {
@@ -3308,7 +3320,9 @@ function toolCallRowLabel(item: Item): string {
     const query = webSearchQuery(item)
     return query ? `Searched the web for “${query}”` : 'Searched the web'
   }
-  if (headline === 'Tool call' || !looksLikeIdentifier(headline)) return headline
+  // A read or search tool's name already became a verb ("Searched"), not an identifier.
+  const asVerb = headline !== parseToolCall(item.text).name
+  if (headline === 'Tool call' || asVerb || !looksLikeIdentifier(headline)) return headline
   const verb =
     item.status === 'failed' ? 'Failed' : item.status === 'started' ? 'Interrupted' : 'Used'
   const snippet = toolCallSnippet(item, headline)
@@ -3731,7 +3745,8 @@ function webSearchQuery(item: Item): string | undefined {
 function commandLabel(command: string | undefined): string {
   const text = inlineActivityText(command)
   const wrapped = /^(?:\S*[\\/])?(?:ba|z)?sh(?:\.exe)? -l?c (['"])([\s\S]*)\1$/.exec(text)
-  const inner = wrapped?.[2]?.trim() || powerShellCommand(text) || text
+  const inner =
+    (wrapped && unquotedPayload(wrapped[1], wrapped[2])) || powerShellCommand(text) || text
   // Claude Code starts many commands with `cd "<absolute project path>" &&`.
   // In a one-line row that path used up the width and the part that does the
   // work was cut off, so the label starts at the command after it. A relative
@@ -3746,10 +3761,16 @@ function commandLabel(command: string | undefined): string {
  */
 function powerShellCommand(text: string): string | undefined {
   const wrapped = POWERSHELL_WRAPPER.exec(text)
-  if (!wrapped) return undefined
-  const [, quote, payload = ''] = wrapped
-  // A double-quoted payload escapes `"`, `\`, `$` and backticks with a backslash;
-  // a single-quoted one closes, quotes and reopens around each `'` it contains.
+  return wrapped ? unquotedPayload(wrapped[1], wrapped[2]) : undefined
+}
+
+/**
+ * The command inside a wrapper's quotes, as it ran. The line is joined
+ * POSIX-style whatever the shell: a double-quoted payload escapes `"`, `\`,
+ * `$` and backticks with a backslash; a single-quoted one closes, quotes and
+ * reopens around each `'` it contains.
+ */
+function unquotedPayload(quote: string | undefined, payload = ''): string | undefined {
   const inner =
     quote === '"' ? payload.replace(/\\(["\\$`])/g, '$1') : payload.replace(/'"'"'|'\\''/g, "'")
   return inner.trim() || undefined
@@ -3760,6 +3781,15 @@ const POWERSHELL_WRAPPER =
 
 const LEADING_ABSOLUTE_CD =
   /^cd(?:\s+\/d)?\s+(?:"(?:[a-z]:|[\\/~])[^"]*"|'(?:[a-z]:|[\\/~])[^']*'|(?:[a-z]:|[\\/~])[^\s;&|]*)\s*(?:&&|;)\s*/i
+
+/** The message field of the chat on the stage, not a Temporary chat's in the workspace panel. */
+function isChatComposerField(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLTextAreaElement &&
+    target.closest('.composer') !== null &&
+    target.closest('.workspace-side-chat') === null
+  )
+}
 
 function inlineActivityText(text: string | undefined): string {
   return text?.replace(/\s+/g, ' ').trim() ?? ''

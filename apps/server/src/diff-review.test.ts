@@ -20,6 +20,7 @@ import {
   StaleDiffSnapshotError,
 } from './diff-review.js'
 import { SessionDiffSchema } from '@harness/contracts'
+import { patchSince, takeSnapshot } from './checkpoint.js'
 import { gitRepositoryTemplate, removeTestFolder } from './git-fixture.test-support.js'
 import { Store } from './store.js'
 
@@ -379,6 +380,79 @@ describe('structured diff review', () => {
 
     expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe(lines())
     expect(readFileSync(path.join(repo, 'unrelated.txt'), 'utf8')).toBe('keep this\n')
+  })
+
+  describe('in a project that is a subfolder of its repository', () => {
+    let nested: string
+    beforeEach(() => {
+      nested = path.join(repo, 'nested project')
+      mkdirSync(nested)
+      writeFileSync(path.join(nested, 'app.txt'), lines())
+      git('add', '.')
+      git('commit', '-m', 'nested')
+      writeFileSync(path.join(nested, 'app.txt'), lines({ 2: 'agent change' }))
+    })
+
+    it('reverses a patch with paths relative to the project folder', async () => {
+      // Checkpoint turn diffs and imported Codex turns name files this way.
+      const patch = git('diff', '--binary', '--no-color', '--relative=nested project')
+      expect(patch).toContain('diff --git a/app.txt b/app.txt')
+
+      await reverseUnifiedDiff(nested, patch)
+
+      expect(readFileSync(path.join(nested, 'app.txt'), 'utf8')).toBe(lines())
+    })
+
+    it('undoes the turn diff a checkpoint recorded', async () => {
+      writeFileSync(path.join(nested, 'app.txt'), lines())
+      const start = await takeSnapshot(nested)
+      writeFileSync(path.join(nested, 'app.txt'), lines({ 2: 'agent change' }))
+      writeFileSync(path.join(nested, 'created.txt'), 'created\n')
+      const patch = await patchSince(nested, start.commit, ['app.txt', 'created.txt'])
+
+      await reverseUnifiedDiff(nested, patch!)
+
+      expect(readFileSync(path.join(nested, 'app.txt'), 'utf8')).toBe(lines())
+      expect(existsSync(path.join(nested, 'created.txt'))).toBe(false)
+    })
+
+    it('reverses a patch with paths relative to the repository', async () => {
+      const patch = git('diff', '--binary', '--no-color')
+
+      await reverseUnifiedDiff(nested, patch)
+
+      expect(readFileSync(path.join(nested, 'app.txt'), 'utf8')).toBe(lines())
+    })
+
+    it('rejects one hunk', async () => {
+      const initial = await readSessionDiff(nested, 'thread-1', store)
+      const file = initial.files[0]!
+      expect(file.path).toBe('nested project/app.txt')
+
+      await reviewDiffHunk(
+        nested,
+        'thread-1',
+        initial.version,
+        file.path,
+        file.hunks[0]!.id,
+        'reject',
+        store,
+      )
+
+      expect(readFileSync(path.join(nested, 'app.txt'), 'utf8')).toBe(lines())
+    })
+
+    it('does not report an undo that changed nothing', async () => {
+      writeFileSync(path.join(repo, 'file.txt'), lines({ 3: 'outside the project' }))
+      const patch = git('diff', '--binary', '--no-color', '--', 'file.txt')
+
+      await expect(reverseUnifiedDiff(nested, patch)).rejects.toThrow(
+        'Could not apply diff decision',
+      )
+      expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe(
+        lines({ 3: 'outside the project' }),
+      )
+    })
   })
 
   it("keeps Git's own reason as the cause when a patch no longer applies", async () => {

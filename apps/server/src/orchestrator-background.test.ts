@@ -493,6 +493,43 @@ describe('background title source discovery', () => {
     )
   })
 
+  it('reads and starts only the providers the user added', async () => {
+    const { orchestrator, store, title, started } = harness()
+    store.setProviderRoster(['codex', 'acp:kimi'])
+
+    await expect(title()).resolves.toEqual({ title: 'Generated title', applied: true })
+    const settings = await orchestrator.backgroundModelSettings()
+
+    expect(started).toEqual([{ provider: 'codex', model: 'gpt-5.6-luna' }])
+    expect(settings.sources.map((source) => source.id)).toEqual(['codex'])
+    expect(settings.resolved).toMatchObject({ provider: 'codex', model: 'gpt-5.6-luna' })
+    expect(vendor.calls).not.toContain('account:claude-code')
+    expect(vendor.calls).not.toContain('account:grok')
+  })
+
+  it('writes nothing in the background before the user added a provider', async () => {
+    const { orchestrator, store, title, started, customHarnesses } = harness()
+    store.setProviderRoster([])
+
+    await expect(title()).rejects.toThrow('Connect a provider')
+    expect((await orchestrator.backgroundModelSettings()).sources).toEqual([])
+    expect(started).toEqual([])
+    expect(vendor.calls).toEqual([])
+
+    // A custom harness is the user's own addition, outside the roster.
+    customHarnesses.upsert({
+      id: 'fork',
+      displayName: 'Grok fork',
+      provider: 'grok',
+      command: 'grok-fork',
+      args: [],
+    })
+    vendor.models.set('grok:fork', [model('grok-4.6')])
+    expect(
+      (await orchestrator.backgroundModelSettings()).sources.map((source) => source.id),
+    ).toEqual(['grok:fork'])
+  })
+
   it('reads the account again after the cached minute and the shared model list once it ages', async () => {
     signedOut('claude-code')
     const { title } = harness()

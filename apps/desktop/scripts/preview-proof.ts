@@ -61,6 +61,9 @@ function createOwner(timeoutMs = 2_000): PreviewCaptureOwner {
           nodeIntegration: false,
           sandbox: true,
           backgroundThrottling: false,
+          // As in main.ts: a hidden window that is not offscreen never paints on
+          // Windows, so every capture there timed out.
+          offscreen: true,
           partition: 'preview-proof',
         },
       })

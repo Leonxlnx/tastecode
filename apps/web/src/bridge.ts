@@ -522,7 +522,16 @@ export function launchCrashAgent(
   })
 }
 
+/**
+ * Chromium raises this when a resize observer's callback resizes an observed element, and
+ * delivers that change a frame later. The transcript's row measurement grows the list under
+ * another observer on every streamed answer, which filled the diagnostics log with this line.
+ */
+const RESIZE_OBSERVER_LOOP =
+  /^ResizeObserver loop (?:completed with undelivered notifications|limit exceeded)/
+
 export function reportRendererError(cause: unknown): void {
+  if (typeof cause === 'string' && RESIZE_OBSERVER_LOOP.test(cause)) return
   const message = cause instanceof Error ? cause.stack || cause.message : String(cause)
   bridge?.reportRendererError?.(message.slice(0, 4_000))
 }

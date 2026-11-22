@@ -13,6 +13,13 @@ export type ModelChoice = {
   connectionId?: string | undefined
   agent?: { id: string; name: string } | undefined
   /**
+   * A harness the user registered in custom-harnesses.json, not one of the
+   * provider's own agents. On ACP its source key looks like a stock agent's
+   * (`acp:<id>`), so this says that the provider roster does not govern it and
+   * that it signs in on its own.
+   */
+  harness?: true | undefined
+  /**
    * The provider account the model runs as, for a provider's other signed-in
    * accounts. Absent: the account the provider's own list stands for, which is
    * an open chat's own account or else the one new chats start on.

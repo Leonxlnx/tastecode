@@ -11,6 +11,7 @@ import type {
   SessionDiff,
 } from '@harness/contracts'
 import type { ProviderRuntime, TurnOptions } from './adapters.js'
+import { BACKGROUND_WORKSPACE_PREFIX } from './background-workspace.js'
 import { StartupCleanupError } from './provider-session.js'
 import { reasoningEffortRank } from './reasoning-effort.js'
 import { sliceCodeUnits } from './slice-code-units.js'
@@ -271,7 +272,7 @@ export async function runBackgroundCompletion(input: {
   /** A provider process that could not be stopped; its folder is kept. */
   onCleanupError?: ((error: unknown) => void) | undefined
 }): Promise<string> {
-  const temporary = await mkdtemp(path.join(os.tmpdir(), 'tastecode-background-'))
+  const temporary = await mkdtemp(path.join(os.tmpdir(), BACKGROUND_WORKSPACE_PREFIX))
   const timeoutMs = input.timeoutMs ?? BACKGROUND_TIMEOUT_MS
   // One deadline covers start, dispatch and completion: any of them can stall.
   let timer: ReturnType<typeof setTimeout> | undefined

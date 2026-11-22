@@ -600,4 +600,45 @@ describe('Grok native history', () => {
     expect(await createGrokHistorySource({ root: path.join(root, 'missing') }).list()).toEqual([])
     expect(await source.read({ ...session!, locator: root })).toEqual([])
   })
+
+  it('keeps references but not inline images on an imported tool result', async () => {
+    const { source, directory, workspace } = await fixture()
+    const shot = path.join(workspace, 'shot.png')
+    const rows = [
+      update('user_message_chunk', {
+        content: { type: 'text', text: 'Check it' },
+        _meta: { promptIndex: 0 },
+      }),
+      update(
+        'tool_call',
+        {
+          toolCallId: 'look',
+          title: 'Look',
+          _meta: { 'x.ai/tool': { name: 'screenshot', kind: 'read' } },
+        },
+        1,
+        'native-turn-1',
+      ),
+      update(
+        'tool_call_update',
+        {
+          toolCallId: 'look',
+          status: 'completed',
+          content: [
+            { type: 'content', content: { type: 'text', text: 'Captured' } },
+            { type: 'content', content: { type: 'image', data: 'AA==', mimeType: 'image/png' } },
+            { type: 'content', content: { type: 'resource_link', uri: pathToFileURL(shot).href } },
+          ],
+        },
+        2,
+        'native-turn-1',
+      ),
+      update('turn_completed', { prompt_id: 'native-turn-1', stop_reason: 'end_turn' }, 3),
+    ]
+    await save(directory, 'updates.jsonl', rows)
+    const [session] = await source.list()
+    const tool = items(await source.read(session!)).find((item) => item.text?.includes('Captured'))
+    // The transcript never shows a tool's attachments, and the live item carries none.
+    expect(tool?.attachments).toEqual([shot])
+  })
 })

@@ -1,3 +1,4 @@
+import { sliceCodeUnits } from '../slice-code-units.js'
 import type { TurnMark, TurnPresentation } from './turns.js'
 
 /** A turn the user started with a prompt: one tick on the turn rail. */
@@ -29,9 +30,14 @@ export function turnRailEntries(
   previous: readonly TurnRailEntry[] = [],
 ): readonly TurnRailEntry[] {
   const entries: TurnRailEntry[] = []
+  const marked = new Set<string>()
   for (const turn of turns) {
     const prompt = presentations.get(turn.turnId)?.prompt
-    if (!prompt) continue
+    // A row without a turn, such as the notice that a chat moved to another
+    // provider, can split one turn's rows into two marks. The turn keeps one
+    // tick, at its start.
+    if (!prompt || marked.has(turn.turnId)) continue
+    marked.add(turn.turnId)
     entries.push({
       turnId: turn.turnId,
       index: turn.index,
@@ -105,9 +111,8 @@ export function replyPreview(markdown: string): string {
 }
 
 function oneLine(text: string, limit: number): string {
-  const line = text
-    .slice(0, limit * 4)
+  const line = sliceCodeUnits(text, limit * 4)
     .replace(/\s+/g, ' ')
     .trim()
-  return line.length > limit ? `${line.slice(0, limit).trimEnd()}…` : line
+  return line.length > limit ? `${sliceCodeUnits(line, limit).trimEnd()}…` : line
 }
