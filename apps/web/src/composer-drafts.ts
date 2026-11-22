@@ -128,25 +128,46 @@ export function serializeComposerDrafts(
 }
 
 /**
- * Saves the drafts through `write`, which says whether storage took them. When it refuses
- * (the quota is full, say after a pasted log of several MB), the text of the largest draft
- * is left out and the write retried until it fits, so one oversized draft never stops the
- * rest from saving. A left-out text stays in memory for the session; the next save tries
- * the full set again.
+ * Saves the drafts through `write`, which says whether storage took them, and returns what
+ * storage now holds, or undefined when it was left as it was. `stored` is what the last
+ * successful save wrote. When storage refuses the drafts (the quota is full, say after a
+ * pasted log of several MB), the draft that grew most since that save goes back to its saved
+ * version, or out when it was never saved, and the write is retried. A failed write never
+ * leaves storage worse: a saved draft that did not change is never reduced, and when nothing
+ * fits nothing is written or removed. Memory keeps every draft, and the next save tries the
+ * full set again. Drafts `keeps` names are never set back.
  */
 export function saveComposerDrafts(
   drafts: ReadonlyMap<string, ComposerDraft>,
+  stored: ReadonlyMap<string, ComposerDraft>,
   write: (drafts: string | undefined) => boolean,
-): void {
-  if (write(serializeComposerDrafts(drafts))) return
-  const kept = new Map(drafts)
-  const largest = [...drafts]
-    .filter(([key, draft]) => draft.text !== '' && !key.startsWith('pending:'))
-    .sort(([, a], [, b]) => b.text.length - a.text.length)
-  for (const [key, draft] of largest) {
-    const withoutText = { ...draft, text: '' }
-    if (isEmptyComposerDraft(withoutText)) kept.delete(key)
-    else kept.set(key, withoutText)
-    if (write(serializeComposerDrafts(kept))) return
+  keeps: (key: string) => boolean = () => false,
+): ReadonlyMap<string, ComposerDraft> | undefined {
+  const target = new Map([...drafts].filter(([key]) => !key.startsWith('pending:')))
+  if (write(serializeComposerDrafts(target))) return target
+  const size = (draft: ComposerDraft | undefined) => (draft ? JSON.stringify(draft).length : 0)
+  const growth = (key: string) => size(target.get(key)) - size(stored.get(key))
+  const grown = [...target.keys()]
+    .filter((key) => !keeps(key) && growth(key) > 0)
+    .sort((left, right) => growth(right) - growth(left))
+  for (const key of grown) {
+    const saved = stored.get(key)
+    if (saved) target.set(key, saved)
+    else target.delete(key)
+    if (sameDrafts(target, stored)) return undefined
+    if (write(serializeComposerDrafts(target))) return target
   }
+  return undefined
+}
+
+function sameDrafts(
+  left: ReadonlyMap<string, ComposerDraft>,
+  right: ReadonlyMap<string, ComposerDraft>,
+): boolean {
+  if (left.size !== right.size) return false
+  for (const [key, draft] of left) {
+    const other = right.get(key)
+    if (!other || JSON.stringify(other) !== JSON.stringify(draft)) return false
+  }
+  return true
 }

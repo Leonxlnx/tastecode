@@ -79,6 +79,8 @@ export class ThreadController {
   #submissions = new Map<string, Map<string, PendingSubmission>>()
   #drafts: Map<string, ComposerDraft>
   #draftSave: ReturnType<typeof setTimeout> | undefined
+  /** What the last successful save wrote. */
+  #storedDrafts: ReadonlyMap<string, ComposerDraft>
   #histories = new Map<string, Set<BufferedEvent[]>>()
   #historyOwners = new Map<string, BufferedEvent[]>()
   // Live cursors can cross a gap. Keep the last safe state and cursor together
@@ -106,6 +108,7 @@ export class ThreadController {
     private draftStorage?: DraftStorage,
   ) {
     this.#drafts = parseComposerDrafts(draftStorage?.read() ?? null)
+    this.#storedDrafts = new Map(this.#drafts)
   }
 
   /** The focused column's frame store. */
@@ -252,8 +255,15 @@ export class ThreadController {
     if (this.#draftSave === undefined) return
     clearTimeout(this.#draftSave)
     this.#draftSave = undefined
+    this.#writeDrafts()
+  }
+  #writeDrafts(): void {
     const storage = this.draftStorage
-    if (storage) saveComposerDrafts(this.#drafts, (drafts) => storage.write(drafts))
+    if (!storage) return
+    const saved = saveComposerDrafts(this.#drafts, this.#storedDrafts, (drafts) =>
+      storage.write(drafts),
+    )
+    if (saved) this.#storedDrafts = saved
   }
   #saveDraftsSoon(): void {
     if (!this.draftStorage) return

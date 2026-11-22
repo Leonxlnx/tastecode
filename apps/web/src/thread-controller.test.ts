@@ -211,44 +211,88 @@ describe('ThreadController lifecycle owner', () => {
     })
   })
 
-  it('keeps saving the other drafts when storage refuses the largest one', () => {
-    const quota = 1_000
-    let stored: string | null = null
-    const write = vi.fn((drafts: string | undefined) => {
-      if (drafts !== undefined && drafts.length > quota) return false
-      stored = drafts ?? null
-      return true
+  describe('drafts at the storage quota', () => {
+    const draftOf = (text: string, attachments: string[] = []) => ({
+      text,
+      attachments,
+      resources: [],
     })
-    const controller = new ThreadController(new TestTransport(), { read: () => stored, write })
-    controller.editDraft('small', { text: 'keep me' })
-    controller.editDraft('log', { text: 'x'.repeat(5 * quota), attachments: ['/work/log.png'] })
-    controller.editDraft('huge', { text: 'y'.repeat(10 * quota) })
-    controller.flushDrafts()
+    /** Storage that refuses an entry over the quota, as localStorage does when it is full. */
+    function quotaStorage(quota: number, initial: Record<string, ReturnType<typeof draftOf>>) {
+      const storage = {
+        stored: JSON.stringify(initial) as string | null,
+        write: vi.fn((drafts: string | undefined) => {
+          if (drafts !== undefined && drafts.length > quota) return false
+          storage.stored = drafts ?? null
+          return true
+        }),
+        read: () => storage.stored,
+        /** A restart: a new controller loads the drafts from what is stored. */
+        restart: () => new ThreadController(new TestTransport(), storage),
+      }
+      return storage
+    }
 
-    expect(JSON.parse(stored!)).toEqual({
-      small: { text: 'keep me', attachments: [], resources: [] },
-      log: { text: '', attachments: ['/work/log.png'], resources: [] },
-    })
-    expect(controller.draft('huge').text).toHaveLength(10 * quota)
-    expect(controller.draft('log').text).toHaveLength(5 * quota)
+    it('saves new drafts up to the quota and falls back for the largest new ones', () => {
+      const storage = quotaStorage(1_000, {})
+      const controller = new ThreadController(new TestTransport(), storage)
+      controller.editDraft('small', { text: 'keep me' })
+      controller.editDraft('log', { text: 'x'.repeat(5_000), attachments: ['/work/log.png'] })
+      controller.editDraft('huge', { text: 'y'.repeat(10_000) })
+      controller.flushDrafts()
 
-    controller.editDraft('huge', { text: '' })
-    controller.editDraft('log', { text: 'short now' })
-    controller.flushDrafts()
-    expect(JSON.parse(stored!)).toEqual({
-      small: { text: 'keep me', attachments: [], resources: [] },
-      log: { text: 'short now', attachments: ['/work/log.png'], resources: [] },
-    })
-  })
+      expect(JSON.parse(storage.stored!)).toEqual({ small: draftOf('keep me') })
+      expect(controller.draft('huge').text).toHaveLength(10_000)
+      expect(controller.draft('log').text).toHaveLength(5_000)
 
-  it('does not throw when storage refuses even the drafts without text', () => {
-    const controller = new ThreadController(new TestTransport(), {
-      read: () => null,
-      write: () => false,
+      controller.editDraft('huge', { text: '' })
+      controller.editDraft('log', { text: 'short now' })
+      controller.flushDrafts()
+      expect(JSON.parse(storage.stored!)).toEqual({
+        small: draftOf('keep me'),
+        log: draftOf('short now', ['/work/log.png']),
+      })
     })
-    controller.editDraft('thread', { text: 'unsaved', attachments: ['/work/a.png'] })
-    expect(() => controller.flushDrafts()).not.toThrow()
-    expect(controller.draft('thread').text).toBe('unsaved')
+
+    it('never reduces a saved draft to make room for another one', () => {
+      const saved = draftOf('a'.repeat(800), ['/work/a.png'])
+      const storage = quotaStorage(1_000, { 'new-chat:/A': saved })
+      const before = storage.stored
+      const controller = new ThreadController(new TestTransport(), storage)
+      controller.editDraft('thread-b', { text: 'b'.repeat(500) })
+      controller.flushDrafts()
+
+      expect(storage.stored).toBe(before)
+      expect(controller.draft('thread-b').text).toHaveLength(500)
+      expect(storage.restart().draft('new-chat:/A')).toEqual(saved)
+    })
+
+    it('keeps the last saved text of the only draft when it grows past the quota', () => {
+      const storage = quotaStorage(1_000, { thread: draftOf('saved words') })
+      const before = storage.stored
+      const controller = new ThreadController(new TestTransport(), storage)
+      controller.editDraft('thread', { text: 'z'.repeat(5_000) })
+      controller.flushDrafts()
+
+      expect(storage.write).not.toHaveBeenCalledWith(undefined)
+      expect(storage.stored).toBe(before)
+      expect(controller.draft('thread').text).toHaveLength(5_000)
+      expect(storage.restart().draft('thread').text).toBe('saved words')
+
+      controller.editDraft('thread', { text: 'fits again' })
+      controller.flushDrafts()
+      expect(storage.restart().draft('thread').text).toBe('fits again')
+    })
+
+    it('does not throw when storage refuses every write', () => {
+      const controller = new ThreadController(new TestTransport(), {
+        read: () => null,
+        write: () => false,
+      })
+      controller.editDraft('thread', { text: 'unsaved', attachments: ['/work/a.png'] })
+      expect(() => controller.flushDrafts()).not.toThrow()
+      expect(controller.draft('thread').text).toBe('unsaved')
+    })
   })
 
   it('retains bounded inactive caches and invalidates old recovery epochs', () => {
