@@ -107,16 +107,21 @@ export class UsageResetController {
       const entry = this.#entries.find((each) => each.threadId === threadId)
       if (entry && entry.model !== settings.model) this.cancel(threadId)
     })
-    const offLifecycle = this.transport.on('thread.lifecycle', ({ threadId, lifecycle }) => {
-      const entry = this.#entries.find((each) => each.threadId === threadId)
-      if (
-        entry &&
-        (lifecycle.state === 'settled' ||
-          (lifecycle.state === 'snoozed' && lifecycle.wakeAt !== entry.resetsAt) ||
-          (lifecycle.state === 'active' && Date.now() < entry.resetsAt))
-      )
-        this.cancel(threadId)
-    })
+    // Judged against the stored entry: another window may have moved it to a later reset and
+    // snoozed the chat to that, and this window's copy still has the earlier time.
+    const offLifecycle = this.transport.on('thread.lifecycle', ({ threadId, lifecycle }) =>
+      this.#update((entries) => {
+        const entry = entries.find((each) => each.threadId === threadId)
+        if (
+          entry &&
+          (lifecycle.state === 'settled' ||
+            (lifecycle.state === 'snoozed' && lifecycle.wakeAt !== entry.resetsAt) ||
+            (lifecycle.state === 'active' && Date.now() < entry.resetsAt))
+        )
+          return entries.filter((each) => each.threadId !== threadId)
+        return entries
+      }),
+    )
     void this.check()
     return () => {
       this.#running = false

@@ -330,6 +330,46 @@ describe('resume at usage reset', () => {
     expect(controller.snapshot()).toEqual([])
   })
 
+  /** A second window: its own subscriptions, the same server and the same storage. */
+  function secondWindow(
+    transport: Transport,
+    storage: { read: () => string; write: (value: string) => void },
+  ) {
+    const listeners = new Map<string, (data: unknown) => void>()
+    const own = {
+      ...transport,
+      on: (channel: string, listener: (data: unknown) => void) => {
+        listeners.set(channel, listener)
+        return () => listeners.delete(channel)
+      },
+    } as unknown as Transport
+    const controller = new UsageResetController(own, storage, vi.fn())
+    stops.push(controller.start())
+    return { controller, listeners }
+  }
+
+  it('keeps a resume another window postponed when its snooze is broadcast', async () => {
+    const { controller, request, transport, storage } = setup()
+    await controller.schedule(session, 'ask', NOW + 1000)
+    const other = secondWindow(transport, storage)
+    expect(other.controller.snapshot()[0]?.resetsAt).toBe(NOW + 1000)
+    const original = request.getMockImplementation()!
+    request.mockImplementation(async (method) =>
+      method === 'usage.summary' ? { limits: [window(NOW + 5000)] } : original(method),
+    )
+    vi.setSystemTime(NOW + 1000)
+    await controller.check()
+    expect(controller.snapshot()[0]?.resetsAt).toBe(NOW + 5000)
+
+    other.listeners.get('thread.lifecycle')!({
+      threadId: 'limited',
+      lifecycle: { state: 'snoozed', wakeAt: NOW + 5000 },
+    })
+    expect(JSON.parse(storage.read())).toEqual([
+      expect.objectContaining({ threadId: 'limited', resetsAt: NOW + 5000 }),
+    ])
+  })
+
   it('waits while disconnected, and consumes a rejected send without retrying it', async () => {
     const { controller, request, transport, report } = setup()
     await controller.schedule(session, 'ask', NOW + 1000)
