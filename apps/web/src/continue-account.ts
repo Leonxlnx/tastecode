@@ -103,10 +103,43 @@ export function lastRequest(
   items: readonly Item[],
 ): { text: string; attachments: string[] | undefined } | undefined {
   for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index]!
-    if (item.type !== 'message' || item.role !== 'user') continue
-    const text = item.text?.trim()
-    if (text) return { text, attachments: item.attachments }
+    const request = asRequest(items[index]!)
+    if (request) return request
   }
   return undefined
+}
+
+/** The id of the request `lastRequest` offers, for an action that finds it again later. */
+export function lastRequestId(items: readonly Item[]): string | undefined {
+  return items.findLast((item) => asRequest(item) !== undefined)?.id
+}
+
+/**
+ * The id of the latest submission a failure can answer: a user message with text or with only
+ * attachments. A file sent without text is a submission of its own, although `lastRequest`
+ * skips it for the draft it restores.
+ */
+export function lastSubmissionId(items: readonly Item[]): string | undefined {
+  return items.findLast(
+    (item) =>
+      item.type === 'message' &&
+      item.role === 'user' &&
+      (Boolean(item.text?.trim()) || (item.attachments?.length ?? 0) > 0),
+  )?.id
+}
+
+/** The request with this id, as `lastRequest` offers it; undefined once it is not there. */
+export function requestById(
+  items: readonly Item[],
+  id: string | undefined,
+): { text: string; attachments: string[] | undefined } | undefined {
+  if (id === undefined) return undefined
+  const item = items.findLast((candidate) => candidate.id === id)
+  return item && asRequest(item)
+}
+
+function asRequest(item: Item): { text: string; attachments: string[] | undefined } | undefined {
+  if (item.type !== 'message' || item.role !== 'user') return undefined
+  const text = item.text?.trim()
+  return text ? { text, attachments: item.attachments } : undefined
 }

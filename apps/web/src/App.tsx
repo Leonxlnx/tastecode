@@ -140,6 +140,9 @@ import {
   continuedIn,
   type EarlierChanges,
   lastRequest,
+  lastRequestId,
+  lastSubmissionId,
+  requestById,
 } from './continue-account.js'
 import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
 import {
@@ -917,6 +920,12 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     threadFrameStore.subscribeStructure,
     threadFrameStore.getStructureSnapshot,
   )
+  // No function below may use `thread` itself. V8 keeps a variable that any
+  // closure of a render uses in that render's context, and every callback a
+  // render memoized kept the context, and with it the whole transcript of the
+  // chat shown then, long after that chat was closed (19 MB of one closed chat
+  // in a measured session). Closures read the store or this flag instead.
+  const threadRunning = thread.running
   /** Draw into the focused column, whatever it shows. */
   const setThread = useCallback(
     (next: ThreadState) => threadController.frames.publish(next),
@@ -3988,11 +3997,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   }, [activeId])
 
   useEffect(() => {
-    if (!activeId || thread.running) return
+    if (!activeId || threadRunning) return
     void refreshCheckpoints(activeId).catch(() => {
       if (activeIdRef.current === activeId) setCheckpoints([])
     })
-  }, [activeId, thread.running, refreshCheckpoints])
+  }, [activeId, threadRunning, refreshCheckpoints])
 
   // Plan limits belong to the account, so a chat switch neither asks again nor
   // resets them; the thread token totals the request could carry are unused.
@@ -5422,10 +5431,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const stopping = stoppingThreadId !== undefined && stoppingThreadId === activeId && thread.running
   const visibleRunning = thread.running && !stopping
   useEffect(() => {
-    if (stoppingThreadId && !thread.running && stoppingThreadId === activeId) {
+    if (stoppingThreadId && !threadRunning && stoppingThreadId === activeId) {
       setStoppingThreadId(undefined)
     }
-  }, [thread.running, stoppingThreadId, activeId])
+  }, [threadRunning, stoppingThreadId, activeId])
 
   const transcribeVoice = useCallback(
     async (requestId: string, recording: VoiceRecording): Promise<string> => {
@@ -7162,7 +7171,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         setComposerFocusRequest((request) => request + 1)
       },
       interrupt: () => {
-        if (thread.running) interrupt()
+        if (threadRunning) interrupt()
       },
       previousChat: () => cycleChat(-1),
       nextChat: () => cycleChat(1),
@@ -7206,7 +7215,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       openRollback,
       openSettings,
       startNewChat,
-      thread.running,
+      threadRunning,
       toggleFastMode,
       toggleRail,
       toggleSidebarSessionPin,
@@ -7482,7 +7491,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
               shortcut: keybind('toggleSessionPin'),
               run: () => toggleSidebarSessionPin(activeId),
             },
-            ...(thread.running
+            ...(threadRunning
               ? [
                   {
                     id: 'stop-response',
@@ -7559,7 +7568,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     beginSession,
     terminalOpen,
     terminalPlacement,
-    thread.running,
+    threadRunning,
     toggleSidebarSessionPin,
     toggleDefaultTerminal,
     toggleWorkspacePanel,
@@ -7608,13 +7617,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       : []
     : (resetSummary?.limits ?? [])
   const resetAt = scheduledResume?.resetsAt ?? usageResetAt(resetLimits, Date.now())
-  const resetRequest =
+  // Only the id: a callback below keeps it, and the whole message (a long
+  // pasted prompt, attachments) would stay alive with that callback.
+  const resetRequestId =
     thread.error && !thread.running
-      ? thread.items.findLast((item) => item.type === 'message' && item.role === 'user')
+      ? thread.items.findLast((item) => item.type === 'message' && item.role === 'user')?.id
       : undefined
   const usageReset: ComposerError['usageReset'] =
     activeSession &&
-    resetRequest &&
+    resetRequestId &&
     !continuedChat &&
     (scheduledResume ||
       accountAtLimit(usageState, activeSession.provider, activeSession.accountId, Date.now()))
@@ -7622,7 +7633,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           resetsAt: resetAt,
           source: `${providerName(activeSession.provider)}${selectedModelChoice ? ` · ${formatModelName(selectedModelChoice.model.displayName)}` : ''}`,
           scheduled: Boolean(scheduledResume),
-          schedule: () => usageResumes.schedule(activeSession, resetRequest.id, resetAt!),
+          schedule: () => usageResumes.schedule(activeSession, resetRequestId, resetAt!),
           cancel: () => usageResumes.cancel(activeSession.id),
         }
       : undefined
@@ -7743,11 +7754,39 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         }
       : error
   // Once continued, the failed turn's row leads to the chat that carries it on.
+  // A provider switch acts on the chat, the failure and the request it was
+  // offered for. A saved handler does nothing once another chat took the
+  // column or a newer turn replaced that failure.
+  const offerSessionId = activeId
+  const offerFailureId = thread.error?.id
+  // Read only while a switch is offered: an idle failure without one renders
+  // on, and each render would scan back for the request.
+  const switchOffered =
+    thread.error !== undefined && !thread.running && !continuedChat && switchOptions.length > 0
+  // The submission the failure answers (a file sent without text counts), and the text request
+  // whose words go back into the composer; both must still be the same when the switch runs.
+  const offerSubmissionId = switchOffered ? lastSubmissionId(thread.items) : undefined
+  const offerRequestId = switchOffered ? lastRequestId(thread.items) : undefined
   /** Sets the chat up to switch, with the request that failed back in the composer. */
   const switchAtLimit = (choice: ModelChoice) => {
-    if (activeId) usageResumes.cancel(activeId)
+    const shown = threadController.frames.getStructureSnapshot()
+    // Checked before anything changes: a restore can drop the request and fail
+    // another one under the same failure id, and a switch then would cancel
+    // the resume and change the model for a request it was not offered for.
+    if (
+      !offerSessionId ||
+      !offerFailureId ||
+      activeIdRef.current !== offerSessionId ||
+      threadController.draftOwner !== composerDraftKey(offerSessionId) ||
+      shown.error?.id !== offerFailureId ||
+      lastSubmissionId(shown.items) !== offerSubmissionId ||
+      lastRequestId(shown.items) !== offerRequestId
+    ) {
+      return
+    }
+    const request = requestById(shown.items, offerRequestId)
+    usageResumes.cancel(offerSessionId)
     commitModelChoice(choice)
-    const request = lastRequest(thread.items)
     if (request) editMessage(request.text, request.attachments)
   }
   const continueOffer: Pick<ComposerError, 'action' | 'choices'> = continuedChat
@@ -7973,7 +8012,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       title={active?.session.title}
       pinned={active?.session.pinned ?? false}
       projectPath={activePath}
-      checkpointCount={thread.running ? 0 : checkpoints.length}
+      checkpointCount={threadRunning ? 0 : checkpoints.length}
       worktreeBranch={active?.session.worktreeBranch}
       pullRequest={checkoutPullRequest}
       onOpenPullRequest={openCheckoutPullRequest}

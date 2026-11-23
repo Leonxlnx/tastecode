@@ -6,6 +6,9 @@ import {
   continuationNote,
   continuedIn,
   lastRequest,
+  lastRequestId,
+  lastSubmissionId,
+  requestById,
 } from './continue-account.js'
 import type { ProviderAccountsSnapshot } from './provider-accounts-state.js'
 import type { UsageSummaryState } from './usage-summary-state.js'
@@ -107,6 +110,58 @@ describe('continue on another account', () => {
       ]),
     ).toEqual({ text: 'Second', attachments: ['C:\\shots\\comment.png'] })
     expect(lastRequest([message('assistant', 'Only an answer')])).toBeUndefined()
+  })
+
+  it('finds that request again by its id, and nothing once it is not a request', () => {
+    const message = (id: string, role: 'user' | 'assistant', text: string): Item => ({
+      id,
+      turnId: 't',
+      type: 'message',
+      role,
+      status: 'completed',
+      text,
+      createdAt: 1,
+    })
+    const items = [
+      message('first', 'user', 'First'),
+      { ...message('second', 'user', ' Second '), attachments: ['C:\\shots\\comment.png'] },
+      message('blank', 'user', '  '),
+      message('answer', 'assistant', 'Answer'),
+    ]
+    expect(lastRequestId(items)).toBe('second')
+    expect(requestById(items, 'second')).toEqual(lastRequest(items))
+    expect(requestById(items, 'first')).toEqual({ text: 'First', attachments: undefined })
+    expect(requestById(items, 'blank')).toBeUndefined()
+    expect(requestById(items, 'answer')).toBeUndefined()
+    expect(requestById(items, undefined)).toBeUndefined()
+    expect(requestById(items.slice(0, 1), 'second')).toBeUndefined()
+  })
+
+  it('counts a file sent without text as the latest submission, unlike the request it restores', () => {
+    const message = (id: string, role: 'user' | 'assistant', text: string): Item => ({
+      id,
+      turnId: 't',
+      type: 'message',
+      role,
+      status: 'completed',
+      text,
+      createdAt: 1,
+    })
+    const fileOnly = (id: string): Item => ({
+      ...message(id, 'user', ''),
+      attachments: [`C:\\shots\\${id}.png`],
+    })
+    const first = [message('text', 'user', 'Look at this'), fileOnly('file-a')]
+    const second = [message('text', 'user', 'Look at this'), fileOnly('file-b')]
+    // The draft still comes from the text request, so both files offer the same one; only the
+    // submission tells the two failures apart.
+    expect(lastRequestId(first)).toBe('text')
+    expect(lastRequestId(second)).toBe('text')
+    expect(lastSubmissionId(first)).toBe('file-a')
+    expect(lastSubmissionId(second)).toBe('file-b')
+    expect(lastSubmissionId([...first, message('blank', 'user', '  ')])).toBe('file-a')
+    expect(lastSubmissionId([...first, message('answer', 'assistant', 'Answer')])).toBe('file-a')
+    expect(lastSubmissionId([message('answer', 'assistant', 'Answer')])).toBeUndefined()
   })
 })
 

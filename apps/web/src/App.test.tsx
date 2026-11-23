@@ -334,6 +334,18 @@ vi.mock('./bridge.js', async (importOriginal) => ({
   },
 }))
 
+const requestReads = vi.hoisted(() => ({ lastRequestId: vi.fn() }))
+vi.mock('./continue-account.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./continue-account.js')>()
+  return {
+    ...original,
+    lastRequestId: (...args: Parameters<typeof original.lastRequestId>) => {
+      requestReads.lastRequestId(...args)
+      return original.lastRequestId(...args)
+    },
+  }
+})
+
 vi.mock('./voice-capability.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./voice-capability.js')>()),
   canCaptureVoice: () => true,
@@ -6529,6 +6541,312 @@ describe('new chats', () => {
     await waitFor(() => expect(composerProps().draftRequest?.text).toBe('Fix the webhook retries'))
     expect(transport.request).not.toHaveBeenCalledWith('thread.changeProvider', expect.anything())
     expect(transport.request).not.toHaveBeenCalledWith('thread.sendTurn', expect.anything())
+  })
+
+  it('drops a saved provider switch once another chat or a newer turn took its place', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider()]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-limited', title: 'Webhook retries', provider: 'codex', createdAt: 2 },
+      { id: 'chat-other', title: 'Release notes', provider: 'codex', createdAt: 1 },
+    ]
+    const user = (id: string, turnId: string, text: string, seq: number) => ({
+      seq,
+      event: {
+        type: 'item.completed' as const,
+        item: {
+          id,
+          turnId,
+          type: 'message' as const,
+          role: 'user' as const,
+          status: 'completed' as const,
+          text,
+          createdAt: seq,
+        },
+      },
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const { provider } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models: [
+            {
+              id: provider === 'claude-code' ? 'opus' : 'gpt-6.1',
+              displayName: provider === 'claude-code' ? 'Opus' : 'GPT',
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      if (method === 'usage.summary') {
+        const { provider } = params as { provider: string }
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits:
+            provider === 'codex'
+              ? [{ label: '5 hours', usedPercent: 100, resetsAt: Date.now() + 3_600_000 }]
+              : [],
+        }))
+      }
+      if (method === 'thread.history') {
+        const { threadId } = params as { threadId: string }
+        if (threadId === 'chat-other') {
+          return Promise.resolve({
+            events: [user('other-ask', 'turn-o', 'Write the release notes', 1)],
+            running: false,
+            approval: 'ask',
+          })
+        }
+        if (threadId !== 'chat-limited') return request(method, params)
+        return Promise.resolve({
+          events: [
+            user('ask', 'turn-1', 'Fix the webhook retries', 1),
+            {
+              seq: 2,
+              event: { type: 'thread.error', threadId, message: "You've hit your usage limit." },
+            },
+            { seq: 3, event: { type: 'turn.completed', turnId: 'turn-1', status: 'failed' } },
+          ],
+          running: false,
+          approval: 'ask',
+        })
+      }
+      return request(method, params)
+    })
+    const limitRow = () =>
+      waitFor(() => {
+        const row = (composerProps().errors ?? []).find(
+          (error) => error.message === "You've hit your usage limit.",
+        )
+        expect(row?.action?.label).toBe('Switch to Claude Code')
+        return row!
+      })
+    const untouched = () => {
+      expect(composerProps().modelId).toBe('codex:gpt-6.1')
+      expect(composerProps().draftRequest?.text ?? '').toBe('')
+    }
+    render(<App />)
+
+    // Another chat took the column.
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    const saved = await limitRow()
+    fireEvent.click(treeChatRow('Release notes'))
+    await waitFor(() => expect(composerProps().threadId).toBe('chat-other'))
+    await waitFor(() => expect(composerProps().modelId).toBe('codex:gpt-6.1'))
+    await act(async () => saved.action!.run())
+    untouched()
+
+    // A newer turn in the same chat failed again: the older offer is not this failure's.
+    fireEvent.click(treeChatRow('Webhook retries'))
+    await waitFor(() => expect(composerProps().threadId).toBe('chat-limited'))
+    const older = await limitRow()
+    emitThreadEvent(
+      'chat-limited',
+      {
+        type: 'turn.started',
+        turn: { id: 'turn-2', threadId: 'chat-limited', status: 'running', createdAt: 4 },
+      },
+      4,
+    )
+    emitThreadEvent('chat-limited', user('retry', 'turn-2', 'Try the retries again', 5).event, 5)
+    emitThreadEvent(
+      'chat-limited',
+      { type: 'thread.error', threadId: 'chat-limited', message: "You've hit your usage limit." },
+      6,
+    )
+    emitThreadEvent(
+      'chat-limited',
+      { type: 'turn.completed', turnId: 'turn-2', status: 'failed' },
+      7,
+    )
+    const newer = await limitRow()
+    expect(newer.id).not.toBe(older.id)
+    await act(async () => older.action!.run())
+    untouched()
+
+    // The offer for the failure on screen still works, with the request that failed.
+    await act(async () => newer.action!.run())
+    await waitFor(() => expect(composerProps().modelId).toBe('claude-code:opus'))
+    await waitFor(() => expect(composerProps().draftRequest?.text).toBe('Try the retries again'))
+  })
+
+  it('looks for the request to retry only while a provider switch is offered', async () => {
+    serverProjects[0]!.sessions = [
+      { id: 'chat-limited', title: 'Webhook retries', provider: 'codex', createdAt: 1 },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'usage.summary') {
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [{ label: '5 hours', usedPercent: 100, resetsAt: Date.now() + 3_600_000 }],
+        }))
+      }
+      if (
+        method === 'thread.history' &&
+        (params as { threadId: string }).threadId === 'chat-limited'
+      ) {
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'item.completed',
+                item: {
+                  id: 'ask',
+                  turnId: 'turn-1',
+                  type: 'message',
+                  role: 'user',
+                  status: 'completed',
+                  text: 'Fix the webhook retries',
+                  createdAt: 1,
+                },
+              },
+            },
+            {
+              seq: 2,
+              event: {
+                type: 'thread.error',
+                threadId: 'chat-limited',
+                message: "You've hit your usage limit.",
+              },
+            },
+            { seq: 3, event: { type: 'turn.completed', turnId: 'turn-1', status: 'failed' } },
+          ],
+          running: false,
+          approval: 'ask',
+        })
+      }
+      return request(method, params)
+    })
+    requestReads.lastRequestId.mockClear()
+    render(<App />)
+
+    // Only Codex is set up: the failure offers no other provider.
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    await waitFor(() =>
+      expect(
+        (composerProps().errors ?? []).some(
+          (error) => error.message === "You've hit your usage limit.",
+        ),
+      ).toBe(true),
+    )
+    act(() => composerProps().onApprovalChange('full'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(requestReads.lastRequestId).not.toHaveBeenCalled()
+  })
+
+  it('does nothing from a saved provider switch after a restore dropped its request', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider()]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-limited', title: 'Webhook retries', provider: 'codex', createdAt: 1 },
+    ]
+    const resume = { threadId: 'chat-limited', provider: 'codex', userItemId: 'ask' }
+    localStorage.setItem(
+      'harness.usage-resumes',
+      JSON.stringify([{ ...resume, resetsAt: Date.now() + 3_600_000 }]),
+    )
+    const failedOn = (id: string, text: string) => [
+      {
+        seq: 1,
+        event: {
+          type: 'item.completed' as const,
+          item: {
+            id,
+            turnId: 'turn-1',
+            type: 'message' as const,
+            role: 'user' as const,
+            status: 'completed' as const,
+            text,
+            createdAt: 1,
+          },
+        },
+      },
+      {
+        seq: 2,
+        event: {
+          type: 'thread.error' as const,
+          threadId: 'chat-limited',
+          message: "You've hit your usage limit.",
+        },
+      },
+      { seq: 3, event: { type: 'turn.completed' as const, turnId: 'turn-1', status: 'failed' } },
+    ]
+    let restored = false
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const { provider } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models: [
+            {
+              id: provider === 'claude-code' ? 'opus' : 'gpt-6.1',
+              displayName: provider === 'claude-code' ? 'Opus' : 'GPT',
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      if (method === 'usage.summary') {
+        const { provider } = params as { provider: string }
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits:
+            provider === 'codex'
+              ? [{ label: '5 hours', usedPercent: 100, resetsAt: Date.now() + 3_600_000 }]
+              : [],
+        }))
+      }
+      if (method === 'thread.restore') restored = true
+      if (method === 'thread.history') {
+        const { threadId } = params as { threadId: string }
+        if (threadId !== 'chat-limited') return request(method, params)
+        // After the restore another request failed, at the same row: the same failure id.
+        return Promise.resolve({
+          events: restored
+            ? failedOn('smaller', 'Try a smaller fix')
+            : failedOn('ask', 'Fix the webhook retries'),
+          running: false,
+          approval: 'ask',
+        })
+      }
+      return request(method, params)
+    })
+    const limitRow = () =>
+      waitFor(() => {
+        const row = (composerProps().errors ?? []).find(
+          (error) => error.message === "You've hit your usage limit.",
+        )
+        expect(row?.action?.label).toBe('Switch to Claude Code')
+        return row!
+      })
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    const saved = await limitRow()
+    await openCheckpointHistory()
+    fireEvent.click(restoreButton())
+    await waitFor(() =>
+      expect(screen.getByTestId('thread').textContent).toContain('Try a smaller fix'),
+    )
+    const current = await limitRow()
+    expect(current.id).toBe(saved.id)
+
+    await act(async () => saved.action!.run())
+    expect(composerProps().modelId).toBe('codex:gpt-6.1')
+    expect(composerProps().draftRequest?.text ?? '').toBe('')
+    expect(JSON.parse(localStorage.getItem('harness.usage-resumes') ?? '[]')).toEqual([
+      expect.objectContaining(resume),
+    ])
   })
 
   it("names the isolated chat's checkout when its uncommitted changes stayed there", async () => {
