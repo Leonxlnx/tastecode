@@ -96,8 +96,8 @@ export const PHONE_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
   'thread.diff',
 ])
 
-/** Pushes a phone never receives: its own pairing state and desktop-only previews. */
-const PHONE_HIDDEN_PUSH = /^\{"channel":"(?:phone|preview)\./
+/** Pushes a phone never receives: its own pairing state and desktop-only previews/simulators. */
+const PHONE_HIDDEN_PUSH = /^\{"channel":"(?:phone|preview|simulator)\./
 
 const StoredDeviceSchema = z.object({
   id: z.string().min(1),

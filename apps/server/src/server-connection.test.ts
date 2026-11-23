@@ -53,6 +53,7 @@ const state = vi.hoisted(() => ({
   hiddenModels: [] as string[],
   providerRoster: null as string[] | null,
   phoneAccessState: undefined as string | undefined,
+  simulatorSettings: undefined as string | undefined,
   /** Threads with a prompt on its way, as the orchestrator was told. */
   submitting: [] as string[],
 }))
@@ -144,6 +145,12 @@ vi.mock('./store.js', () => ({
     }
     setPhoneAccessState(value: string) {
       state.phoneAccessState = value
+    }
+    simulatorSettings() {
+      return state.simulatorSettings
+    }
+    setSimulatorSettings(value: string) {
+      state.simulatorSettings = value
     }
     renameThread(threadId: string) {
       state.renamed.push(threadId)
@@ -448,6 +455,7 @@ afterEach(async () => {
   state.hiddenModels = []
   state.providerRoster = null
   state.phoneAccessState = undefined
+  state.simulatorSettings = undefined
   state.submitting.length = 0
   vi.unstubAllEnvs()
   await Promise.all(
