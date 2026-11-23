@@ -8532,6 +8532,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                                 <Empty
                                   projects={projects}
                                   activePath={besideNewPath}
+                                  withoutProject={Boolean(split.frozen.composer.withoutProject)}
                                   status={projectsStatus}
                                   startupProjectName={startupProjectName}
                                   onAddProject={addSidebarProject}
