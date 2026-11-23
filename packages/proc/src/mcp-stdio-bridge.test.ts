@@ -55,7 +55,9 @@ describe('createHttpMcpBridgeLaunch', () => {
         if (parsed.method === 'sse') {
           res
             .writeHead(200, { 'content-type': 'text/event-stream' })
-            .end(`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: parsed.id, result: { ok: 'sse' } })}\n\n`)
+            .end(
+              `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: parsed.id, result: { ok: 'sse' } })}\n\n`,
+            )
           return
         }
         res
@@ -87,7 +89,9 @@ describe('createHttpMcpBridgeLaunch', () => {
     })
 
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' })}\n`)
-    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`,
+    )
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'sse' })}\n`)
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'fail' })}\n`)
 

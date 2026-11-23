@@ -103,7 +103,9 @@ describe('ACP managed MCP servers', () => {
       expect.arrayContaining([
         { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
         expect.objectContaining({ value: 'https://mcp.test/' }),
-        expect.objectContaining({ value: JSON.stringify({ Authorization: 'Bearer secret-token' }) }),
+        expect.objectContaining({
+          value: JSON.stringify({ Authorization: 'Bearer secret-token' }),
+        }),
       ]),
     )
   })

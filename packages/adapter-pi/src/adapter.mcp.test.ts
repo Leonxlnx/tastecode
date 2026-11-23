@@ -128,7 +128,13 @@ describe('Pi HTTP MCP extension', () => {
         }
         res.setHeader('content-type', 'application/json')
         if (parsed.method === 'initialize') {
-          res.end(JSON.stringify({ jsonrpc: '2.0', id: parsed.id, result: { protocolVersion: '2025-11-25' } }))
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: parsed.id,
+              result: { protocolVersion: '2025-11-25' },
+            }),
+          )
         } else if (parsed.method === 'tools/list') {
           res.end(
             JSON.stringify({
@@ -157,7 +163,9 @@ describe('Pi HTTP MCP extension', () => {
       })
     })
     servers.push(server)
-    await new Promise<void>((resolve) => server.listen({ host: '127.0.0.1', port: 0 }, () => resolve()))
+    await new Promise<void>((resolve) =>
+      server.listen({ host: '127.0.0.1', port: 0 }, () => resolve()),
+    )
     const address = server.address()
     if (!address || typeof address === 'string') throw new Error('server did not bind')
 
@@ -196,7 +204,12 @@ describe('Pi HTTP MCP extension', () => {
         content: [{ type: 'text', text: '{"providers":["codex"]}' }],
         details: {},
       })
-      expect(seenMethods).toEqual(['initialize', 'notifications/initialized', 'tools/list', 'tools/call'])
+      expect(seenMethods).toEqual([
+        'initialize',
+        'notifications/initialized',
+        'tools/list',
+        'tools/call',
+      ])
     } finally {
       for (const [key, value] of previous) {
         if (value === undefined) delete process.env[key]
