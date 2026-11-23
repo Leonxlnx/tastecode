@@ -14377,6 +14377,44 @@ describe('live sessions', () => {
     expect(appRenders).not.toHaveBeenCalled()
   })
 
+  it('keeps the composer out of the app renders a turn causes when nothing it shows changed', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    await screen.findByTestId('thread')
+    emitThreadEvent('untouched-thread', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'untouched-thread', status: 'running', createdAt: 0 },
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    shellRenders.composer.mockClear()
+    appRenders.mockClear()
+
+    for (let index = 1; index <= 5; index++) {
+      const item = {
+        id: `tool-${index}`,
+        turnId: 'turn-1',
+        type: 'tool_call' as const,
+        status: 'started' as const,
+        text: `Read file-${index}.ts`,
+        createdAt: index,
+      }
+      emitThreadEvent('untouched-thread', { type: 'item.started', item })
+      emitThreadEvent('untouched-thread', {
+        type: 'item.completed',
+        item: { ...item, status: 'completed' },
+      })
+    }
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Ten App renders; the composer's props, notices included, did not change.
+    expect(appRenders.mock.calls.length).toBeGreaterThanOrEqual(5)
+    expect(shellRenders.composer).not.toHaveBeenCalled()
+  })
+
   it('keeps open utility surfaces out of streamed-frame renders', async () => {
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))

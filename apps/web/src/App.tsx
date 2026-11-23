@@ -61,6 +61,7 @@ import {
   type Shortcut,
 } from './shortcuts.js'
 import { sliceCodeUnits } from './slice-code-units.js'
+import { useStableEntries } from './stable-entries.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
 import { useChatNotifications } from './use-chat-notifications.js'
 import { useAppUpdateInstallGate } from './app-update-install.js'
@@ -7797,7 +7798,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     loadingThreadId !== activeSession.id
       ? findSession(projects, activeSession.continuedFrom)?.session
       : undefined
-  const composerErrors: ComposerError[] = [
+  // Rebuilt on every render; kept as one list while it says the same, so the
+  // memoized composer does not re-render with every App render of a turn.
+  const composerErrors = useStableEntries<ComposerError>([
     ...(actionError
       ? [reportable({ ...actionError, dismiss: () => setActionError(undefined) }, 'action')]
       : []),
@@ -7860,7 +7863,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     ...(askFirstBlock
       ? [{ id: `ask-first:${provider}`, role: 'alert' as const, message: askFirstBlock }]
       : []),
-  ]
+  ])
+  const [composerProviderNotice] = useStableEntries<ComposerError>(
+    composerProviderError ? [reportable(composerProviderError, 'provider')] : [],
+  )
 
   // workspace.info answered for this very project without a branch: no Git repository to isolate
   // from. Until it answers for the project on screen, Isolated stays offered.
@@ -7902,9 +7908,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     sendAvailability: sendAvailability,
     errors: composerErrors,
     errorsVisible: !settingsOpen && surface === 'chat',
-    providerError: composerProviderError
-      ? reportable(composerProviderError, 'provider')
-      : undefined,
+    providerError: composerProviderNotice,
     providerSignInRequired: providerStatuses.some(
       (status) => status.id === provider && status.installed,
     ),
