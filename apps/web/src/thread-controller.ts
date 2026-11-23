@@ -140,7 +140,12 @@ export class ThreadController {
   show(slot: PaneSlot, id: string | undefined): void {
     this.#shown[slot] = id
     this.#syncVisible()
-    if (id === undefined) return
+    if (id === undefined) {
+      // A column nobody shows holds no chat. Its store lives as long as the
+      // app, so the last transcript drawn there outlived the chat's eviction.
+      this.columns[slot].publish(emptyThread)
+      return
+    }
     this.#backgroundCharacters.delete(id)
     this.columns[slot].publish(this.flush(id))
   }

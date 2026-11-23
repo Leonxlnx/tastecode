@@ -690,6 +690,27 @@ describe('two visible columns', () => {
     expect(controller.compact('right', false)).toBe(true)
   })
 
+  it('keeps no transcript in a column nobody shows, and leaves the other column as it was', () => {
+    const controller = new ThreadController(new TestTransport())
+    const text = (value: string) =>
+      reduce(emptyThread, { ...started, item: { ...started.item, text: value } })
+    controller.update('left', text('left'))
+    controller.update('right', text('x'.repeat(64 * 1024)))
+    controller.activate('left')
+    controller.show(0, 'left')
+    controller.show(1, 'right')
+    const left = controller.columns[0].getSnapshot()
+    const leftStructure = controller.columns[0].getStructureSnapshot()
+    expect(threadItems(controller.columns[1].getStructureSnapshot())).toHaveLength(1)
+
+    controller.show(1, undefined)
+    expect(controller.columns[1].getSnapshot()).toBe(emptyThread)
+    expect(controller.columns[1].getStructureSnapshot()).toBe(emptyThread)
+    expect(controller.columns[0].getSnapshot()).toBe(left)
+    expect(controller.columns[0].getStructureSnapshot()).toBe(leftStructure)
+    expect(threadItems(left)[0]?.text).toBe('left')
+  })
+
   it('publishes the cached state when a column starts showing a chat', () => {
     const controller = new ThreadController(new TestTransport())
     const cached = reduce(emptyThread, { ...started, item: { ...started.item, text: 'saved' } })
