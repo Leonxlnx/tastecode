@@ -38,7 +38,8 @@ class FakeSocket {
   sent: string[] = []
   onopen: (() => void) | null = null
   onmessage: ((event: { data: string }) => void) | null = null
-  onclose: (() => void) | null = null
+  onclose: ((event?: { code?: number | undefined; reason?: string | undefined }) => void) | null =
+    null
   /** The subprotocol the server selected. */
   protocol = ''
 
@@ -53,9 +54,9 @@ class FakeSocket {
     this.sent.push(payload)
   }
 
-  close(): void {
+  close(code?: number, reason?: string): void {
     this.readyState = 3
-    this.onclose?.()
+    this.onclose?.(code === undefined && reason === undefined ? undefined : { code, reason })
   }
 
   open(): void {
@@ -1081,5 +1082,16 @@ describe('Transport', () => {
     })
 
     expect(gap).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a clear error when the server closes a socket for a disallowed origin', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances[0]!
+    socket.open()
+    const pending = transport.request('projects.list', {})
+    socket.close(1008, 'Origin not allowed')
+    await expect(pending).rejects.toThrow('127.0.0.1:5183')
+    transport.close()
   })
 })

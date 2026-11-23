@@ -386,3 +386,32 @@ describe('running agents bridge', () => {
     expect(reportRunningAgents.mock.calls).toEqual([[0], [2], [0]])
   })
 })
+
+describe('browser path prompt fallback', () => {
+  it('uses the registered in-app prompt handler instead of window.prompt', async () => {
+    const bridge = await import('./bridge.js')
+    const originalPrompt = window.prompt
+    const nativePrompt = vi.fn(() => {
+      throw new Error('prompt() is not supported.')
+    })
+    window.prompt = nativePrompt
+    const handler = vi
+      .fn()
+      .mockResolvedValueOnce('  /work/project  ')
+      .mockResolvedValueOnce('/work/skill')
+      .mockResolvedValueOnce('/work/spec.md')
+    const unregister = bridge.registerBrowserPathPrompt(handler)
+    try {
+      await expect(bridge.pickFolder()).resolves.toBe('/work/project')
+      await expect(bridge.pickSkillFolder()).resolves.toBe('/work/skill')
+      await expect(bridge.pickFiles()).resolves.toEqual([
+        { path: '/work/spec.md', name: 'spec.md' },
+      ])
+      expect(nativePrompt).not.toHaveBeenCalled()
+      expect(handler).toHaveBeenCalledTimes(3)
+    } finally {
+      unregister()
+      window.prompt = originalPrompt
+    }
+  })
+})

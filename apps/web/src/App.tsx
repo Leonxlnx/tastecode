@@ -39,9 +39,11 @@ import {
   ownServerListening,
   ownServerToken,
   pickFolder,
+  registerBrowserPathPrompt,
   reportStartupMilestone,
   setDesktopTheme,
   syncNativeMenuShortcuts,
+  type BrowserPathPromptRequest,
 } from './bridge.js'
 import {
   clearAgentBrowserEvents,
@@ -462,6 +464,9 @@ const RollbackDialog = lazy(() =>
 )
 const FeedbackDialog = lazy(() =>
   import('./ui/FeedbackDialog.js').then((module) => ({ default: module.FeedbackDialog })),
+)
+const PathPromptDialog = lazy(() =>
+  import('./ui/PathPromptDialog.js').then((module) => ({ default: module.PathPromptDialog })),
 )
 const Onboarding = lazy(() =>
   import('./ui/Onboarding.js').then((module) => ({ default: module.Onboarding })),
@@ -1348,6 +1353,26 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     [],
   )
   const [checkoutDeleteBusy, setCheckoutDeleteBusy] = useState(false)
+  const [pathPrompt, setPathPrompt] = useState<
+    | (BrowserPathPromptRequest & { id: number; resolve: (value: string | undefined) => void })
+    | undefined
+  >()
+  const pathPromptRef = useRef(pathPrompt)
+  pathPromptRef.current = pathPrompt
+  useEffect(() => {
+    let nextId = 1
+    const unregister = registerBrowserPathPrompt(
+      (request) =>
+        new Promise<string | undefined>((resolve) => {
+          pathPromptRef.current?.resolve(undefined)
+          setPathPrompt({ ...request, id: nextId++, resolve })
+        }),
+    )
+    return () => {
+      unregister()
+      pathPromptRef.current?.resolve(undefined)
+    }
+  }, [])
   const macOS = isMacOS()
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference)
   const [appearancePreferences, setAppearancePreferences] = useState(readAppearancePreferences)
@@ -8585,6 +8610,26 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
             busy={checkoutDeleteBusy}
             onDiscard={() => void discardAndArchive()}
             onClose={() => dropCheckoutDelete(checkoutDelete.id)}
+          />
+        </Suspense>
+      ) : null}
+
+      {pathPrompt ? (
+        <Suspense fallback={null}>
+          <PathPromptDialog
+            key={pathPrompt.id}
+            title={pathPrompt.title}
+            label={pathPrompt.label}
+            placeholder={pathPrompt.placeholder}
+            action={pathPrompt.action}
+            onSubmit={(value) => {
+              setPathPrompt((current) => (current?.id === pathPrompt.id ? undefined : current))
+              pathPrompt.resolve(value)
+            }}
+            onCancel={() => {
+              setPathPrompt((current) => (current?.id === pathPrompt.id ? undefined : current))
+              pathPrompt.resolve(undefined)
+            }}
           />
         </Suspense>
       ) : null}
