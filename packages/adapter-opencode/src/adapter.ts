@@ -180,6 +180,9 @@ const ModelEnvelopeSchema = z.object({ data: z.array(OpenCodeV2CatalogModelSchem
  * leaves out deprecated ones. It is the set `opencode models` prints. Both
  * protocols serve it; v2's `/api/provider` and `/api/model` instead return
  * the whole models.dev catalog while they warm up.
+ *
+ * opencode 2.4.0 dropped this route: it answers with the web UI's HTML, so the
+ * v2 reader below is what serves models there.
  */
 const ConnectedModelSchema = z.object({
   id: z.string(),
@@ -216,7 +219,47 @@ const OpenCodeV2AgentSchema = z.object({
     .optional(),
 })
 const AgentEnvelopeSchema = z.object({ data: z.array(OpenCodeV2AgentSchema) })
+/**
+ * `GET /api/model`, captured from opencode 2.4.0: every model a connected
+ * provider can run, with the variant ids a session accepts. It replaces
+ * `/config/providers` for models, which 2.4.0 no longer serves as JSON.
+ */
+const OpenCodeV2ModelRowSchema = z.object({
+  id: z.string(),
+  providerID: z.string(),
+  name: z.string(),
+  family: z.string().optional(),
+  status: z.string().optional(),
+  enabled: z.boolean().optional(),
+  variants: JsonRpcValueSchema.optional(),
+  capabilities: z
+    .object({
+      tools: z.boolean().optional(),
+      input: z.array(z.string()).optional(),
+      output: z.array(z.string()).optional(),
+    })
+    .optional(),
+  time: z.object({ released: z.number().optional() }).optional(),
+  limit: z.object({ context: z.number().positive().optional() }).optional(),
+})
+const OpenCodeV2ModelsSchema = z.object({
+  data: z.array(OpenCodeV2ModelRowSchema),
+})
+/** `GET /api/provider`: which providers are connected, so an id can be named. */
+const OpenCodeV2ProvidersSchema = z.object({
+  data: z.array(z.object({ id: z.string(), name: z.string() })),
+})
+
 const HealthSchema = z.object({ healthy: z.boolean() })
+
+/**
+ * Whether a response carries JSON, which is what separates a real API answer
+ * from a web UI's HTML page served at the same path.
+ */
+function isJsonResponse(response: Response): boolean {
+  const type = response.headers.get('content-type')?.toLowerCase() ?? ''
+  return type.includes('application/json')
+}
 /** A refused v2 request's body, as 1.18.13 sends it (fixtures/). */
 const V2RefusalSchema = z.object({ message: z.string() })
 
@@ -288,6 +331,7 @@ const LegacySessionPropertiesSchema = z.object({
 type OpenCodeV2Session = z.infer<typeof OpenCodeV2SessionSchema>
 type OpenCodeV2CatalogModel = z.infer<typeof OpenCodeV2CatalogModelSchema>
 type ConnectedProviders = z.infer<typeof ConnectedProvidersSchema>
+type ConnectedModel = z.infer<typeof ConnectedModelSchema>
 
 export class OpenCodeAdapter extends EventEmitter<Events> {
   #processStop: Promise<void> = Promise.resolve()
@@ -897,6 +941,11 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
    * session engine admits a prompt without ever running it ("Session wait is
    * not available yet") and its v2 catalog lists no models, so v2 is only for
    * a server that has dropped v1: one that answers v1's probe with a refusal.
+   *
+   * A probe only counts as an answer when it is JSON. opencode 2.4.0 serves
+   * its web UI at `/session/status` with `200 text/html`, so a bare status code
+   * said "v1" for a server that has no v1 left, and the v1 client then parsed
+   * the UI's HTML as a providers payload.
    */
   async #detectProtocol(): Promise<OpenCodeProtocol> {
     const headers = this.#authorization ? { authorization: this.#authorization } : {}
@@ -905,21 +954,40 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
         headers,
         signal: AbortSignal.timeout(OPENCODE_PROTOCOL_PROBE_TIMEOUT_MS),
       })
+      const json = isJsonResponse(v1)
       await v1.body?.cancel()
-      if (v1.ok) return 'v1'
+      if (v1.ok && json) return 'v1'
     } catch {
       // No answer says nothing about v1: a server still loading answers v2's
       // health check long before it, so that check cannot decide here.
       return 'v1'
     }
     try {
-      const response = await fetch(new URL('/api/health', this.#baseUrl), {
+      // `/api/health` is 2.x's own probe. opencode 2.4.0 dropped it while keeping
+      // the rest of v2, so a readable v2 route is the evidence there: `/api/model`
+      // waits for the model catalog to load, which on a cold start outlasts a
+      // short probe, so it gets the same budget as the v1 one.
+      const health = await fetch(new URL('/api/health', this.#baseUrl), {
         headers,
         signal: AbortSignal.timeout(1500),
       })
-      if (!response.ok) return 'v1'
-      const health = HealthSchema.safeParse(await response.json())
-      return health.success && health.data.healthy ? 'v2' : 'v1'
+      if (health.ok && isJsonResponse(health)) {
+        const parsed = HealthSchema.safeParse(await health.json())
+        if (parsed.success && parsed.data.healthy) return 'v2'
+      } else {
+        await health.body?.cancel()
+      }
+    } catch {
+      // Fall through to the route 2.4.0 answers instead.
+    }
+    try {
+      const catalog = await fetch(new URL('/api/model', this.#baseUrl), {
+        headers,
+        signal: AbortSignal.timeout(OPENCODE_PROTOCOL_PROBE_TIMEOUT_MS),
+      })
+      const json = isJsonResponse(catalog)
+      await catalog.body?.cancel()
+      return catalog.ok && json ? 'v2' : 'v1'
     } catch {
       return 'v1'
     }
@@ -964,16 +1032,64 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
 
   async #readConnectedProviders(directory: string): Promise<ConnectedProviders> {
     if (this.#protocol === 'v2') {
-      // The route predates v2 and answers on the same server; it waits for the
-      // catalog to load, so a cold start needs no retry.
+      // `/config/providers` predates v2 and answers on 2.x servers that still
+      // ship it; opencode 2.4.0 replaced it with `/api/provider` and
+      // `/api/model`, where the HTML page it now serves would fail the parse.
       return this.#v2RequestParsed(
         `/config/providers?directory=${encodeURIComponent(directory)}`,
         {},
         ConnectedProvidersSchema,
-      )
+      ).catch(() => this.#readV2Providers(directory))
     }
     const { data } = await this.#newClient(directory).config.providers({ throwOnError: true })
     return ConnectedProvidersSchema.parse(data)
+  }
+
+  /**
+   * The same shape `/config/providers` gave, built from v2's own routes: the
+   * providers a credential reaches, each with the models it can run. A model
+   * OpenCode marks deprecated or disabled is left out, as the older route did.
+   */
+  async #readV2Providers(directory: string): Promise<ConnectedProviders> {
+    const location = `?directory=${encodeURIComponent(directory)}`
+    const [providers, models] = await Promise.all([
+      this.#v2RequestParsed(`/api/provider${location}`, {}, OpenCodeV2ProvidersSchema),
+      this.#v2RequestParsed(`/api/model${location}`, {}, OpenCodeV2ModelsSchema),
+    ])
+    const names = new Map(providers.data.map((provider) => [provider.id, provider.name]))
+    const byProvider = new Map<string, Record<string, ConnectedModel>>()
+    for (const row of models.data) {
+      if (row.status === 'deprecated' || row.enabled === false) continue
+      if (!names.has(row.providerID)) continue
+      const runnable = byProvider.get(row.providerID) ?? {}
+      byProvider.set(row.providerID, runnable)
+      const input = row.capabilities?.input
+      runnable[row.id] = {
+        id: row.id,
+        name: row.name,
+        ...(row.family === undefined ? {} : { family: row.family }),
+        ...(row.status === undefined ? {} : { status: row.status }),
+        ...(row.time?.released === undefined
+          ? {}
+          : { release_date: new Date(row.time.released).toISOString().slice(0, 10) }),
+        ...(row.variants === undefined ? {} : { variants: row.variants }),
+        ...(row.limit?.context === undefined ? {} : { limit: { context: row.limit.context } }),
+        capabilities: {
+          ...(row.capabilities?.tools === undefined ? {} : { toolcall: row.capabilities.tools }),
+          ...(input === undefined ? {} : { input: { image: input.includes('image') } }),
+          ...(row.capabilities?.output === undefined
+            ? {}
+            : { output: { text: row.capabilities.output.includes('text') } }),
+        },
+      }
+    }
+    const connected = [...byProvider.entries()].map(([id, models]) => ({
+      id,
+      name: names.get(id) ?? id,
+      models,
+    }))
+    if (connected.length === 0) throw new Error('OpenCode listed no connected provider yet.')
+    return { providers: connected }
   }
 
   /**
@@ -1294,6 +1410,10 @@ async function launchOpenCodeServer(
       env: {
         OPENCODE_SERVER_USERNAME: username,
         OPENCODE_SERVER_PASSWORD: password,
+        // opencode 2.4.0 reads only this one: with `OPENCODE_SERVER_PASSWORD`
+        // alone every v2 route answered 401, which looked like a wrong password
+        // rather than a renamed variable. Both are set so 1.18.x keeps working.
+        OPENCODE_PASSWORD: password,
         ...(Object.keys(config).length > 0
           ? {
               OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
