@@ -44,6 +44,18 @@ import {
   PullRequestListResultSchema,
   PullRequestMetadataOptionsSchema,
 } from './pull-requests.js'
+import {
+  SimulatorActionInputSchema,
+  SimulatorDetailSchema,
+  SimulatorDeviceIdSchema,
+  SimulatorDeviceSchema,
+  SimulatorHubAccessSchema,
+  SimulatorNewOptionsSchema,
+  SimulatorOpenedEventSchema,
+  SimulatorPlatformSchema,
+  SimulatorSessionSchema,
+  SimulatorStateSchema,
+} from './simulator.js'
 
 /**
  * The wire protocol between the desktop renderer, web client, and local core
@@ -2504,6 +2516,114 @@ export const methods = {
     params: z.object({ otherProviders: z.boolean() }),
     result: SubagentSettingsSchema,
   },
+  /** Current local simulator hub status, platform availability, devices and open sessions. */
+  'simulator.state': {
+    params: z.object({}),
+    result: SimulatorStateSchema,
+  },
+  /** Enable or disable simulator support, agent control, or complete first-run setup. */
+  'simulator.configure': {
+    params: z.object({
+      enabled: z.boolean().optional(),
+      agentAccessEnabled: z.boolean().optional(),
+      onboardingCompleted: z.boolean().optional(),
+    }),
+    result: SimulatorStateSchema,
+  },
+  /** Ensure the simulator hub is running (when enabled) and refresh the available device list. */
+  'simulator.list': {
+    params: z.object({}),
+    result: SimulatorStateSchema,
+  },
+  /** Boot (if needed) and attach a simulator/emulator to a thread's Simulator panel. */
+  'simulator.open': {
+    params: z.object({
+      threadId: z.string().min(1),
+      deviceId: SimulatorDeviceIdSchema,
+      platform: SimulatorPlatformSchema.optional(),
+    }),
+    result: z.object({
+      session: SimulatorSessionSchema,
+      device: SimulatorDeviceSchema,
+    }),
+  },
+  /** Stop watching a simulator in a thread (and optionally shut it down). */
+  'simulator.close': {
+    params: z.object({
+      threadId: z.string().min(1),
+      deviceId: SimulatorDeviceIdSchema.optional(),
+      shutdown: z.boolean().optional(),
+    }),
+    result: z.object({}),
+  },
+  /** Power off a simulator/emulator directly and close any thread sessions watching it. */
+  'simulator.shutdown': {
+    params: z.object({
+      deviceId: SimulatorDeviceIdSchema,
+    }),
+    result: z.object({}),
+  },
+  /** Mint an authenticated short-lived loopback proxy ticket for simulator video and input streams. */
+  'simulator.hubAccess': {
+    params: z.object({}),
+    result: SimulatorHubAccessSchema,
+  },
+  /** Read current simulator settings, foreground app and supported host actions. */
+  'simulator.detail': {
+    params: z.object({
+      deviceId: SimulatorDeviceIdSchema,
+    }),
+    result: SimulatorDetailSchema,
+  },
+  /** Run a typed simulator host action (`simctl` / `adb`) and return refreshed details. */
+  'simulator.action': {
+    params: SimulatorActionInputSchema,
+    result: SimulatorDetailSchema,
+  },
+  /** List available runtimes, system images and device profiles for creating new simulators. */
+  'simulator.newOptions': {
+    params: z.object({}),
+    result: SimulatorNewOptionsSchema,
+  },
+  /** Create a new local iOS Simulator or Android Virtual Device and optionally boot it. */
+  'simulator.create': {
+    params: z.object({
+      platform: SimulatorPlatformSchema,
+      name: z.string().trim().min(1).max(128),
+      runtime: z.string().trim().min(1).max(256),
+      deviceType: z.string().trim().min(1).max(256),
+      boot: z.boolean().optional(),
+    }),
+    result: z.object({
+      device: SimulatorDeviceSchema,
+      state: SimulatorStateSchema,
+    }),
+  },
+  /** Shut down (if running) and permanently remove a local iOS Simulator or Android Emulator AVD. */
+  'simulator.remove': {
+    params: z.object({
+      platform: SimulatorPlatformSchema,
+      deviceId: SimulatorDeviceIdSchema,
+      name: z.string().trim().min(1).max(256).optional(),
+    }),
+    result: SimulatorStateSchema,
+  },
+  /** Install missing Android SDK tools (`cmdline-tools`, `platform-tools`, `emulator`) and a system image. */
+  'simulator.installAndroid': {
+    params: z.object({
+      systemImage: z.string().trim().min(1).max(256).optional(),
+      sdkRoot: z.string().trim().min(1).max(512).optional(),
+      createDefaultAvd: z.boolean().optional(),
+    }),
+    result: SimulatorStateSchema,
+  },
+  /** Uninstall an installed Android system image (`system-images;...`) to reclaim disk space. */
+  'simulator.uninstallAndroidImage': {
+    params: z.object({
+      packageId: z.string().trim().min(1).max(256),
+    }),
+    result: SimulatorStateSchema,
+  },
 } as const
 
 export type MethodName = keyof typeof methods
@@ -2663,6 +2783,10 @@ export const channels = {
     /** Null when the platform reports termination without a numeric status. */
     exitCode: z.number().int().nullable(),
   }),
+  /** Simulator hub status, available devices or open thread sessions changed. */
+  'simulator.changed': SimulatorStateSchema,
+  /** A simulator was opened for a thread (for example by an agent calling `device_open`). */
+  'simulator.opened': SimulatorOpenedEventSchema,
 } as const
 
 export type ChannelName = keyof typeof channels
