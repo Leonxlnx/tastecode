@@ -22,13 +22,20 @@ import {
   type ParsedJsonRpcRequestOptions,
   type ServerRequestHandler,
 } from '@harness/proc'
+import { createHttpMcpBridgeLaunch } from '@harness/proc/mcp-stdio-bridge'
 import { discoverAgentModels, findAgentSpec, type AcpAgentSpec } from './agents.js'
 import { optionFor, type PermissionOption } from './approvals.js'
 import { ACP_CAPABILITIES } from './capabilities.js'
 import { mapAcpCommands, startsWithAcpCommand } from './commands.js'
 import { Streamer } from './events.js'
 import type { AcpMcpServer } from './mcp.js'
-import { modelConfigOption, sessionModels } from './session-models.js'
+import {
+  configOptionValues,
+  effortConfigOption,
+  modeConfigOption,
+  modelConfigOption,
+  sessionModels,
+} from './session-models.js'
 import { acpSessionUsage, acpTurnUsage } from './usage.js'
 import {
   PROTOCOL_VERSION,
@@ -68,6 +75,7 @@ export type AcpStartOptions = {
   instructions?: string | undefined
   approval?: ApprovalMode | undefined
   model?: string | undefined
+  effort?: string | undefined
 }
 
 export type AcpTurnSettings = {
@@ -90,6 +98,13 @@ export type AcpLaunchOptions = {
   spawn?: typeof spawnCli
   provider?: ProviderId
   mcpServers?: AcpMcpServer[]
+  /**
+   * Pass HTTP MCP servers straight through even when `initialize` omits
+   * `mcpCapabilities.http` (verified on `agy acp` 1.5.14).
+   */
+  assumeHttpMcp?: boolean
+  /** Map TasteCode's approval mode onto one of the agent's `mode` config values. */
+  modeForApproval?: (approval: ApprovalMode, available: readonly string[]) => string | undefined
   /** Added to the inherited environment, for engines tuned through it. */
   env?: Record<string, string> | undefined
 }
@@ -230,6 +245,10 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   readonly #provider: ProviderId
   readonly #mcpServers: AcpMcpServer[]
   readonly #managedMcp: AcpMcpServer[]
+  readonly #assumeHttpMcp: boolean
+  readonly #modeForApproval:
+    | ((approval: ApprovalMode, available: readonly string[]) => string | undefined)
+    | undefined
   readonly #env: Record<string, string> | undefined
   readonly #argsFor: ((settings: AcpTurnSettings) => string[]) | undefined
   #settings: AcpTurnSettings
@@ -239,8 +258,12 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #sessionId: string | undefined
   #workspacePath = ''
   #model: string | undefined
-  /** The session's model select, read from the session itself where it names one. */
+  #effort: string | undefined
+  /** The session's config selects, read from the session itself where it names them. */
   #modelConfigId: string | undefined
+  #effortConfigId: string | undefined
+  #modeConfigId: string | undefined
+  #modeValues: string[] = []
   #streamer: Streamer | undefined
   #activeTurn: { threadId: string; turnId: string } | undefined
   #turnCounter = 0
@@ -269,6 +292,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#spawn = launch?.spawn ?? spawnCli
     this.#provider = launch?.provider ?? 'acp'
     this.#mcpServers = launch?.mcpServers ?? []
+    this.#assumeHttpMcp = launch?.assumeHttpMcp ?? false
+    this.#modeForApproval = launch?.modeForApproval
     this.#env = launch?.env
     this.#argsFor = launch?.argsFor
     this.#settings = { ...launch?.settings }
@@ -300,6 +325,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#instructions = options.instructions
     this.#instructionsPending = Boolean(options.instructions)
     this.#model = options.model
+    this.#effort = options.effort
     const rpc = await this.#connect(workspacePath, options.model)
 
     const session = await rpc
@@ -326,8 +352,10 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       })
     if (!session.sessionId) throw new Error(`${this.#spec.name} started no session`)
     this.#sessionId = session.sessionId
-    this.#modelConfigId = modelConfigOption(session)?.id ?? this.#spec.modelConfigId
+    this.#recordConfigOptions(session)
     await this.#selectSessionModel(options.model)
+    await this.#selectSessionEffort(options.effort)
+    await this.#selectSessionMode(this.#approval)
 
     return {
       id: `acp-${this.#spec.id}-${session.sessionId}`,
@@ -346,6 +374,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#instructions = options.instructions
     this.#instructionsPending = false
     this.#model = options.model
+    this.#effort = options.effort
     const sessionId = parseAcpThreadId(threadId, this.#spec.id)
     const rpc = await this.#connect(workspacePath, options.model)
     if (!this.#loadSession) {
@@ -359,10 +388,10 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     })
     this.#sessionId = sessionId
     const reloaded = NewSessionResultSchema.safeParse(loaded ?? {})
-    this.#modelConfigId =
-      (reloaded.success ? modelConfigOption(reloaded.data)?.id : undefined) ??
-      this.#spec.modelConfigId
+    this.#recordConfigOptions(reloaded.success ? reloaded.data : undefined)
     await this.#selectSessionModel(options.model)
+    await this.#selectSessionEffort(options.effort)
+    await this.#selectSessionMode(this.#approval)
     return {
       id: `acp-${this.#spec.id}-${sessionId}`,
       provider: this.#provider,
@@ -465,8 +494,11 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }
 
   /** Live access-level change; read again for every permission request. */
-  setApproval(approval: ApprovalMode | undefined): void {
+  setApproval(approval: ApprovalMode | undefined): void | Promise<void> {
     this.#setApproval(approval)
+    if (this.#modeConfigId && this.#rpc && this.#sessionId) {
+      return this.#selectSessionMode(this.#approval)
+    }
   }
 
   onDisconnected(listener: () => void): () => void {
@@ -554,7 +586,11 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#initialize = undefined
     this.#sessionId = undefined
     this.#model = undefined
+    this.#effort = undefined
     this.#modelConfigId = undefined
+    this.#effortConfigId = undefined
+    this.#modeConfigId = undefined
+    this.#modeValues = []
     this.#loadSession = false
     this.#pendingApprovals.clear()
     this.#commands = []
@@ -566,11 +602,15 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   /** Restart with launch-only settings, keeping the session through `session/load`. */
   async #applySettings(settings: AcpTurnSettings): Promise<void> {
     if (!this.#argsFor) {
-      // An agent that selects its model in-session (Kimi) switches without a
-      // relaunch; skipping this silently kept every turn on the start model.
+      // An agent that selects its model or effort in-session (Kimi, Antigravity)
+      // switches without a relaunch; skipping this silently kept the start settings.
       if (settings.model && settings.model !== this.#model && this.#modelConfigId) {
         await this.#selectSessionModel(settings.model)
         this.#model = settings.model
+      }
+      if (settings.effort && settings.effort !== this.#effort && this.#effortConfigId) {
+        await this.#selectSessionEffort(settings.effort)
+        this.#effort = settings.effort
       }
       return
     }
@@ -684,20 +724,38 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     return rpc
   }
 
-  /** The launch's servers as given, plus the managed ones this agent's transports allow. */
+  /**
+   * The launch's servers plus managed servers. When the agent does not accept
+   * HTTP MCP servers natively, HTTP entries are bridged over stdio so engines
+   * that speak only stdio still reach TasteCode's agent tools.
+   */
   #sessionMcpServers(): AcpMcpServer[] {
-    if (this.#managedMcp.length === 0) return this.#mcpServers
-    const http = this.#initialize?.agentCapabilities?.mcpCapabilities?.http === true
-    const accepted = this.#managedMcp.filter((server) => !('type' in server) || http)
-    for (const server of this.#managedMcp) {
-      if (!accepted.includes(server)) {
-        this.emit(
-          'log',
-          `${this.#spec.name} does not accept HTTP MCP servers; "${server.name}" was left out of this session`,
-        )
+    const all = [...this.#mcpServers, ...this.#managedMcp]
+    if (all.length === 0) return all
+    const acceptsHttp =
+      this.#assumeHttpMcp || this.#initialize?.agentCapabilities?.mcpCapabilities?.http === true
+    if (acceptsHttp) return all
+    return all.map((server) => {
+      if (!('type' in server)) return server
+      const headers = Object.fromEntries(server.headers.map((entry) => [entry.name, entry.value]))
+      const bridge = createHttpMcpBridgeLaunch({ url: server.url, headers })
+      return {
+        name: server.name,
+        command: bridge.command,
+        args: bridge.args,
+        env: Object.entries(bridge.env).map(([name, value]) => ({ name, value })),
       }
-    }
-    return [...this.#mcpServers, ...accepted]
+    })
+  }
+
+  #recordConfigOptions(session: { configOptions?: unknown } | undefined): void {
+    const parsed = session ? NewSessionResultSchema.safeParse(session) : undefined
+    const data = parsed?.success ? parsed.data : undefined
+    this.#modelConfigId = (data ? modelConfigOption(data)?.id : undefined) ?? this.#spec.modelConfigId
+    this.#effortConfigId = data ? effortConfigOption(data)?.id : undefined
+    const modeOption = data ? modeConfigOption(data) : undefined
+    this.#modeConfigId = modeOption?.id
+    this.#modeValues = configOptionValues(modeOption)
   }
 
   async #selectSessionModel(model: string | undefined): Promise<void> {
@@ -706,6 +764,26 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       sessionId: this.#sessionId,
       configId: this.#modelConfigId,
       value: model,
+    })
+  }
+
+  async #selectSessionEffort(effort: string | undefined): Promise<void> {
+    if (!effort || !this.#effortConfigId || !this.#rpc || !this.#sessionId) return
+    await this.#rpc.request('session/set_config_option', {
+      sessionId: this.#sessionId,
+      configId: this.#effortConfigId,
+      value: effort,
+    })
+  }
+
+  async #selectSessionMode(approval: ApprovalMode): Promise<void> {
+    if (!this.#modeForApproval || !this.#modeConfigId || !this.#rpc || !this.#sessionId) return
+    const value = this.#modeForApproval(approval, this.#modeValues)
+    if (!value) return
+    await this.#rpc.request('session/set_config_option', {
+      sessionId: this.#sessionId,
+      configId: this.#modeConfigId,
+      value,
     })
   }
 
