@@ -285,19 +285,8 @@ let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
 /** Proves to this app's window that the server it reaches is the one this app started. */
 let ownServerToken: string | undefined
-let markOwnServerListening: () => void = () => undefined
-/**
- * Settles once the server this app started listens, or once a start attempt
- * ended without that. On Windows a page socket dialed at a loopback port with
- * nothing listening yet does not fail fast: Chromium waits ~0.5 s before it
- * tries again inside the same socket, and the page used to dial 60-100 ms
- * before the server listened, so every start showed the sidebar ~430 ms late.
- * A failed attempt releases the page too: what it then finds on the port,
- * another TasteCode's server or nothing, is reported as before.
- */
-const ownServerListening = new Promise<void>((resolve) => {
-  markOwnServerListening = resolve
-})
+/** The line the server writes once its port is bound. */
+const SERVER_READY_LINE = '[server] listening on '
 let serverFailureNoticeOpen = false
 
 function showServerFailureNotice(): void {
@@ -531,15 +520,14 @@ function startOwnedServer(): boolean {
   const supervisorCallbacks = {
     onLog: (line: string) => {
       console.log('[server]', line)
-      if (line.startsWith('[server] listening on ')) markOwnServerListening()
-      if (!startupServerReady && line.startsWith('[server] listening on ')) {
+      if (!startupServerReady && line.startsWith(SERVER_READY_LINE)) {
         startupServerReady = true
         logStartupMilestone('server-ready')
         finishStartupBenchmarkIfReady()
       }
     },
     onGaveUp: showServerFailureNotice,
-    onExit: () => markOwnServerListening(),
+    isReadyLine: (line: string) => line.startsWith(SERVER_READY_LINE),
   }
   serverSupervisor =
     process.env['HARNESS_LEGACY_SERVER_PROCESS'] === '1'
@@ -903,9 +891,15 @@ ipcMain.on('harness:ownServerToken', (event) => {
   event.returnValue = isOwnRenderer(event.sender) ? (ownServerToken ?? null) : null
 })
 
-// Answers the page's first connect: at once when this app started no server.
+// Answers the page's first connect once the server launch running now listens
+// or ends. On Windows a page socket dialed at a loopback port with nothing
+// listening yet does not fail fast: Chromium tries again only ~0.5 s later, and
+// the page used to dial 60-100 ms before the server listened, so every start
+// showed the sidebar ~430 ms late. An attempt that ends without listening (a
+// port another TasteCode holds, a crash) releases the page too, which then
+// reports what it finds there as before. At once when this app owns no server.
 ipcMain.handle('harness:ownServerListening', async (event) => {
-  if (isOwnRenderer(event.sender) && serverSupervisor) await ownServerListening
+  if (isOwnRenderer(event.sender)) await serverSupervisor?.whenReady()
 })
 
 ipcMain.on('harness:menuReady', (event) => {

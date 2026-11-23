@@ -17,6 +17,13 @@ export function restartDelayMs(consecutiveFailures: number): number {
   return Math.min(15_000, 500 * 2 ** Math.min(Math.max(consecutiveFailures - 1, 0), 5))
 }
 
+/**
+ * The longest whenReady() keeps a caller waiting for one launch attempt. Matches
+ * OWN_SERVER_LISTEN_WAIT_MS in apps/web/src/transport.ts, after which the page
+ * dials anyway, so a server that stays silent leaves no waiter behind in main.
+ */
+export const SERVER_READY_WAIT_MS = 5_000
+
 /** A run that survived this long counts as healthy and resets the backoff. */
 const HEALTHY_RUN_MS = 30_000
 
@@ -31,8 +38,8 @@ type SupervisorCallbacks = {
   onLog: (line: string) => void
   /** Called once when the supervisor gives up, for a user-facing surface. */
   onGaveUp?: (() => void) | undefined
-  /** Called each time the server process ends or fails to start, before any restart. */
-  onExit?: (() => void) | undefined
+  /** Whether a line the running server wrote says it now accepts connections. */
+  isReadyLine?: ((line: string) => boolean) | undefined
 }
 
 type CommandSupervisorOptions = {
@@ -95,6 +102,9 @@ export class ServerSupervisor {
   #restartTimer: NodeJS.Timeout | undefined
   #stopPromise: Promise<void> | undefined
   #gaveUp = false
+  /** The running child wrote its ready line. Reset by every launch attempt. */
+  #ready = false
+  #readyWaiters = new Set<() => void>()
 
   constructor(options: SupervisorOptions) {
     this.#options = options
@@ -114,8 +124,32 @@ export class ServerSupervisor {
     return true
   }
 
+  /**
+   * Settles once the current launch attempt's child says it is ready, once that
+   * attempt ends (a port another app holds, a crash), or after `timeoutMs`. At
+   * once while the child already listens, and when no attempt runs or is due.
+   * A ready line from an earlier child never settles a later attempt's wait.
+   */
+  whenReady(timeoutMs = SERVER_READY_WAIT_MS): Promise<void> {
+    if (this.#child ? this.#ready : !this.#restartTimer) return Promise.resolve()
+    return new Promise((resolve) => {
+      const release = () => {
+        clearTimeout(deadline)
+        this.#readyWaiters.delete(release)
+        resolve()
+      }
+      const deadline = setTimeout(release, timeoutMs)
+      this.#readyWaiters.add(release)
+    })
+  }
+
+  #releaseReadyWaiters(): void {
+    for (const release of this.#readyWaiters) release()
+  }
+
   start(): void {
     if (this.#stopped || this.#child) return
+    this.#ready = false
     this.#startedAt = Date.now()
     const child =
       'launch' in this.#options
@@ -136,7 +170,12 @@ export class ServerSupervisor {
       if (!stream) return
       let pending = ''
       const emit = (line: string) => {
-        if (line.trim()) this.#options.onLog(line)
+        if (!line.trim()) return
+        this.#options.onLog(line)
+        if (this.#child === child && !this.#ready && this.#options.isReadyLine?.(line)) {
+          this.#ready = true
+          this.#releaseReadyWaiters()
+        }
       }
       stream.on('data', (chunk: string) => {
         const lines = (pending + chunk).split(/\r?\n/)
@@ -171,6 +210,7 @@ export class ServerSupervisor {
     this.#stopped = true
     if (this.#restartTimer) clearTimeout(this.#restartTimer)
     this.#restartTimer = undefined
+    this.#releaseReadyWaiters()
     const child = this.#child
     if (!child) return (this.#stopPromise = Promise.resolve())
     let resolve!: () => void
@@ -225,7 +265,9 @@ export class ServerSupervisor {
   #onExit(child: SupervisedServerProcess): void {
     if (this.#child !== child) return
     this.#child = undefined
-    this.#options.onExit?.()
+    this.#ready = false
+    // This attempt is over: its waiters go and find out what holds the port.
+    this.#releaseReadyWaiters()
     if (this.#stopped) return
     const healthy = Date.now() - this.#startedAt >= HEALTHY_RUN_MS
     this.#failures = healthy ? 1 : this.#failures + 1
