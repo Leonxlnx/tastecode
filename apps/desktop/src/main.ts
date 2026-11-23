@@ -285,6 +285,19 @@ let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
 /** Proves to this app's window that the server it reaches is the one this app started. */
 let ownServerToken: string | undefined
+let markOwnServerListening: () => void = () => undefined
+/**
+ * Settles once the server this app started listens, or once a start attempt
+ * ended without that. On Windows a page socket dialed at a loopback port with
+ * nothing listening yet does not fail fast: Chromium waits ~0.5 s before it
+ * tries again inside the same socket, and the page used to dial 60-100 ms
+ * before the server listened, so every start showed the sidebar ~430 ms late.
+ * A failed attempt releases the page too: what it then finds on the port,
+ * another TasteCode's server or nothing, is reported as before.
+ */
+const ownServerListening = new Promise<void>((resolve) => {
+  markOwnServerListening = resolve
+})
 let serverFailureNoticeOpen = false
 
 function showServerFailureNotice(): void {
@@ -518,6 +531,7 @@ function startOwnedServer(): boolean {
   const supervisorCallbacks = {
     onLog: (line: string) => {
       console.log('[server]', line)
+      if (line.startsWith('[server] listening on ')) markOwnServerListening()
       if (!startupServerReady && line.startsWith('[server] listening on ')) {
         startupServerReady = true
         logStartupMilestone('server-ready')
@@ -525,6 +539,7 @@ function startOwnedServer(): boolean {
       }
     },
     onGaveUp: showServerFailureNotice,
+    onExit: () => markOwnServerListening(),
   }
   serverSupervisor =
     process.env['HARNESS_LEGACY_SERVER_PROCESS'] === '1'
@@ -886,6 +901,11 @@ function sendNativeMenuAction(action: NativeMenuAction, source: NativeMenuAction
 // The preload asks once, before the page connects; only this app's own page learns it.
 ipcMain.on('harness:ownServerToken', (event) => {
   event.returnValue = isOwnRenderer(event.sender) ? (ownServerToken ?? null) : null
+})
+
+// Answers the page's first connect: at once when this app started no server.
+ipcMain.handle('harness:ownServerListening', async (event) => {
+  if (isOwnRenderer(event.sender) && serverSupervisor) await ownServerListening
 })
 
 ipcMain.on('harness:menuReady', (event) => {

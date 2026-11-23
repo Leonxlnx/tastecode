@@ -31,6 +31,8 @@ type SupervisorCallbacks = {
   onLog: (line: string) => void
   /** Called once when the supervisor gives up, for a user-facing surface. */
   onGaveUp?: (() => void) | undefined
+  /** Called each time the server process ends or fails to start, before any restart. */
+  onExit?: (() => void) | undefined
 }
 
 type CommandSupervisorOptions = {
@@ -223,6 +225,7 @@ export class ServerSupervisor {
   #onExit(child: SupervisedServerProcess): void {
     if (this.#child !== child) return
     this.#child = undefined
+    this.#options.onExit?.()
     if (this.#stopped) return
     const healthy = Date.now() - this.#startedAt >= HEALTHY_RUN_MS
     this.#failures = healthy ? 1 : this.#failures + 1

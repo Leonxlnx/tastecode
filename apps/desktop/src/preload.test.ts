@@ -1,15 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HarnessBridge } from './preload.js'
 
-const { exposeInMainWorld, getPathForFile, invoke, send, sendSync } = vi.hoisted(() => ({
-  exposeInMainWorld: vi.fn(),
-  getPathForFile: vi.fn(),
-  invoke: vi.fn(),
-  send: vi.fn(),
-  sendSync: vi.fn((channel: string) =>
-    channel === 'harness:ownServerToken' ? 'dGhpcy1pcy1hLXRva2VuLWZvci10ZXN0cw' : undefined,
-  ),
-}))
+const { exposeInMainWorld, getPathForFile, invoke, send, sendSync, serverListens } = vi.hoisted(
+  () => {
+    let serverListens!: () => void
+    const listening = new Promise<void>((resolve) => {
+      serverListens = resolve
+    })
+    return {
+      exposeInMainWorld: vi.fn(),
+      getPathForFile: vi.fn(),
+      invoke: vi.fn((channel: string) =>
+        channel === 'harness:ownServerListening' ? listening : undefined,
+      ),
+      send: vi.fn(),
+      sendSync: vi.fn((channel: string) =>
+        channel === 'harness:ownServerToken' ? 'dGhpcy1pcy1hLXRva2VuLWZvci10ZXN0cw' : undefined,
+      ),
+      serverListens,
+    }
+  },
+)
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld },
   ipcRenderer: { invoke, send, sendSync, on: vi.fn(), removeListener: vi.fn() },
@@ -23,6 +34,22 @@ describe('preload own-server token', () => {
   it('asks main once, before the page connects, and exposes the answer', () => {
     expect(sendSync).toHaveBeenCalledExactlyOnceWith('harness:ownServerToken')
     expect(api.ownServerToken).toBe('dGhpcy1pcy1hLXRva2VuLWZvci10ZXN0cw')
+  })
+})
+
+describe('preload own-server listening', () => {
+  it('asks main once, at load, and settles for the page only when main answers', async () => {
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('harness:ownServerListening')
+    let settled = false
+    const listening = api.ownServerListening!().then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    serverListens()
+    await listening
+    expect(settled).toBe(true)
+    expect(invoke).toHaveBeenCalledOnce()
   })
 })
 

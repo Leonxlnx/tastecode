@@ -27,6 +27,13 @@ const startupBenchmarkEnabled = Number.isFinite(startupStartedAt) && startupStar
 const edition = editionFromArguments(process.argv)
 // Asked once, before the page connects. Not an argument: command lines are readable by other processes.
 const ownServerToken: unknown = ipcRenderer.sendSync('harness:ownServerToken')
+// Settles once that server listens (or a start attempt failed); the page's first socket waits for it.
+const ownServerListening: Promise<void> | undefined = isOwnServerToken(ownServerToken)
+  ? Promise.resolve(ipcRenderer.invoke('harness:ownServerListening')).then(
+      () => undefined,
+      () => undefined,
+    )
+  : undefined
 
 /**
  * The entire native surface exposed to the renderer.
@@ -167,6 +174,7 @@ const api = {
   ...(edition ? { edition } : {}),
   /** Proves the server this window reaches is its own app's; absent when the desktop owns none. */
   ...(isOwnServerToken(ownServerToken) ? { ownServerToken } : {}),
+  ...(ownServerListening ? { ownServerListening: (): Promise<void> => ownServerListening } : {}),
   isDesktop: true,
 }
 

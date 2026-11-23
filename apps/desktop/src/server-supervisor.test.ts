@@ -80,6 +80,31 @@ describe('ServerSupervisor', () => {
     expect(children).toHaveLength(3)
   })
 
+  it('reports each ended start attempt once, whether it exited or failed to start', () => {
+    const exits: number[] = []
+    const children: FakeChild[] = []
+    const sup = new ServerSupervisor({
+      command: 'node',
+      args: ['server.js'],
+      env: {},
+      onLog: vi.fn(),
+      onExit: () => exits.push(children.length),
+      spawnFn: () => {
+        const child = new FakeChild()
+        children.push(child)
+        return child
+      },
+    })
+    sup.start()
+    expect(exits).toEqual([])
+    children[0]!.emit('error', new Error('spawn EACCES'))
+    children[0]!.emit('exit', null, null)
+    expect(exits).toEqual([1])
+    vi.advanceTimersByTime(500)
+    children[1]!.emit('exit', 1, null)
+    expect(exits).toEqual([1, 2])
+  })
+
   it('a long healthy run resets the backoff', () => {
     const { sup, children } = supervisor()
     sup.start()
