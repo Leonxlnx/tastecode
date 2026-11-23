@@ -22,7 +22,7 @@ import {
   IconTerminal2 as SquareTerminal,
   IconX as Close,
 } from '@tabler/icons-react'
-import { isDesktop, revealPath } from '../bridge.js'
+import { isDesktop, revealPath, openInFileManagerTitle } from '../bridge.js'
 import {
   DEFAULT_KEYBINDINGS,
   isComposingKey,
@@ -257,7 +257,7 @@ function StageHeaderComponent(props: {
               {/* The project's, so a new chat offers it too, not only a saved one. */}
               {isDesktop && props.projectPath ? (
                 <MenuItem
-                  title="Open in Explorer"
+                  title={openInFileManagerTitle()}
                   icon={<FolderOpen size={14} aria-hidden />}
                   onClick={() => {
                     void revealPath(props.projectPath!)

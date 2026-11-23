@@ -204,6 +204,11 @@ export function isMacOS(): boolean {
   return navigator.platform.startsWith('Mac')
 }
 
+/** The menu item that shows a folder in the system's file manager, named as the system names it. */
+export function openInFileManagerTitle(): string {
+  return isMacOS() ? 'Open in Finder' : 'Open in Explorer'
+}
+
 export async function pickFolder(): Promise<string | undefined> {
   if (bridge) return bridge.pickFolder()
   return window.prompt('Folder to work in')?.trim() || undefined

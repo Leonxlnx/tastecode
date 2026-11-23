@@ -386,3 +386,16 @@ describe('running agents bridge', () => {
     expect(reportRunningAgents.mock.calls).toEqual([[0], [2], [0]])
   })
 })
+
+describe('the file manager a folder opens in', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it.each([
+    ['MacIntel', 'Open in Finder'],
+    ['Win32', 'Open in Explorer'],
+  ])('names it as %s does', async (platform, title) => {
+    vi.stubGlobal('navigator', { ...navigator, platform })
+    const bridge = await import('./bridge.js')
+    expect(bridge.openInFileManagerTitle()).toBe(title)
+  })
+})
