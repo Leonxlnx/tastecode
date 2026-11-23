@@ -14,6 +14,40 @@ export function modelConfigOption(
   )
 }
 
+/** The select an agent offers for reasoning effort / thinking level, when present. */
+export function effortConfigOption(
+  session: Pick<NewSessionResult, 'configOptions'>,
+): SessionConfigOption | undefined {
+  return session.configOptions?.find(
+    (option) =>
+      (option.category === 'thought_level' ||
+        option.category === 'reasoning_effort' ||
+        option.id === 'thought_level') &&
+      (option.type ?? 'select') === 'select' &&
+      option.id,
+  )
+}
+
+/** The select an agent offers for execution / approval mode, when present. */
+export function modeConfigOption(
+  session: Pick<NewSessionResult, 'configOptions'>,
+): SessionConfigOption | undefined {
+  return session.configOptions?.find(
+    (option) =>
+      (option.category === 'mode' || option.id === 'mode') &&
+      (option.type ?? 'select') === 'select' &&
+      option.id,
+  )
+}
+
+/** All selectable option values of a config select (flat or grouped). */
+export function configOptionValues(option: SessionConfigOption | undefined): string[] {
+  if (!option?.options) return []
+  return option.options
+    .flatMap((entry) => (entry.options ? entry.options : [entry]))
+    .flatMap((entry) => (entry.value ? [entry.value] : []))
+}
+
 /**
  * The models a new session offers, as the agent names them. The config
  * option is preferred because `session/set_config_option` is how a chat
