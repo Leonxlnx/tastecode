@@ -1055,11 +1055,33 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
    * one. A model row is therefore kept even when its provider is not on that
    * list, and the provider's id names it when its display name is unknown.
    */
+  /**
+   * `/api/model` answers with no row until OpenCode has finished loading its
+   * catalog, which happens after the server starts listening. A cold start
+   * therefore needs a retry, the same wait the older `/config/providers` route
+   * did internally.
+   */
+  async #readV2ModelRows(location: string): Promise<z.infer<typeof OpenCodeV2ModelsSchema>> {
+    const deadline = Date.now() + OPENCODE_PROTOCOL_PROBE_TIMEOUT_MS
+    for (;;) {
+      const rows = await this.#v2RequestParsed(
+        `/api/model${location}`,
+        {},
+        OpenCodeV2ModelsSchema,
+      )
+      if (rows.data.length > 0 || Date.now() >= deadline) return rows
+      await new Promise((resolve) => setTimeout(resolve, 750))
+    }
+  }
+
   async #readV2Providers(directory: string): Promise<ConnectedProviders> {
     const location = `?location%5Bdirectory%5D=${encodeURIComponent(directory)}`
     const [providers, models] = await Promise.all([
       this.#v2RequestParsed(`/api/provider${location}`, {}, OpenCodeV2ProvidersSchema),
-      this.#v2RequestParsed(`/api/model${location}`, {}, OpenCodeV2ModelsSchema),
+      // The catalog loads after the server starts listening, so a cold server
+      // answers with no row at all. Retrying is what the older route did
+      // internally by waiting for the same catalog.
+      this.#readV2ModelRows(location),
     ])
     const names = new Map(providers.data.map((provider) => [provider.id, provider.name]))
     const byProvider = new Map<string, Record<string, ConnectedModel>>()
