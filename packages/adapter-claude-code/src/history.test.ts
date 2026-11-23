@@ -1097,6 +1097,24 @@ describe('Claude Code saved history', { timeout: 20_000 }, () => {
     ])
   })
 
+  it('runs one worker read at a time, across sources', async () => {
+    const f = await fixture([row('u1', 'user', 'Large')])
+    const url = new URL('./fixtures/history-worker.mjs', import.meta.url)
+    const session = (await createClaudeHistorySource({ configDir: f.configDir }).list())[0]!
+    const sources = [0, 1, 2].map(() =>
+      createClaudeHistorySource({ configDir: f.configDir, readWorker: { fromBytes: 0, url } }),
+    )
+    const spans = (
+      await Promise.all(sources.map((source) => source.read({ ...session, title: 'timed' })))
+    ).map((events) => {
+      const started = events[0]?.type === 'thread.started' ? (events[0].thread.title ?? '') : ''
+      return started.split('-').map(Number) as [number, number]
+    })
+    spans.sort(([a], [b]) => a - b)
+    for (let index = 1; index < spans.length; index += 1)
+      expect(spans[index]![0]).toBeGreaterThanOrEqual(spans[index - 1]![1])
+  })
+
   it('starts no worker once disposed, and stops a parked one before it resolves', async () => {
     const f = await fixture([row('u1', 'user', 'Large')])
     const url = new URL('./fixtures/history-worker.mjs', import.meta.url)

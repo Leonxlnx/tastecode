@@ -10,6 +10,15 @@ if (session.title === 'busy') {
   parentPort.postMessage({
     events: [{ type: 'thread.started', thread: { id: session.id, title: locator } }],
   })
+} else if (session.title === 'timed') {
+  // Reports when it ran, so a test can see whether two reads overlapped.
+  const started = Date.now()
+  while (Date.now() < started + 200);
+  parentPort.postMessage({
+    events: [
+      { type: 'thread.started', thread: { id: session.id, title: `${started}-${Date.now()}` } },
+    ],
+  })
 } else if (session.title === 'failing') {
   parentPort.postMessage({ error: 'Transcript could not be read' })
 } else {

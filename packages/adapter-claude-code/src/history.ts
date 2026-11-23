@@ -702,8 +702,30 @@ export async function transcriptEvents(
   return eventsFor(await conversation(await records(locator), session), session)
 }
 
-/** The same read in a worker thread; `running` holds it until it ends, so a dispose can stop it. */
+// One worker read at a time, across every source: each holds a heap the size of its whole
+// transcript (1.2 GB for a 234 MB one), and several large chats opened together held one each.
+let workerReads: Promise<unknown> = Promise.resolve()
+
+/**
+ * The same read in a worker thread, queued behind the one running. `open` throws when its
+ * source closed meanwhile; `running` holds the worker until it ends, so a dispose can stop it.
+ */
 function readInWorker(
+  url: URL,
+  locator: string,
+  session: ProviderHistorySession,
+  running: Set<Worker>,
+  open: () => void,
+): Promise<DomainEvent[]> {
+  const read = workerReads.then(() => {
+    open()
+    return startWorker(url, locator, session, running)
+  })
+  workerReads = read.catch(() => undefined)
+  return read
+}
+
+function startWorker(
   url: URL,
   locator: string,
   session: ProviderHistorySession,
@@ -1103,7 +1125,7 @@ export function createClaudeHistorySource(
       const { size } = await stat(locator)
       open()
       if (size < worker.fromBytes) return transcriptEvents(locator, session)
-      return readInWorker(worker.url, locator, session, workers)
+      return readInWorker(worker.url, locator, session, workers, open)
     },
     async dispose() {
       disposed = true
