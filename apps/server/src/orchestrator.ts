@@ -2334,9 +2334,7 @@ export class Orchestrator {
     },
     generation: { dispose: number; panic: number; project: number },
   ): Promise<Thread> {
-    const simulatorThreadKey = options.ephemeral
-      ? undefined
-      : `${provider}-${crypto.randomUUID()}`
+    const simulatorThreadKey = options.ephemeral ? undefined : `${provider}-${crypto.randomUUID()}`
     const mcp = this.#mcpRuntimeOptions(provider, workspacePath, simulatorThreadKey)
     // Awaited only when offered, so other starts keep their timing.
     const agentTools =
