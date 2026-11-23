@@ -2023,6 +2023,7 @@ export function startServer(
     port,
     close: async () => {
       historyClosing = true
+      importsBehindReads.close()
       clearTimeout(backgroundTimer)
       historySchedule.stop()
       cliProbe.waitBeforeReads(undefined)
