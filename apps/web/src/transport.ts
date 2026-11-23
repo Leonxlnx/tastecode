@@ -90,6 +90,19 @@ function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error('The server returned invalid data.')
 }
 
+function closeRejectionError(event?: { code?: number; reason?: string }): Error | undefined {
+  if (event?.code !== 1008) return undefined
+  if (event.reason === 'Origin not allowed') {
+    return new Error(
+      'The server rejected this page origin. Open the app at http://127.0.0.1:5183 instead of localhost.',
+    )
+  }
+  if (event.reason === 'Access denied') {
+    return new Error('The server denied access to this connection.')
+  }
+  return undefined
+}
+
 /**
  * Client side of the wire protocol.
  *
@@ -562,7 +575,7 @@ class WebSocketTransport implements Transport {
       this.#receive(String(event.data), socket)
     }
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (this.#socket !== socket) return
       this.#clearConnectTimer()
       // Calls already transmitted on this socket can never be answered — the
@@ -570,7 +583,7 @@ class WebSocketTransport implements Transport {
       // a session got stuck at "starting" forever. Requests still queued
       // survive and flush on reconnect.
       this.#socket = undefined
-      this.#rejectInFlight()
+      this.#rejectInFlight(closeRejectionError(event))
       if (this.#closedByUs) return
       if (!opened && this.#ownServerGone()) return
       this.#scheduleReconnect()
@@ -602,14 +615,14 @@ class WebSocketTransport implements Transport {
     this.#scheduleReconnect(immediate)
   }
 
-  #rejectInFlight(): void {
+  #rejectInFlight(error?: Error): void {
     this.#cancelCaptures()
     this.#validationQueue = []
     this.#validationBytes = 0
     for (const id of this.#inFlight) {
       const call = this.#pending.get(id)
       if (call) {
-        call.reject(new IndeterminateRequestError('Connection to the server was lost.'))
+        call.reject(error ?? new IndeterminateRequestError('Connection to the server was lost.'))
       }
     }
     this.#inFlight.clear()

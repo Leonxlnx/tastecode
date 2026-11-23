@@ -204,9 +204,46 @@ export function isMacOS(): boolean {
   return navigator.platform.startsWith('Mac')
 }
 
+export type BrowserPathPromptRequest = {
+  title: string
+  label: string
+  placeholder: string
+  action: string
+}
+
+type BrowserPathPromptHandler = (request: BrowserPathPromptRequest) => Promise<string | undefined>
+
+let browserPathPrompt: BrowserPathPromptHandler | undefined
+
+export function registerBrowserPathPrompt(handler: BrowserPathPromptHandler): () => void {
+  browserPathPrompt = handler
+  return () => {
+    if (browserPathPrompt === handler) browserPathPrompt = undefined
+  }
+}
+
+async function promptBrowserPath(
+  request: BrowserPathPromptRequest,
+  fallbackPrompt: string,
+): Promise<string | undefined> {
+  if (browserPathPrompt) {
+    return (await browserPathPrompt(request))?.trim() || undefined
+  }
+  if (typeof window === 'undefined' || typeof window.prompt !== 'function') return undefined
+  return window.prompt(fallbackPrompt)?.trim() || undefined
+}
+
 export async function pickFolder(): Promise<string | undefined> {
   if (bridge) return bridge.pickFolder()
-  return window.prompt('Folder to work in')?.trim() || undefined
+  return promptBrowserPath(
+    {
+      title: 'Add project folder',
+      label: 'Folder path',
+      placeholder: '/path/to/project',
+      action: 'Add folder',
+    },
+    'Folder to work in',
+  )
 }
 
 export async function droppedProjectFolderPaths(files: ArrayLike<File>): Promise<string[]> {
@@ -219,7 +256,15 @@ export async function droppedProjectFolderPaths(files: ArrayLike<File>): Promise
 
 export async function pickSkillFolder(): Promise<string | undefined> {
   if (bridge) return bridge.pickSkillFolder()
-  return window.prompt('Full path of an Agent Skill folder')?.trim() || undefined
+  return promptBrowserPath(
+    {
+      title: 'Add Agent Skill folder',
+      label: 'Skill folder path',
+      placeholder: '/path/to/skill',
+      action: 'Add folder',
+    },
+    'Full path of an Agent Skill folder',
+  )
 }
 
 export async function pickFiles(): Promise<PickedAttachment[]> {
@@ -233,7 +278,15 @@ export async function pickFiles(): Promise<PickedAttachment[]> {
     for (const attachment of picked) rememberAttachmentPreview(attachment.path, attachment)
     return picked
   }
-  const typed = window.prompt('Full path of a file to attach')?.trim()
+  const typed = await promptBrowserPath(
+    {
+      title: 'Attach file',
+      label: 'File path',
+      placeholder: '/path/to/file',
+      action: 'Attach',
+    },
+    'Full path of a file to attach',
+  )
   return typed ? [{ path: typed, name: attachmentName(typed) }] : []
 }
 

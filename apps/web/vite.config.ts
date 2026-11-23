@@ -2,10 +2,12 @@ import { fileURLToPath } from 'node:url'
 import type { Plugin } from 'vite'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import { canonicalLoopbackRedirect } from './scripts/canonical-loopback.js'
 import { sharedGrammarPlugins } from './scripts/shared-grammars.js'
 import { shippedLanguageNames } from './src/ui/shiki-languages.js'
 
 const harnessServerUrl = process.env['VITE_HARNESS_SERVER_URL'] ?? 'ws://127.0.0.1:4311'
+const DEV_PORT = 5183
 const here = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 const grammarPlugins = sharedGrammarPlugins(here('.'), shippedLanguageNames)
 
@@ -46,6 +48,20 @@ export default defineConfig({
     react(),
     grammarPlugins.main,
     {
+      name: 'harness-canonical-loopback-origin',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.headers.upgrade) return next()
+          const port = server.config.server.port ?? DEV_PORT
+          const target = canonicalLoopbackRedirect(req.method, req.headers.host, req.url, port)
+          if (!target) return next()
+          res.statusCode = 307
+          res.setHeader('Location', target)
+          res.end()
+        })
+      },
+    },
+    {
       name: 'harness-content-security-policy',
       transformIndexHtml(html) {
         const serverUrl = new URL(harnessServerUrl)
@@ -63,7 +79,7 @@ export default defineConfig({
     // Windows, while Electron and the server both use 127.0.0.1 — the window
     // then opens on ERR_CONNECTION_REFUSED and looks like a broken build.
     host: '127.0.0.1',
-    port: 5183,
+    port: DEV_PORT,
     strictPort: true,
   },
   build: {
