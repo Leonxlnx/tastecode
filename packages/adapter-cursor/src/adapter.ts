@@ -1,7 +1,14 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import path from 'node:path'
-import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
+import type {
+  ApprovalMode,
+  Capabilities,
+  DomainEvent,
+  McpServerConfig,
+  Model,
+  Thread,
+} from '@harness/contracts'
 import {
   argumentPromptLimit,
   killTree,
@@ -22,6 +29,7 @@ import {
   type RawCursorModel,
 } from './models.js'
 import { CURSOR_CAPABILITIES } from './capabilities.js'
+import { prepareCursorMcpPlugin, type CursorMcpPlugin } from './mcp.js'
 
 /**
  * The cursor-agent build line this adapter's frames were captured from. It
@@ -66,10 +74,19 @@ type StartOptions = {
   serviceTier?: string
   approval?: ApprovalMode
   instructions?: string
+  mcpServers?: McpServerConfig[]
+  mcpCredentials?: Record<string, string>
 }
 export type CursorTurnOptions = Pick<StartOptions, 'model' | 'effort' | 'serviceTier'>
 type Spawn = typeof spawnCli
 type Run = typeof runCli
+
+export type CursorAdapterOptions = {
+  spawn?: Spawn
+  run?: Run
+  mcpServers?: McpServerConfig[]
+  mcpCredentials?: Record<string, string>
+}
 
 function applyCursorTurnOptions(current: StartOptions, next: CursorTurnOptions): StartOptions {
   if (Object.keys(next).length === 0) return current
@@ -94,13 +111,18 @@ export class CursorAdapter extends EventEmitter<Events> {
   #turnId: string | undefined
   #startingTurn = false
   #instructionsPending = false
+  #mcpPlugin: CursorMcpPlugin | undefined
   readonly #spawn: Spawn
   readonly #run: Run
+  readonly #defaultMcpServers: McpServerConfig[]
+  readonly #defaultMcpCredentials: Record<string, string>
 
-  constructor(options: { spawn?: Spawn; run?: Run } = {}) {
+  constructor(options: CursorAdapterOptions = {}) {
     super()
     this.#spawn = options.spawn ?? spawnCursorAgent
     this.#run = options.run ?? runCursorAgent
+    this.#defaultMcpServers = options.mcpServers ?? []
+    this.#defaultMcpCredentials = options.mcpCredentials ?? {}
   }
 
   get capabilities(): Capabilities {
@@ -137,6 +159,7 @@ export class CursorAdapter extends EventEmitter<Events> {
     this.#workspacePath = workspacePath
     this.#options = options
     await this.#withConcreteModel(options)
+    this.#installMcpPlugin(options)
     this.#sessionId = undefined
     this.#instructionsPending = Boolean(options.instructions)
     this.#threadId = `cursor-${crypto.randomUUID()}`
@@ -159,10 +182,19 @@ export class CursorAdapter extends EventEmitter<Events> {
     this.#workspacePath = workspacePath
     this.#options = options
     await this.#withConcreteModel(options)
+    this.#installMcpPlugin(options)
     this.#sessionId = sessionId
     this.#instructionsPending = false
     this.#threadId = `cursor-${sessionId}`
     return { id: this.#threadId, provider: 'cursor', workspacePath, createdAt: Date.now() }
+  }
+
+  #installMcpPlugin(options: StartOptions): void {
+    this.#mcpPlugin?.dispose()
+    this.#mcpPlugin = prepareCursorMcpPlugin(
+      options.mcpServers ?? this.#defaultMcpServers,
+      options.mcpCredentials ?? this.#defaultMcpCredentials,
+    )
   }
 
   /**
@@ -229,6 +261,7 @@ export class CursorAdapter extends EventEmitter<Events> {
         : []),
       ...(effectiveOptions.model ? ['--model', effectiveOptions.model] : []),
       ...(this.#sessionId ? ['--resume', this.#sessionId] : []),
+      ...(this.#mcpPlugin ? ['--plugin-dir', this.#mcpPlugin.dir, '--approve-mcps'] : []),
       ...attached.args,
       // The CLI reads a prompt that starts with "-" as an option and exits
       // with "error: unknown option" (a list, "--- notes", "-1 is wrong").
@@ -236,7 +269,10 @@ export class CursorAdapter extends EventEmitter<Events> {
       '--',
       prompt,
     ]
-    const child = this.#spawn('cursor-agent', args, { cwd: this.#workspacePath })
+    const child = this.#spawn('cursor-agent', args, {
+      cwd: this.#workspacePath,
+      ...(this.#mcpPlugin ? { env: this.#mcpPlugin.env } : {}),
+    })
     // The instructions count as sent only once the CLI has started; a spawn
     // that throws keeps them for the retry.
     this.#instructionsPending = false
@@ -313,7 +349,11 @@ export class CursorAdapter extends EventEmitter<Events> {
   }
 
   dispose(): Promise<void> {
-    const stopped = this.#child ? killTree(this.#child) : this.#processStop
+    const plugin = this.#mcpPlugin
+    this.#mcpPlugin = undefined
+    const stopped = (this.#child ? killTree(this.#child) : this.#processStop).finally(() => {
+      plugin?.dispose()
+    })
     this.#child = undefined
     this.#threadId = undefined
     this.#turnId = undefined
