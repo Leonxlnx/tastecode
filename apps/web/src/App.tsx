@@ -36,6 +36,7 @@ import {
   isDesktop,
   isMacOS,
   onNativeMenuAction,
+  ownServerListening,
   ownServerToken,
   pickFolder,
   reportStartupMilestone,
@@ -713,7 +714,12 @@ function replaceSourceRows(
 /** `transport` replaces the local server connection; the design sandbox passes one. */
 export function App({ transport: givenTransport }: { transport?: Transport } = {}) {
   const [transport] = useState<Transport>(
-    () => givenTransport ?? new Transport(SERVER_BASE_URL, { ownServerToken }),
+    () =>
+      givenTransport ??
+      new Transport(SERVER_BASE_URL, {
+        ownServerToken,
+        serverListening: ownServerListening(),
+      }),
   )
   // StrictMode replays effect cleanup against this same memoized instance.
   const usageController = useMemo(

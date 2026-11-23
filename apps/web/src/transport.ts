@@ -163,6 +163,13 @@ export const REFUSED_SERVER_RETRY_MS = 5_000
  */
 export type MissingServer = 'other-app' | 'gone'
 
+/**
+ * The longest a desktop window waits for the server its app started to listen
+ * before it dials anyway. The desktop answers when the server listens or a
+ * start attempt ends; this only bounds an answer that never comes.
+ */
+export const OWN_SERVER_LISTEN_WAIT_MS = 5_000
+
 /** The server may have accepted a transmitted mutation before its reply was lost. */
 export class IndeterminateRequestError extends Error {
   override name = 'IndeterminateRequestError'
@@ -173,6 +180,8 @@ class WebSocketTransport implements Transport {
   /** Set when the desktop started this window's server; no other server is used. */
   #ownProtocol: string | undefined
   #missingServer: MissingServer | undefined
+  /** Until it settles the first socket is not dialed; see connect(). */
+  #serverListening: Promise<unknown> | undefined
   #missingServerListeners = new Set<(reason: MissingServer | undefined) => void>()
   #socket: WebSocket | undefined
   #pending = new Map<string, Pending>()
@@ -203,9 +212,17 @@ class WebSocketTransport implements Transport {
   #sequenceGapListeners = new Set<(expected: number, received: number) => void>()
   #channelListeners = new Map<string, Set<(data: unknown) => void>>()
 
-  constructor(url: string, options: { ownServerToken?: string | undefined } = {}) {
+  constructor(
+    url: string,
+    options: {
+      ownServerToken?: string | undefined
+      /** Settles once the server the desktop started for this window listens. */
+      serverListening?: Promise<unknown> | undefined
+    } = {},
+  ) {
     this.#url = url
     this.#ownProtocol = options.ownServerToken ? `tastecode.${options.ownServerToken}` : undefined
+    this.#serverListening = options.serverListening
   }
 
   onMissingServer(listener: (reason: MissingServer | undefined) => void): () => void {
@@ -253,7 +270,24 @@ class WebSocketTransport implements Transport {
     // paint. Fetch the full protocol validators then instead of making their
     // schemas and Zod block evaluation of the launch bundle.
     this.#loadValidation()
-    this.#open('connecting')
+    const listening = this.#serverListening
+    if (!listening) {
+      this.#open('connecting')
+      return
+    }
+    // On Windows Chromium holds a socket dialed before anything listens for
+    // ~0.5 s before it retries, which used to delay every desktop start. The
+    // open waits in the reconnect timer's slot, so close() and another
+    // connect() cancel it like a scheduled reconnect; later opens never wait.
+    this.#setState('connecting')
+    const open = () => {
+      if (this.#reconnectTimer !== timer) return
+      this.#serverListening = undefined
+      this.#open('connecting')
+    }
+    const timer = setTimeout(open, OWN_SERVER_LISTEN_WAIT_MS)
+    this.#reconnectTimer = timer
+    void listening.then(open, open)
   }
 
   close(): void {

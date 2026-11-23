@@ -75,6 +75,7 @@ type Bridge = {
   reportStartupMilestone?: (name: RendererStartupMilestone) => void
   edition?: unknown
   ownServerToken?: unknown
+  ownServerListening?: () => Promise<void>
   isDesktop: true
 }
 
@@ -186,6 +187,14 @@ export const buildEdition = edition === 'release' || edition === 'dev' ? edition
  */
 const token = bridge?.ownServerToken
 export const ownServerToken = typeof token === 'string' && token ? token : undefined
+
+/**
+ * Settles once the server the desktop started for this window listens, or a
+ * start attempt ended without that. Undefined when there is none to wait for.
+ */
+export function ownServerListening(): Promise<void> | undefined {
+  return ownServerToken ? bridge?.ownServerListening?.() : undefined
+}
 
 export function reportStartupMilestone(name: RendererStartupMilestone): void {
   bridge?.reportStartupMilestone?.(name)

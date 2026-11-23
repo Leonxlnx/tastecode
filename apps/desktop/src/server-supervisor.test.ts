@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MAX_CONSECUTIVE_FAILURES,
+  SERVER_READY_WAIT_MS,
   SERVER_SHUTDOWN_TIMEOUT_MS,
   SERVER_TREE_STOP_BUDGET_MS,
   restartDelayMs,
@@ -40,6 +41,102 @@ describe('restartDelayMs', () => {
     expect(restartDelayMs(4)).toBe(4_000)
     expect(restartDelayMs(6)).toBe(15_000)
     expect(restartDelayMs(50)).toBe(15_000)
+  })
+})
+
+describe('ServerSupervisor readiness', () => {
+  const READY = '[server] listening on ws://127.0.0.1:4311'
+
+  function readySupervisor() {
+    const children: FakeChild[] = []
+    const sup = new ServerSupervisor({
+      command: 'node',
+      args: ['server.js'],
+      env: {},
+      onLog: vi.fn(),
+      isReadyLine: (line) => line.startsWith('[server] listening on '),
+      spawnFn: () => {
+        const child = new FakeChild()
+        children.push(child)
+        return child
+      },
+    })
+    return { sup, children }
+  }
+
+  /** Lets stream data and promise callbacks run under fake timers. */
+  async function settle(promise: Promise<void>) {
+    let settled = false
+    void promise.then(() => {
+      settled = true
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    return settled
+  }
+
+  it('answers at once while the running child listens, and when no launch runs or is due', async () => {
+    const { sup, children } = readySupervisor()
+    expect(await settle(sup.whenReady())).toBe(true)
+    sup.start()
+    const waiting = sup.whenReady()
+    expect(await settle(waiting)).toBe(false)
+    children[0]!.stdout.write(`${READY}\n`)
+    expect(await settle(waiting)).toBe(true)
+    expect(await settle(sup.whenReady())).toBe(true)
+    void sup.stop()
+    children[0]!.emit('exit', 0, null)
+    expect(await settle(sup.whenReady())).toBe(true)
+  })
+
+  it('makes a caller during the second launch wait for that launch, not the first one', async () => {
+    const { sup, children } = readySupervisor()
+    sup.start()
+    children[0]!.stdout.write(`${READY}\n`)
+    await vi.advanceTimersByTimeAsync(0)
+    children[0]!.emit('exit', 1, null)
+
+    // A reload while the replacement is due, then while it starts.
+    const beforeRelaunch = sup.whenReady()
+    expect(await settle(beforeRelaunch)).toBe(false)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(children).toHaveLength(2)
+    const duringRelaunch = sup.whenReady()
+    expect(await settle(beforeRelaunch)).toBe(false)
+    expect(await settle(duringRelaunch)).toBe(false)
+
+    // The first child's late output does not count for its successor.
+    children[0]!.stdout.write(`${READY}\n`)
+    children[0]!.stdout.end()
+    expect(await settle(duringRelaunch)).toBe(false)
+
+    children[1]!.stdout.write(`${READY}\n`)
+    expect(await settle(beforeRelaunch)).toBe(true)
+    expect(await settle(duringRelaunch)).toBe(true)
+  })
+
+  it('releases the waiters of a launch that ends without listening right away', async () => {
+    const { sup, children } = readySupervisor()
+    sup.start()
+    const waiting = sup.whenReady()
+    children[0]!.stderr.write('[server] port 4311 is already in use\n')
+    expect(await settle(waiting)).toBe(false)
+    children[0]!.emit('exit', 1, null)
+    expect(await settle(waiting)).toBe(true)
+  })
+
+  it('lets every waiter on a silent live child go after the deadline, holding nothing', async () => {
+    const { sup } = readySupervisor()
+    sup.start()
+    const reloads: Array<Promise<void>> = []
+    for (let reload = 0; reload < 4; reload++) {
+      reloads.push(sup.whenReady())
+      await vi.advanceTimersByTimeAsync(1_000)
+    }
+    expect(vi.getTimerCount()).toBe(4)
+    await vi.advanceTimersByTimeAsync(SERVER_READY_WAIT_MS)
+    for (const reload of reloads) expect(await settle(reload)).toBe(true)
+    // Each waiter owned one deadline; none is left, so main keeps no waiter either.
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
 

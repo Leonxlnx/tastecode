@@ -285,6 +285,8 @@ let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
 /** Proves to this app's window that the server it reaches is the one this app started. */
 let ownServerToken: string | undefined
+/** The line the server writes once its port is bound. */
+const SERVER_READY_LINE = '[server] listening on '
 let serverFailureNoticeOpen = false
 
 function showServerFailureNotice(): void {
@@ -518,13 +520,14 @@ function startOwnedServer(): boolean {
   const supervisorCallbacks = {
     onLog: (line: string) => {
       console.log('[server]', line)
-      if (!startupServerReady && line.startsWith('[server] listening on ')) {
+      if (!startupServerReady && line.startsWith(SERVER_READY_LINE)) {
         startupServerReady = true
         logStartupMilestone('server-ready')
         finishStartupBenchmarkIfReady()
       }
     },
     onGaveUp: showServerFailureNotice,
+    isReadyLine: (line: string) => line.startsWith(SERVER_READY_LINE),
   }
   serverSupervisor =
     process.env['HARNESS_LEGACY_SERVER_PROCESS'] === '1'
@@ -886,6 +889,17 @@ function sendNativeMenuAction(action: NativeMenuAction, source: NativeMenuAction
 // The preload asks once, before the page connects; only this app's own page learns it.
 ipcMain.on('harness:ownServerToken', (event) => {
   event.returnValue = isOwnRenderer(event.sender) ? (ownServerToken ?? null) : null
+})
+
+// Answers the page's first connect once the server launch running now listens
+// or ends. On Windows a page socket dialed at a loopback port with nothing
+// listening yet does not fail fast: Chromium tries again only ~0.5 s later, and
+// the page used to dial 60-100 ms before the server listened, so every start
+// showed the sidebar ~430 ms late. An attempt that ends without listening (a
+// port another TasteCode holds, a crash) releases the page too, which then
+// reports what it finds there as before. At once when this app owns no server.
+ipcMain.handle('harness:ownServerListening', async (event) => {
+  if (isOwnRenderer(event.sender)) await serverSupervisor?.whenReady()
 })
 
 ipcMain.on('harness:menuReady', (event) => {
