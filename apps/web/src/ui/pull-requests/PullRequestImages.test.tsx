@@ -170,4 +170,18 @@ describe('pull-request Markdown images', () => {
     expect(container.querySelector('script,iframe,[onerror],img[src^="javascript:"]')).toBeNull()
     expect(request).not.toHaveBeenCalled()
   })
+
+  it('enlarges resolved PR images in MediaViewer on click and leaves linked images as links', async () => {
+    fixture(`![Before](${source})\n\n[![Linked](${source})](https://example.com/full)`)
+    await waitFor(() => expect(screen.getByAltText('Before').getAttribute('src')).toBe(dataUrl))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open preview of Before' }))
+    expect(await screen.findByRole('dialog', { name: 'Preview Before' })).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Preview Before' })).toBeNull()
+
+    const link = screen.getByRole('link', { name: 'Linked' })
+    expect(link.getAttribute('href')).toBe('https://example.com/full')
+    expect(link.querySelector('button')).toBeNull()
+  })
 })

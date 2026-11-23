@@ -39,6 +39,7 @@ import {
   ChatImageContext,
   MarkdownImage,
   MarkdownImageContext,
+  MarkdownLinkContext,
 } from './MarkdownImage.js'
 import { MarkdownBlock, MarkdownCode, MarkdownPre } from './LargeCodeBlock.js'
 import { closedBlockCount, createBlockSplitter } from './markdown-blocks.js'
@@ -124,9 +125,11 @@ function MarkdownLink({ children, href: source, node: _node, ...props }: Markdow
       const reference = projectFileReference(fileLink.href, projectPath)
       if (reference?.kind === 'safe' && canRevealProjectFile) {
         return (
-          <RevealProjectFileButton path={reference.path} projectPath={projectPath}>
-            {children}
-          </RevealProjectFileButton>
+          <MarkdownLinkContext.Provider value={true}>
+            <RevealProjectFileButton path={reference.path} projectPath={projectPath}>
+              {children}
+            </RevealProjectFileButton>
+          </MarkdownLinkContext.Provider>
         )
       }
       if (reference?.kind === 'blocked') {
@@ -151,14 +154,16 @@ function MarkdownLink({ children, href: source, node: _node, ...props }: Markdow
 
   const external = href ? /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href) : false
   return (
-    <a
-      {...props}
-      href={href}
-      target={external ? '_blank' : props.target}
-      rel={external ? 'noreferrer' : props.rel}
-    >
-      {children}
-    </a>
+    <MarkdownLinkContext.Provider value={true}>
+      <a
+        {...props}
+        href={href}
+        target={external ? '_blank' : props.target}
+        rel={external ? 'noreferrer' : props.rel}
+      >
+        {children}
+      </a>
+    </MarkdownLinkContext.Provider>
   )
 }
 

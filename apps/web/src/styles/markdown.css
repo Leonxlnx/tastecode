@@ -606,6 +606,26 @@
   vertical-align: middle;
 }
 
+.md-image-preview__open {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: none;
+  cursor: zoom-in;
+  vertical-align: middle;
+}
+
+.md-image-preview__open:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.md-image-preview__open > .md-resolved-image {
+  display: block;
+}
+
 .md-image-fallback {
   display: inline-flex;
   align-items: center;

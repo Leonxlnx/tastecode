@@ -168,12 +168,15 @@ describe('startup CSS budget', () => {
 
   it('keeps optional thread overlays behind their user actions', () => {
     const thread = readSource('../ui/Thread.tsx')
+    const markdownImage = readSource('../ui/MarkdownImage.tsx')
 
     const mediaViewer = readSource('../ui/LazyMediaViewer.tsx')
     expect(thread).toContain("from './LazyMediaViewer.js'")
+    expect(markdownImage).toContain("from './LazyMediaViewer.js'")
     expect(mediaViewer).toContain("import('./MediaViewer.js')")
     expect(thread).toContain("import('./ThreadSearch.js')")
     expect(thread).not.toContain("from './MediaViewer.js'")
+    expect(markdownImage).not.toContain("from './MediaViewer.js'")
     expect(thread).not.toContain("from './ThreadSearch.js'")
   })
 })
