@@ -907,6 +907,10 @@ const REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT = 16 * 1024 * 1024
 // A replay is saved after the answer it was built for has gone out: writing a large chat's
 // replay held its cold open for 257 ms of SQLite work before the reply could leave.
 const REPLAY_SNAPSHOT_WRITE_DELAY_MS = 250
+// What may wait for that write. The largest replays measured were 18-26 M characters, so one
+// of them fits; past either bound a replay is written at once, as before.
+const UNSAVED_REPLAY_SNAPSHOT_LIMIT = 16
+const UNSAVED_REPLAY_SNAPSHOT_CHARACTER_LIMIT = 2 * REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT
 
 const StoredEventRowsSchema = z.array(
   z.object({
@@ -1042,6 +1046,7 @@ export class Store {
   #replaySnapshotCacheCharacters = 0
   /** Replays still to be written, oldest first; a read of the saved row writes its own first. */
   #unsavedReplaySnapshots = new Map<string, { seq: number; payload: string }>()
+  #unsavedReplaySnapshotCharacters = 0
   #replaySnapshotWrite: ReturnType<typeof setTimeout> | undefined
   /** Search cursors are process-local; retaining packed row IDs avoids a temp-table write per hit. */
   #searchSnapshots = new Map<string, SearchSnapshot>()
@@ -3927,14 +3932,21 @@ export class Store {
 
   /** For a replay that no longer holds: neither kept in memory nor written later. */
   #forgetReplaySnapshot(threadId: string): void {
-    this.#unsavedReplaySnapshots.delete(threadId)
+    this.#takeUnsavedReplaySnapshot(threadId)
     this.#deleteCachedReplaySnapshot(threadId)
   }
 
-  #writeUnsavedReplaySnapshot(threadId: string): void {
+  #takeUnsavedReplaySnapshot(threadId: string): { seq: number; payload: string } | undefined {
     const unsaved = this.#unsavedReplaySnapshots.get(threadId)
-    if (!unsaved) return
+    if (!unsaved) return undefined
     this.#unsavedReplaySnapshots.delete(threadId)
+    this.#unsavedReplaySnapshotCharacters -= unsaved.payload.length
+    return unsaved
+  }
+
+  #writeUnsavedReplaySnapshot(threadId: string): void {
+    const unsaved = this.#takeUnsavedReplaySnapshot(threadId)
+    if (!unsaved) return
     try {
       this.#writeReplaySnapshot.run(threadId, unsaved.seq, unsaved.payload)
       this.#pruneReplaySnapshots.run(REPLAY_SNAPSHOT_DISK_LIMIT)
@@ -3976,9 +3988,23 @@ export class Store {
   ): string {
     const payload = JSON.stringify(entries)
     // Written after the reply this replay serves; the saved row stays in write order.
-    this.#unsavedReplaySnapshots.delete(threadId)
-    this.#unsavedReplaySnapshots.set(threadId, { seq, payload })
-    this.#scheduleReplaySnapshotWrite()
+    this.#takeUnsavedReplaySnapshot(threadId)
+    if (
+      this.#unsavedReplaySnapshots.size < UNSAVED_REPLAY_SNAPSHOT_LIMIT &&
+      this.#unsavedReplaySnapshotCharacters + payload.length <=
+        UNSAVED_REPLAY_SNAPSHOT_CHARACTER_LIMIT
+    ) {
+      this.#unsavedReplaySnapshots.set(threadId, { seq, payload })
+      this.#unsavedReplaySnapshotCharacters += payload.length
+      this.#scheduleReplaySnapshotWrite()
+    } else {
+      // Past the budget it is written now, as before. Those waiting go first, so the rows
+      // keep the order the replays were read in, which decides which ones pruning keeps.
+      for (const waiting of this.#unsavedReplaySnapshots.keys())
+        this.#writeUnsavedReplaySnapshot(waiting)
+      this.#writeReplaySnapshot.run(threadId, seq, payload)
+      this.#pruneReplaySnapshots.run(REPLAY_SNAPSHOT_DISK_LIMIT)
+    }
     this.#rememberReplaySnapshot(
       threadId,
       seq,
