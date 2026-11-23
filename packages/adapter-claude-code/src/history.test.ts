@@ -1097,6 +1097,35 @@ describe('Claude Code saved history', { timeout: 20_000 }, () => {
     ])
   })
 
+  it('starts no worker once disposed, and stops a parked one before it resolves', async () => {
+    const f = await fixture([row('u1', 'user', 'Large')])
+    const url = new URL('./fixtures/history-worker.mjs', import.meta.url)
+    const listing = createClaudeHistorySource({ configDir: f.configDir })
+    const session = (await listing.list())[0]!
+    const source = createClaudeHistorySource({
+      configDir: f.configDir,
+      readWorker: { fromBytes: 0, url },
+    })
+    // Disposed while the read still checks its transcript, before any worker exists.
+    const validating = source.read({ ...session, title: 'busy' })
+    await source.dispose?.()
+    await expect(validating).rejects.toThrow('closed')
+    await expect(source.read({ ...session, title: 'busy' })).rejects.toThrow('closed')
+
+    const parked = createClaudeHistorySource({
+      configDir: f.configDir,
+      readWorker: { fromBytes: 0, url },
+    })
+    const running = parked.read({ ...session, title: 'running' })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    let stopped = false
+    void running.catch(() => (stopped = true))
+    await parked.dispose?.()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(stopped).toBe(true)
+    await expect(running).rejects.toThrow('stopped')
+  })
+
   it('refuses transcript paths outside its configured history root', async () => {
     const f = await fixture([row('u1', 'user', 'Inside')])
     const session = (await f.source.list())[0]!

@@ -976,6 +976,11 @@ export function createClaudeHistorySource(
     url: new URL('./history-worker.js', import.meta.url),
   }
   const workers = new Set<Worker>()
+  // Set by dispose: a read still validating its transcript then starts no worker.
+  let disposed = false
+  const open = () => {
+    if (disposed) throw new Error('Claude history was closed')
+  }
   return {
     resolveSessionId: (threadId) => (threadId.startsWith('claude-') ? threadId.slice(7) : threadId),
     readSubagentTranscript: (session, item) =>
@@ -1094,14 +1099,19 @@ export function createClaudeHistorySource(
       const locator = session.locator
       if (!locator || path.basename(locator) !== `${session.id}.jsonl`) return []
       if (!(await validLocator(locator).catch(() => false))) return []
-      if ((await stat(locator)).size < worker.fromBytes) return transcriptEvents(locator, session)
+      open()
+      const { size } = await stat(locator)
+      open()
+      if (size < worker.fromBytes) return transcriptEvents(locator, session)
       return readInWorker(worker.url, locator, session, workers)
     },
-    dispose() {
-      for (const running of workers) void running.terminate()
+    async dispose() {
+      disposed = true
+      const stopping = [...workers].map((running) => running.terminate())
       cache.clear()
       subagents.files.clear()
       subagents.agents.clear()
+      await Promise.allSettled(stopping)
     },
   }
 }
