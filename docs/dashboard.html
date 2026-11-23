@@ -291,12 +291,23 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-22 dev 594d8b30 · nightly 8a60342f · main dd8f4264</span>
+        <span class="meta">2026-11-23 dev e1920a0d · nightly 8a60342f · main dd8f4264</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 23 on dev (e1920a0d, not on nightly or main): performance, measured in a packaged
+          build with 55 imported real chats. The desktop page connects once its own server listens,
+          and the server reports listening only once its port is bound, so the sidebar shows about
+          0.4 s sooner on every start (#2478). Opening a large chat no longer waits for its replay
+          snapshot to be written (#2476). A large Claude Code transcript that changed outside
+          TasteCode is read in a worker thread, one at a time, so other chats and requests stay
+          responsive while it is read (#2479). The provider-history refresh reads only the rows and
+          index files it needs (#2477). Typing measures a one-line composer once per key (#2475),
+          and closures in the app no longer keep a closed chat's state in memory (#2482).
+        </p>
         <p>
           November 22 on dev (594d8b30, not on nightly or main): 73 pull requests merged, besides
           the dashboard entries. Creatify replaces the Design button in the prompt bar: with it on,
