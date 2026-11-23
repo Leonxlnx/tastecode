@@ -64,6 +64,7 @@ import {
   IconDatabase as Database,
   IconFileImport as FileImport,
   IconDeviceMobile as Smartphone,
+  IconDeviceMobileCode as SimulatorIcon,
   IconInfoCircle as Info,
   IconPackages as Boxes,
   IconKeyboard as Keyboard,
@@ -246,6 +247,12 @@ const PhoneSettings = lazy(() =>
     .catch(surfaceLoadFailed),
 )
 
+const SimulatorSettings = lazy(() =>
+  import('./SimulatorSettings.js')
+    .then((module) => ({ default: module.SimulatorSettings }))
+    .catch(surfaceLoadFailed),
+)
+
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js')
     .then((module) => ({ default: module.InstallTerminal }))
@@ -260,6 +267,7 @@ export type SettingsSection =
   | 'skills'
   | 'workflows'
   | 'usage'
+  | 'simulator'
   | 'phone'
   | 'appearance'
   | 'keybinds'
@@ -679,6 +687,12 @@ function SettingsComponent(props: {
               label="Usage"
               onClick={() => setSection('usage')}
             />
+            <SettingsNavItem
+              active={section === 'simulator'}
+              icon={<SimulatorIcon size={15} aria-hidden />}
+              label="Simulator"
+              onClick={() => setSection('simulator')}
+            />
             {phoneAvailable ? (
               <SettingsNavItem
                 active={section === 'phone'}
@@ -755,6 +769,17 @@ function SettingsComponent(props: {
             {section === 'workflows' ? <GeneralSettings {...props} /> : null}
             {section === 'usage' ? (
               <UsageSettings transport={props.transport} limits={props.usageLimits} />
+            ) : null}
+            {section === 'simulator' ? (
+              <Suspense
+                fallback={
+                  <SkeletonStatus label="Loading simulator settings…">
+                    <Skeleton width={260} height={11} />
+                  </SkeletonStatus>
+                }
+              >
+                <SimulatorSettings transport={props.transport} />
+              </Suspense>
             ) : null}
             {section === 'phone' ? (
               <Suspense

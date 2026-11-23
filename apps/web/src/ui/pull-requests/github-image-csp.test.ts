@@ -29,6 +29,10 @@ describe('GitHub Markdown image CSP', () => {
     expect(directives.get('img-src')).not.toEqual(expect.arrayContaining(['*']))
     expect(directives.get('img-src')).not.toContain('https:')
     expect(directives.get('default-src')).toEqual(["'self'"])
-    expect(directives.get('connect-src')).toEqual(["'self'", '__HARNESS_SERVER_ORIGIN__'])
+    expect(directives.get('connect-src')).toEqual([
+      "'self'",
+      '__HARNESS_SERVER_ORIGIN__',
+      '__HARNESS_SERVER_HTTP_ORIGIN__',
+    ])
   })
 })

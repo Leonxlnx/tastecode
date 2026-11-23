@@ -48,7 +48,11 @@ export default defineConfig({
     {
       name: 'harness-content-security-policy',
       transformIndexHtml(html) {
-        return html.replace('__HARNESS_SERVER_ORIGIN__', new URL(harnessServerUrl).origin)
+        const serverUrl = new URL(harnessServerUrl)
+        const httpOrigin = `${serverUrl.protocol === 'wss:' ? 'https:' : 'http:'}//${serverUrl.host}`
+        return html
+          .replaceAll('__HARNESS_SERVER_ORIGIN__', serverUrl.origin)
+          .replaceAll('__HARNESS_SERVER_HTTP_ORIGIN__', httpOrigin)
       },
     },
   ],

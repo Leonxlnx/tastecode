@@ -36,6 +36,13 @@ export const SETTINGS_PAGES: SettingsSearchEntry[] = [
   { id: 'page:mcp', section: 'mcp', title: 'MCP servers', page: true },
   { id: 'page:skills', section: 'skills', title: 'Skills', page: true },
   { id: 'page:usage', section: 'usage', title: 'Usage', page: true },
+  {
+    id: 'page:simulator',
+    section: 'simulator',
+    title: 'Simulator',
+    keywords: 'ios android emulator device',
+    page: true,
+  },
   { id: 'page:phone', section: 'phone', title: 'Phone', page: true, visible: (c) => c.phone },
   {
     id: 'page:import',

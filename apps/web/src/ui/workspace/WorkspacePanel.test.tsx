@@ -79,7 +79,14 @@ describe('WorkspacePanel', () => {
       expect(screen.getByRole('tablist')).toBeTruthy()
       expect(screen.getByRole('button', { name: 'Add workspace tab' })).toBeTruthy()
       expect(screen.queryByRole('button', { name: /Expand/ })).toBeNull()
-      for (const name of ['Review', 'Terminal', 'Browser', 'Files', 'Temporary chat']) {
+      for (const name of [
+        'Review',
+        'Terminal',
+        'Browser',
+        'Files',
+        'Simulator',
+        'Temporary chat',
+      ]) {
         expect(screen.getByRole('button', { name })).toBeTruthy()
       }
       fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))

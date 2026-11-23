@@ -263,7 +263,7 @@ import type {
 } from './ui/workspace/WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './ui/workspace/WorkspaceBrowser.js'
 import type { AnnotationDraft } from './ui/workspace/browser-annotations.js'
-import type { WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
+import type { SimulatorOpenRequest, WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
 import { useCheckoutPullRequest } from './ui/pull-requests/useCheckoutPullRequest.js'
 import {
   DEFAULT_BOTTOM_PANEL_HEIGHT,
@@ -1413,6 +1413,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const nextWorkspaceToolRequest = useRef(0)
   const [workspaceDesignPreviewRequest, setWorkspaceDesignPreviewRequest] =
     useState<BrowserNavigationRequest>()
+  const [workspaceSimulatorRequest, setWorkspaceSimulatorRequest] = useState<SimulatorOpenRequest>()
+  const nextSimulatorOpenRequest = useRef(0)
   /** The newest Design preview of each chat in the background, shown once that chat opens. */
   const backgroundDesignPreviews = useRef(new Map<string, BrowserNavigationRequest>())
   const [providerLoginTerminal, setProviderLoginTerminal] = useState<ProviderLoginTerminalSession>()
@@ -2668,6 +2670,17 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     const offBrowserCancel = transport.on('browser.commandCancelled', ({ commandId }) =>
       deliverAgentBrowserEvent({ kind: 'cancel', commandId }),
     )
+    const offSimulatorOpened = transport.on('simulator.opened', (event) => {
+      if (event.openedBy !== 'agent') return
+      if (activeIdRef.current && event.threadId !== activeIdRef.current) return
+      setWorkspacePanelHasMounted(true)
+      setWorkspacePanelOpen(true)
+      setWorkspaceSimulatorRequest({
+        requestId: ++nextSimulatorOpenRequest.current,
+        deviceId: event.deviceId,
+        name: event.name,
+      })
+    })
     const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
     const offUsageChanged = transport.on('usage.changed', ({ provider, accountId }) => {
       usageController.changed(provider, accountId)
@@ -2744,6 +2757,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       offPreviewCapture()
       offBrowserCommand()
       offBrowserCancel()
+      offSimulatorOpened()
       offSidebarSettings()
       offUsageChanged()
       offUsageLimits()
@@ -8379,6 +8393,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                 imagesSupported={attachmentsSupported}
                 onAnnotationDraft={stageBrowserAnnotations}
                 designPreviewRequest={workspaceDesignPreviewRequest}
+                simulatorOpenRequest={workspaceSimulatorRequest}
                 onOpenPullRequest={openCheckoutPullRequest}
                 providerLogin={
                   providerLoginTerminal?.visible
