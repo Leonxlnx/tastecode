@@ -24,6 +24,10 @@
       "types": "./dist/kill.d.ts",
       "default": "./dist/kill.js"
     },
+    "./mcp-stdio-bridge": {
+      "types": "./dist/mcp-stdio-bridge.d.ts",
+      "default": "./dist/mcp-stdio-bridge.js"
+    },
     "./updates": {
       "types": "./dist/updates.d.ts",
       "default": "./dist/updates.js"
