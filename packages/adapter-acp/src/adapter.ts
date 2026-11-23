@@ -247,8 +247,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   readonly #managedMcp: AcpMcpServer[]
   readonly #assumeHttpMcp: boolean
   readonly #modeForApproval:
-    | ((approval: ApprovalMode, available: readonly string[]) => string | undefined)
-    | undefined
+    ((approval: ApprovalMode, available: readonly string[]) => string | undefined) | undefined
   readonly #env: Record<string, string> | undefined
   readonly #argsFor: ((settings: AcpTurnSettings) => string[]) | undefined
   #settings: AcpTurnSettings
@@ -751,7 +750,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #recordConfigOptions(session: { configOptions?: unknown } | undefined): void {
     const parsed = session ? NewSessionResultSchema.safeParse(session) : undefined
     const data = parsed?.success ? parsed.data : undefined
-    this.#modelConfigId = (data ? modelConfigOption(data)?.id : undefined) ?? this.#spec.modelConfigId
+    this.#modelConfigId =
+      (data ? modelConfigOption(data)?.id : undefined) ?? this.#spec.modelConfigId
     this.#effortConfigId = data ? effortConfigOption(data)?.id : undefined
     const modeOption = data ? modeConfigOption(data) : undefined
     this.#modeConfigId = modeOption?.id

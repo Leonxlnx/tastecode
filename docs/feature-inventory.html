@@ -754,7 +754,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >ACP sessions: resume, live approvals, reasoning items, native images and managed MCP
+                >ACP sessions: resume, live approvals, reasoning items, native images and managed
+                MCP
                 <span class="d"
                   >runs agy acp over stdio JSON-RPC with session/load resume, live permission
                   requests, model/thought_level/mode config options, native image blocks, direct
@@ -1349,18 +1350,18 @@
                 open task list and what git reports as changed; sized at half a character per token
                 of the model's context window as the engine reports it (OpenCode and Pi per model,
                 waited for at most two seconds) or declares it (6,000–96,000 characters, 64,000
-                without one) and within the command-line limit of Cursor (15,000
-                characters on Windows, 40,000 on Linux). A chat with no conversation yet sends just
-                the request. The transcript keeps only the user's words. A first turn there that
-                ends stopped or failed before any answer, or whose session goes away, sends the
-                handover again with the next prompt; a restart before the first prompt starts the
-                new provider afresh. The sessions a chat left stay its own: provider history neither
-                imports them as chats nor reads them in again. At a plan limit, other signed-in
-                providers are offered beside other accounts (Switch to Claude Code); choosing one
-                sets the chat up to switch with the failed request in the composer and sends
-                nothing. A model on another provider comes back at the effort it was last used with
-                (in a chat on Opus at xhigh, GPT-5.6 Sol comes back at its last high); another model
-                or account of the same provider keeps the current effort</span
+                without one) and within the command-line limit of Cursor (15,000 characters on
+                Windows, 40,000 on Linux). A chat with no conversation yet sends just the request.
+                The transcript keeps only the user's words. A first turn there that ends stopped or
+                failed before any answer, or whose session goes away, sends the handover again with
+                the next prompt; a restart before the first prompt starts the new provider afresh.
+                The sessions a chat left stay its own: provider history neither imports them as
+                chats nor reads them in again. At a plan limit, other signed-in providers are
+                offered beside other accounts (Switch to Claude Code); choosing one sets the chat up
+                to switch with the failed request in the composer and sends nothing. A model on
+                another provider comes back at the effort it was last used with (in a chat on Opus
+                at xhigh, GPT-5.6 Sol comes back at its last high); another model or account of the
+                same provider keeps the current effort</span
               ></label
             >
           </li>
@@ -1663,16 +1664,16 @@
                 ordinary file attachments gated by declared source capability (pixels, image files
                 the agent opens, and per-model image input); Codex, Claude Code, Grok, OpenCode
                 (file parts), Antigravity (ACP image blocks) and Cursor (--image) receive images as
-                pixels, and Pi has none yet; raster images and videos get
-                lightweight composer previews, sent image previews above their message, and an
-                app-native full-window viewer that opens without a reveal delay or photo size
-                animation; desktop image previews and browser images offer a native Copy Image
-                context menu; links offer a native Open, separator, and Copy Link menu; selected
-                images reach ACP image blocks when the agent advertises image prompts and resource
-                links otherwise, so Grok's MCP mode no longer accepts then fails an image;
-                attachments can send without typed text and name a new session from their filenames,
-                while rejected sends restore the original draft and attachment set; in the web build
-                a drop or a paste says by name that it needs the desktop app</span
+                pixels, and Pi has none yet; raster images and videos get lightweight composer
+                previews, sent image previews above their message, and an app-native full-window
+                viewer that opens without a reveal delay or photo size animation; desktop image
+                previews and browser images offer a native Copy Image context menu; links offer a
+                native Open, separator, and Copy Link menu; selected images reach ACP image blocks
+                when the agent advertises image prompts and resource links otherwise, so Grok's MCP
+                mode no longer accepts then fails an image; attachments can send without typed text
+                and name a new session from their filenames, while rejected sends restore the
+                original draft and attachment set; in the web build a drop or a paste says by name
+                that it needs the desktop app</span
               ></label
             >
           </li>

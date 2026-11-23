@@ -296,9 +296,9 @@ describe('Antigravity ACP adapter', () => {
       }) as never,
     })
 
-    await expect(
-      adapter.resumeThread('antigravity-legacy-uuid', 'C:\\repo'),
-    ).rejects.toMatchObject({ code: 'provider_session_missing' })
+    await expect(adapter.resumeThread('antigravity-legacy-uuid', 'C:\\repo')).rejects.toMatchObject(
+      { code: 'provider_session_missing' },
+    )
 
     const resumed = await adapter.resumeThread('acp-antigravity-agy-sess-1', 'C:\\repo', {
       approval: 'ask',

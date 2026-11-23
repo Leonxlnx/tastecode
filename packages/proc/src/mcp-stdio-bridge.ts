@@ -164,7 +164,9 @@ export function createHttpMcpBridgeLaunch(
     env: {
       ELECTRON_RUN_AS_NODE: '1',
       [`${prefix}_URL`]: target.url,
-      ...(Object.keys(headers).length > 0 ? { [`${prefix}_HEADERS`]: JSON.stringify(headers) } : {}),
+      ...(Object.keys(headers).length > 0
+        ? { [`${prefix}_HEADERS`]: JSON.stringify(headers) }
+        : {}),
     },
   }
 }

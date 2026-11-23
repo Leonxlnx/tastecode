@@ -77,8 +77,7 @@ export function antigravityModeForApproval(
   approval: ApprovalMode,
   available: readonly string[],
 ): string | undefined {
-  const wanted =
-    approval === 'auto' ? 'accept-edits' : approval === 'full' ? 'auto' : 'default'
+  const wanted = approval === 'auto' ? 'accept-edits' : approval === 'full' ? 'auto' : 'default'
   return available.includes(wanted) ? wanted : undefined
 }
 
@@ -103,7 +102,7 @@ function adaptSpawn(spawn: SpawnFn): typeof spawnCli {
   return (command, args, options = {}) =>
     spawn(command, args, {
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
-      env: { ...ANTIGRAVITY_ENVIRONMENT, ...(options.env ?? {}) },
+      env: { ...ANTIGRAVITY_ENVIRONMENT, ...options.env },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     })
