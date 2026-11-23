@@ -387,7 +387,7 @@ lifecycle. Adapters translate _into_ this. Nothing engine-specific leaks past th
 | Tier       | Mechanism                        | Engines                                                                                 | Fidelity                              |
 | ---------- | -------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------- |
 | 1 — Native | Vendor protocol or supported SDK | Codex (`app-server` JSON-RPC), Claude Code (Agent SDK), OpenCode (HTTP), Pi (RPC JSONL) | Full where the protocol exposes it    |
-| 2 — ACP    | Agent Client Protocol over stdio | Gemini CLI + ~25 others                                                                 | Good. One adapter, long tail for free |
+| 2 — ACP    | Agent Client Protocol over stdio | Antigravity (`agy acp`), Grok (MCP/agent-tools mode), Gemini CLI + ~25 others           | Good. One adapter, long tail for free |
 | 3 — CLI    | Headless NDJSON                  | Cursor, Grok                                                                            | Adequate. Version-pinned, fragile     |
 
 Engines can appear in more than one tier. We default to the highest fidelity available, with
@@ -1064,3 +1064,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-11-01 | Each build offers its edition's providers: release offers Claude Code, Codex, Grok, Cursor and Antigravity, dev every provider; missing means release.                         |
 | 2026-11-06 | Kept the Browser's recently used pages in renderer storage, recorded only from tabs the user opened.                                                                           |
 | 2026-11-22 | Removed the server's Design workflow: the old marker gives an ordinary turn and saved runs stay unread. `packages/design-agent` stays for a later feature.                     |
+| 2026-11-23 | Switched Antigravity to `agy acp` (direct HTTP MCP, resume, live approvals, images) and wired TasteCode's agent tools MCP to every active provider via native HTTP, a shared stdio-to-HTTP bridge (stdio-only ACP & Cursor `--plugin-dir`), or Pi's `-e` RPC extension, with credentials strictly in env. |
