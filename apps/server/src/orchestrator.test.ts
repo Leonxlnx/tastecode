@@ -1066,7 +1066,8 @@ describe('idle thread runtime retention', () => {
 
       await vi.advanceTimersByTimeAsync(500)
       await orchestrator.history(thread.id)
-      expect(vi.getTimerCount()).toBe(1)
+      // The runtime's own timer, and the write of the replay that read built.
+      expect(vi.getTimerCount()).toBe(2)
 
       await vi.advanceTimersByTimeAsync(500)
       expect(sessions[0]?.disposed).toBe(false)
@@ -2991,6 +2992,21 @@ describe('history replay', () => {
     }
     const turnIds = (events: Array<{ event: DomainEvent }>) =>
       events.flatMap(({ event }) => (event.type === 'turn.started' ? [event.turn.id] : []))
+
+    it('fails an older page of a chat deleted after its cursor was issued', async () => {
+      const { orchestrator, store } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      for (let index = 0; index < 4; index += 1) appendTurn(store, thread.id, index)
+      const newest = await orchestrator.historyPage(thread.id, { turnLimit: 2 })
+      store.deleteThread(thread.id)
+      const save = vi.spyOn(store, 'saveReplaySnapshot')
+
+      await expect(
+        orchestrator.historyPage(thread.id, { before: newest.page.olderCursor!, turnLimit: 2 }),
+      ).rejects.toThrow('Thread not found')
+      expect(save).not.toHaveBeenCalled()
+      await orchestrator.disposeAll()
+    })
 
     it('serves older pages from the issuing replay without rewriting it while a turn streams', async () => {
       const { orchestrator, store } = harness()

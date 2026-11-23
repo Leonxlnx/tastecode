@@ -2570,7 +2570,38 @@ describe('Composer height', () => {
       data: 'x',
     })
     await waitFor(() => expect(composer.style.height).toBe('100px'))
-    expect(layoutReads).toBe(readsAfterSend + 2)
+    // The one-line box first reads its overflow; that read lays nothing out.
+    expect(layoutReads).toBe(readsAfterSend + 3)
+  })
+
+  it('keeps a one-line box whose text fits without the height: auto measurement', async () => {
+    renderComposer(vi.fn())
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    let contentHeight = 48
+    const heightsWhenMeasured: string[] = []
+    Object.defineProperty(composer, 'offsetHeight', {
+      configurable: true,
+      get: () => Number.parseInt(composer.style.height, 10) || 48,
+    })
+    Object.defineProperty(composer, 'scrollHeight', {
+      configurable: true,
+      get: () => {
+        heightsWhenMeasured.push(composer.style.height)
+        return contentHeight
+      },
+    })
+
+    fireEvent.change(composer, { target: { value: 'One line' } })
+    fireEvent.change(composer, { target: { value: 'One line that still fits' } })
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    expect(heightsWhenMeasured).toEqual(['', ''])
+    expect(composer.style.height).toBe('')
+    expect(composer.style.overflowY).toBe('hidden')
+
+    contentHeight = 96
+    fireEvent.change(composer, { target: { value: 'One line\nand a second' } })
+    await waitFor(() => expect(composer.style.height).toBe('96px'))
+    expect(heightsWhenMeasured.at(-1)).toBe('auto')
   })
 })
 

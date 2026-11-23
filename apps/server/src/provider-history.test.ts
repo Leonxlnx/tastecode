@@ -415,6 +415,31 @@ describe('provider history integration', () => {
     expect(store.threads()).toEqual([])
   })
 
+  it("reads only its own provider's helper sessions on each refresh", async () => {
+    store.saveProviderHistory('codex', 'side-thread', { ...metadata('helper'), internal: true })
+    store.saveProviderHistory('claude-code', 'claude-side', {
+      ...metadata('other'),
+      internal: true,
+    })
+    const { history } = setup([metadata('helper'), metadata()])
+    const everyRow = vi.spyOn(store, 'providerHistories')
+    const internal = vi.spyOn(store, 'internalProviderHistories')
+    await history.refresh()
+    await history.refresh()
+    expect(everyRow).not.toHaveBeenCalled()
+    expect(internal.mock.calls).toEqual([['codex'], ['codex']])
+    expect(internal.mock.results[0]?.value).toEqual([
+      {
+        provider: 'codex',
+        threadId: 'side-thread',
+        session: { ...metadata('helper'), internal: true },
+        loadedRevision: null,
+      },
+    ])
+    // The helper stays out of the chats; the other session is imported.
+    expect(store.threads().map(({ id }) => id)).toEqual(['external:codex:native'])
+  })
+
   it('does not reimport a provider echo containing hidden restore context', async () => {
     store.addThread({
       id: 'local',

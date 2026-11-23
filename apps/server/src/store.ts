@@ -904,6 +904,13 @@ const REPLAY_SNAPSHOT_DISK_LIMIT = REPLAY_SNAPSHOT_CACHE_LIMIT
 /** Rows of the retired queue mutation log removed per start; a start never waits on all of them. */
 const QUEUED_TURN_LOG_DRAIN_BATCH = 10_000
 const REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT = 16 * 1024 * 1024
+// A replay is saved after the answer it was built for has gone out: writing a large chat's
+// replay held its cold open for 257 ms of SQLite work before the reply could leave.
+const REPLAY_SNAPSHOT_WRITE_DELAY_MS = 250
+// What may wait for that write. The largest replays measured were 18-26 M characters, so one
+// of them fits; past either bound a replay is written at once, as before.
+const UNSAVED_REPLAY_SNAPSHOT_LIMIT = 16
+const UNSAVED_REPLAY_SNAPSHOT_CHARACTER_LIMIT = 2 * REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT
 
 const StoredEventRowsSchema = z.array(
   z.object({
@@ -1037,6 +1044,10 @@ export class Store {
    */
   #replaySnapshotCache = new Map<string, CachedReplaySnapshot>()
   #replaySnapshotCacheCharacters = 0
+  /** Replays still to be written, oldest first; a read of the saved row writes its own first. */
+  #unsavedReplaySnapshots = new Map<string, { seq: number; payload: string }>()
+  #unsavedReplaySnapshotCharacters = 0
+  #replaySnapshotWrite: ReturnType<typeof setTimeout> | undefined
   /** Search cursors are process-local; retaining packed row IDs avoids a temp-table write per hit. */
   #searchSnapshots = new Map<string, SearchSnapshot>()
   /** Fresh searches may share ranked IDs only while the searchable event index is unchanged. */
@@ -1613,6 +1624,10 @@ export class Store {
 
   close(): void {
     this.#searchSnapshots.clear()
+    clearTimeout(this.#replaySnapshotWrite)
+    this.#replaySnapshotWrite = undefined
+    for (const threadId of this.#unsavedReplaySnapshots.keys())
+      this.#writeUnsavedReplaySnapshot(threadId)
     try {
       // Every row so far was indexed as it landed. A failed write only costs
       // the next start a rebuild of recently written threads.
@@ -1977,6 +1992,30 @@ export class Store {
   }
 
   /**
+   * The rows that keep one provider's helper sessions out of its chats. A refresh
+   * asks for them every time, and parsing every provider's rows for that grew
+   * with each imported chat.
+   */
+  internalProviderHistories(provider: ProviderId): Array<{
+    provider: ProviderId
+    threadId: string
+    session: ProviderHistorySession
+    loadedRevision: string | null
+  }> {
+    return sqliteRows<{ thread_id: string; metadata: string; loaded_revision: string | null }>(
+      this.#db.prepare(
+        `SELECT thread_id, metadata, loaded_revision FROM provider_history
+         WHERE provider = ? AND json_extract(metadata, '$.internal') = 1`,
+      ),
+      provider,
+    ).flatMap((row) => {
+      const session = JSON.parse(row.metadata) as ProviderHistorySession
+      if (session.internal !== true) return []
+      return [{ provider, threadId: row.thread_id, session, loadedRevision: row.loaded_revision }]
+    })
+  }
+
+  /**
    * Include temporary tasks so provider discovery cannot publish their internal prompts.
    * An imported chat that moved to another provider runs a session of its own
    * since, so it counts as native too.
@@ -2201,7 +2240,7 @@ export class Store {
           .run(threadId)
         this.#searchRevision += 1
         this.#deleteReplaySnapshot.run(threadId)
-        this.#deleteCachedReplaySnapshot(threadId)
+        this.#forgetReplaySnapshot(threadId)
         this.#rebuildThreadInboxState(threadId)
         this.#rebuildThreadRecoveryState(threadId)
       }
@@ -2906,7 +2945,7 @@ export class Store {
       this.#db.prepare(`UPDATE threads SET closed_at = ? WHERE id = ?`).run(closedAt, id)
       this.#deleteReplaySnapshot.run(id)
     })
-    this.#deleteCachedReplaySnapshot(id)
+    this.#forgetReplaySnapshot(id)
     this.#updateCachedThread(id, (thread) => ({ ...thread, closedAt }))
     this.#updateSidebarThread(id, (thread) => ({ ...thread, closedAt }))
   }
@@ -2964,7 +3003,7 @@ export class Store {
       for (const threadId of ids) {
         this.#historyDeltaRuns.delete(threadId)
         this.#ephemeralThreads.delete(threadId)
-        this.#deleteCachedReplaySnapshot(threadId)
+        this.#forgetReplaySnapshot(threadId)
         this.#cacheThread(threadId, undefined)
       }
       this.#invalidateSidebarThreads()
@@ -3037,7 +3076,7 @@ export class Store {
     for (const id of ids) {
       this.#ephemeralThreads.delete(id)
       this.#historyDeltaRuns.delete(id)
-      this.#deleteCachedReplaySnapshot(id)
+      this.#forgetReplaySnapshot(id)
       this.#cacheThread(id, undefined)
     }
     this.#searchRevision += 1
@@ -3823,6 +3862,7 @@ export class Store {
       this.#promoteCachedReplaySnapshot(threadId, cached)
       return { seq: cached.seq, entries: cached.entries }
     }
+    this.#writeUnsavedReplaySnapshot(threadId)
     const row = sqliteRow<ReplaySnapshotRow>(this.#readReplaySnapshotBase, threadId)
     if (!row) return undefined
     const seq = Number(row.seq)
@@ -3847,6 +3887,7 @@ export class Store {
       this.#promoteCachedReplaySnapshot(threadId, cached)
       return cached.entries
     }
+    this.#writeUnsavedReplaySnapshot(threadId)
     const row = sqliteRow<ReplaySnapshotRow>(this.#readReplaySnapshotBase, threadId)
     if (!row || Number(row.seq) !== seq) return undefined
     return this.#cacheReplaySnapshot(threadId, seq, row.payload, seq === this.lastSeq(threadId))
@@ -3863,6 +3904,7 @@ export class Store {
       this.#promoteCachedReplaySnapshot(threadId, cached)
       return { entries: cached.entries }
     }
+    this.#writeUnsavedReplaySnapshot(threadId)
     const row = sqliteRow<ReplaySnapshotRow>(this.#readTailReplaySnapshot, threadId)
     if (!row) return undefined
     const entries = this.#cacheReplaySnapshot(threadId, Number(row.seq), row.payload, true)
@@ -3912,6 +3954,43 @@ export class Store {
     this.#replaySnapshotCacheCharacters += characters
   }
 
+  /** For a replay that no longer holds: neither kept in memory nor written later. */
+  #forgetReplaySnapshot(threadId: string): void {
+    this.#takeUnsavedReplaySnapshot(threadId)
+    this.#deleteCachedReplaySnapshot(threadId)
+  }
+
+  #takeUnsavedReplaySnapshot(threadId: string): { seq: number; payload: string } | undefined {
+    const unsaved = this.#unsavedReplaySnapshots.get(threadId)
+    if (!unsaved) return undefined
+    this.#unsavedReplaySnapshots.delete(threadId)
+    this.#unsavedReplaySnapshotCharacters -= unsaved.payload.length
+    return unsaved
+  }
+
+  #writeUnsavedReplaySnapshot(threadId: string): void {
+    const unsaved = this.#takeUnsavedReplaySnapshot(threadId)
+    if (!unsaved) return
+    try {
+      this.#writeReplaySnapshot.run(threadId, unsaved.seq, unsaved.payload)
+      this.#pruneReplaySnapshots.run(REPLAY_SNAPSHOT_DISK_LIMIT)
+    } catch {
+      // A replay only saves rebuilding it from the log; the next read rebuilds it.
+    }
+  }
+
+  /** Writes the oldest replay still to be written, one per delay, until none is left. */
+  #scheduleReplaySnapshotWrite(): void {
+    if (this.#replaySnapshotWrite || !this.#unsavedReplaySnapshots.size) return
+    this.#replaySnapshotWrite = setTimeout(() => {
+      this.#replaySnapshotWrite = undefined
+      const oldest = this.#unsavedReplaySnapshots.keys().next().value
+      if (oldest !== undefined) this.#writeUnsavedReplaySnapshot(oldest)
+      this.#scheduleReplaySnapshotWrite()
+    }, REPLAY_SNAPSHOT_WRITE_DELAY_MS)
+    this.#replaySnapshotWrite.unref?.()
+  }
+
   #deleteCachedReplaySnapshot(threadId: string): void {
     const cached = this.#replaySnapshotCache.get(threadId)
     if (!cached) return
@@ -3932,8 +4011,24 @@ export class Store {
     options: { readToEnd?: boolean } = {},
   ): string {
     const payload = JSON.stringify(entries)
-    this.#writeReplaySnapshot.run(threadId, seq, payload)
-    this.#pruneReplaySnapshots.run(REPLAY_SNAPSHOT_DISK_LIMIT)
+    // Written after the reply this replay serves; the saved row stays in write order.
+    this.#takeUnsavedReplaySnapshot(threadId)
+    if (
+      this.#unsavedReplaySnapshots.size < UNSAVED_REPLAY_SNAPSHOT_LIMIT &&
+      this.#unsavedReplaySnapshotCharacters + payload.length <=
+        UNSAVED_REPLAY_SNAPSHOT_CHARACTER_LIMIT
+    ) {
+      this.#unsavedReplaySnapshots.set(threadId, { seq, payload })
+      this.#unsavedReplaySnapshotCharacters += payload.length
+      this.#scheduleReplaySnapshotWrite()
+    } else {
+      // Past the budget it is written now, as before. Those waiting go first, so the rows
+      // keep the order the replays were read in, which decides which ones pruning keeps.
+      for (const waiting of this.#unsavedReplaySnapshots.keys())
+        this.#writeUnsavedReplaySnapshot(waiting)
+      this.#writeReplaySnapshot.run(threadId, seq, payload)
+      this.#pruneReplaySnapshots.run(REPLAY_SNAPSHOT_DISK_LIMIT)
+    }
     this.#rememberReplaySnapshot(
       threadId,
       seq,
@@ -4628,7 +4723,7 @@ export class Store {
    */
   #truncateAfter(threadId: string, seq: number): void {
     this.#deleteReplaySnapshot.run(threadId)
-    this.#deleteCachedReplaySnapshot(threadId)
+    this.#forgetReplaySnapshot(threadId)
     // Sequence numbers are never reused, so a client that saw a removed event
     // holds a cursor in (seq, through]. Widen the range across restores.
     this.#db
@@ -4878,7 +4973,7 @@ export class Store {
     this.#db.exec('BEGIN IMMEDIATE')
     try {
       this.#deleteReplaySnapshot.run(threadId)
-      this.#deleteCachedReplaySnapshot(threadId)
+      this.#forgetReplaySnapshot(threadId)
       const insertEvent = this.#db.prepare(
         `INSERT INTO events (seq, thread_id, at, payload) VALUES (?, ?, ?, ?)`,
       )

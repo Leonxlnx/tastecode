@@ -1946,6 +1946,104 @@ describe('events', () => {
     }
   })
 
+  it('writes a replay snapshot after the read that built it, and drops one that no longer holds', () => {
+    vi.useFakeTimers()
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-later-'))
+    const file = path.join(dir, 'replay.db')
+    const saved = () => {
+      const raw = new DatabaseSync(file)
+      try {
+        return raw
+          .prepare('SELECT thread_id, seq FROM thread_replay_snapshots ORDER BY rowid')
+          .all()
+          .map((row) => ({ ...row }))
+      } finally {
+        raw.close()
+      }
+    }
+    try {
+      const seeded = new Store(file)
+      seeded.addProject('/repo', 'Repo')
+      seeded.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'T' })
+      seeded.addThread({ id: 't2', projectPath: '/repo', provider: 'codex', title: 'T' })
+      const seq = seeded.append('t1', message('one'))
+      const snapshot = [{ seq, event: message('cached') }]
+      expect(seeded.saveReplaySnapshot('t1', seq, snapshot)).toBe(JSON.stringify(snapshot))
+
+      // The reply is served from memory; the row is written once the reply is out.
+      expect(saved()).toEqual([])
+      expect(seeded.tailReplaySnapshotForResponse('t1')?.entries).toBe(snapshot)
+      vi.advanceTimersByTime(250)
+      expect(saved()).toEqual([{ thread_id: 't1', seq }])
+
+      // A replay that a change made obsolete before its write is never written.
+      const other = seeded.append('t2', message('two'))
+      seeded.saveReplaySnapshot('t2', other, [{ seq: other, event: message('obsolete') }])
+      seeded.closeThread('t2')
+      vi.advanceTimersByTime(1000)
+      expect(saved()).toEqual([{ thread_id: 't1', seq }])
+
+      // Closing the store writes what is still waiting.
+      const next = seeded.append('t1', message('two'))
+      seeded.saveReplaySnapshot('t1', next, [{ seq: next, event: message('newer') }])
+      seeded.close()
+      expect(saved()).toEqual([{ thread_id: 't1', seq: next }])
+    } finally {
+      vi.useRealTimers()
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  })
+
+  it('writes replays at once past the budget for unwritten ones, and all of them on close', () => {
+    vi.useFakeTimers()
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-budget-'))
+    const file = path.join(dir, 'replay.db')
+    const saved = () => {
+      const raw = new DatabaseSync(file)
+      try {
+        return (
+          raw
+            .prepare('SELECT thread_id FROM thread_replay_snapshots ORDER BY rowid')
+            .all() as Array<{
+            thread_id: string
+          }>
+        ).map(({ thread_id }) => thread_id)
+      } finally {
+        raw.close()
+      }
+    }
+    try {
+      const seeded = new Store(file)
+      seeded.addProject('/repo', 'Repo')
+      const read = (threadId: string) => {
+        const seq = seeded.append(threadId, message(`thread-${threadId}`))
+        seeded.saveReplaySnapshot(threadId, seq, [{ seq, event: message(`replay-${threadId}`) }])
+      }
+      for (let index = 0; index < 20; index += 1) {
+        seeded.addThread({ id: `c${index}`, projectPath: '/repo', provider: 'codex', title: 'C' })
+        read(`c${index}`)
+      }
+      const chats = (from: number, to: number) =>
+        Array.from({ length: to - from + 1 }, (_, index) => `c${from + index}`)
+      // Sixteen cold reads wait for the timer. The seventeenth is past the budget: it is
+      // written at once, after the sixteen waiting before it.
+      expect(saved()).toEqual(chats(0, 16))
+      // Reading a waiting chat again replaces its replay; it takes no second place.
+      read('c17')
+      read('c17')
+      expect(saved()).toEqual(chats(0, 16))
+
+      vi.advanceTimersByTime(250)
+      expect(saved()).toEqual([...chats(0, 16), 'c18'])
+      // Closing writes every replay still waiting.
+      seeded.close()
+      expect(saved()).toEqual([...chats(0, 16), 'c18', 'c19', 'c17'])
+    } finally {
+      vi.useRealTimers()
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  })
+
   it('drops replay snapshots saved before chronological replay once, keeping raw history', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-chronological-'))
     const file = path.join(dir, 'replay.db')

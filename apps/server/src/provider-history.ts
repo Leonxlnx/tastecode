@@ -321,8 +321,7 @@ export class ProviderHistory {
           if (this.#closed || this.hooks.canImport?.() === false) return
           // Temporary sessions can close between scans, or disappear on restart.
           // Their durable marker must win even before discovery has seen a row.
-          for (const entry of this.store.providerHistories()) {
-            if (entry.provider !== provider || !entry.session.internal) continue
+          for (const entry of this.store.internalProviderHistories(provider)) {
             this.#remember({
               ...entry,
               session: {
