@@ -1,3 +1,5 @@
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import os from 'node:os'
 import path from 'node:path'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
@@ -68,6 +70,13 @@ import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 import { ChatImportService, openCodeChatReader } from './chat-import.js'
 import { createT3CodeReader } from './chat-import-t3.js'
+import { SimulatorService } from './simulator/service.js'
+import { createSimulatorHubProxy } from './simulator/proxy.js'
+import {
+  SIMULATOR_AGENT_INSTRUCTIONS,
+  SIMULATOR_MCP_SERVER_ID,
+  SimulatorMcpServer,
+} from './simulator/mcp.js'
 import { addProjectFolder, ProviderHistory } from './provider-history.js'
 import { HistoryRefreshSchedule } from './history-refresh-schedule.js'
 import { STREAM_QUIET_BACKGROUND_WAIT_MS, StreamQuiet } from './stream-quiet.js'
@@ -173,11 +182,23 @@ export function startServer(
   }
   restoreProviderExecutablePaths(store)
   const ownWindow = options.instanceToken ? instanceProtocol(options.instanceToken) : undefined
+  let httpServer: ReturnType<typeof createServer>
   let wss: WebSocketServer
+  let handleHttpRequest: (req: IncomingMessage, res: ServerResponse) => Promise<void> = async (
+    _req,
+    res,
+  ) => {
+    res.writeHead(404).end('Not Found')
+  }
   try {
+    httpServer = createServer((req, res) => {
+      void handleHttpRequest(req, res).catch(() => {
+        if (!res.headersSent) res.writeHead(500).end('Internal Server Error')
+        else res.destroy()
+      })
+    })
     wss = new WebSocketServer({
-      port,
-      host,
+      noServer: true,
       // Another window's handshake still completes, so it hears why it is closed.
       ...(ownWindow
         ? {
@@ -186,6 +207,11 @@ export function startServer(
           }
         : {}),
     })
+    // Preserve listener event and address contracts on `wss` for callers and tests.
+    Object.defineProperty(wss, 'address', { value: () => httpServer.address() })
+    httpServer.on('listening', () => wss.emit('listening'))
+    httpServer.on('error', (error) => wss.emit('error', error))
+    httpServer.listen(port, host)
   } catch (error) {
     try {
       store.close()
@@ -194,7 +220,45 @@ export function startServer(
     }
     throw error
   }
+  const boundPort = () => {
+    const address = httpServer.address()
+    return address && typeof address !== 'string' ? address.port : port
+  }
   const push = new PushBus<ClientSocket>()
+  const simulatorDataRoot =
+    databasePath === ':memory:'
+      ? path.join(os.tmpdir(), 'tastecode-simulator-memory')
+      : path.dirname(databasePath)
+  const simulator = new SimulatorService({
+    dataRoot: simulatorDataRoot,
+    settings: {
+      read: () => store.simulatorSettings(),
+      write: (value) => store.setSimulatorSettings(value),
+    },
+    serverOrigin: () => ({
+      httpOrigin: `http://${host}:${boundPort()}`,
+      wsOrigin: `ws://${host}:${boundPort()}`,
+    }),
+    onStateChanged: (state) => push.broadcast('simulator.changed', state),
+    onOpened: (event) => push.broadcast('simulator.opened', event),
+    onLog: (line) => console.log(`[simulator] ${line}`),
+  })
+  const simulatorProxy = createSimulatorHubProxy({
+    simulator,
+    allowedOrigin: (origin) => allowedOrigin(origin, options.accessToken, rendererOrigin),
+  })
+  const simulatorMcp = new SimulatorMcpServer(simulator, () => `http://${host}:${boundPort()}`)
+  handleHttpRequest = async (req, res) => {
+    if (await simulatorMcp.handleHttp(req, res)) return
+    if (await simulatorProxy.handleHttp(req, res)) return
+    res.writeHead(404, { 'content-type': 'text/plain' }).end('Not Found')
+  }
+  httpServer.on('upgrade', (request, socket, head) => {
+    if (simulatorProxy.handleUpgrade(request, socket, head)) return
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request)
+    })
+  })
   const accounts = new ProviderAccounts(store, {
     root: path.join(path.dirname(databasePath), 'accounts'),
     onChanged: (provider) => push.broadcast('accounts.changed', { provider }),
@@ -327,6 +391,16 @@ export function startServer(
     agentTools: true,
     browserTools: {
       run: (caller, request, signal) => browserCommands.run(caller.threadId, request, signal),
+    },
+    simulatorAgent: {
+      serverId: SIMULATOR_MCP_SERVER_ID,
+      instructions: SIMULATOR_AGENT_INSTRUCTIONS,
+      mcpConfigForThread: (threadId) => simulatorMcp.mcpConfigForThread(threadId),
+      rebindThread: (fromId, toThreadId) => simulatorMcp.rebindThread(fromId, toThreadId),
+      onThreadClosed: (threadId) => {
+        simulatorMcp.revokeThread(threadId)
+        void simulator.closeThreadSessions(threadId).catch(() => undefined)
+      },
     },
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
@@ -1920,6 +1994,50 @@ export function startServer(
         return settings
       }
 
+      case 'simulator.state':
+        return simulator.state()
+
+      case 'simulator.configure':
+        return simulator.configure(parseParams(method, params))
+
+      case 'simulator.list':
+        return simulator.list()
+
+      case 'simulator.open':
+        return simulator.open({ ...parseParams(method, params), openedBy: 'user' })
+
+      case 'simulator.close':
+        await simulator.close(parseParams(method, params))
+        return {}
+
+      case 'simulator.shutdown':
+        await simulator.shutdown(parseParams(method, params).deviceId)
+        return {}
+
+      case 'simulator.hubAccess':
+        return simulator.mintHubAccess()
+
+      case 'simulator.detail':
+        return simulator.detail(parseParams(method, params).deviceId)
+
+      case 'simulator.action':
+        return simulator.action(parseParams(method, params))
+
+      case 'simulator.newOptions':
+        return simulator.newOptions()
+
+      case 'simulator.create':
+        return simulator.create(parseParams(method, params))
+
+      case 'simulator.remove':
+        return simulator.remove(parseParams(method, params))
+
+      case 'simulator.installAndroid':
+        return simulator.installAndroid(parseParams(method, params))
+
+      case 'simulator.uninstallAndroidImage':
+        return simulator.uninstallAndroidImage(parseParams(method, params).packageId)
+
       default:
         // The contract can declare a method before this server routes it (a
         // newer client, or a contract that landed ahead of its handler). Say
@@ -1968,12 +2086,19 @@ export function startServer(
       const orchestratorClosed = orchestrator.disposeAll()
       clearTimeout(listChange)
       await phoneAccess.close().catch(() => undefined)
+      simulatorProxy.close()
+      simulatorMcp.clear()
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([
         orchestratorClosed,
+        simulator.dispose(),
         stopModelListings(),
         checkpointProtection,
         new Promise<void>((resolve) => wss.close(() => resolve())),
+        new Promise<void>((resolve) => {
+          httpServer.closeAllConnections()
+          httpServer.close(() => resolve())
+        }),
       ])
       try {
         store.close()

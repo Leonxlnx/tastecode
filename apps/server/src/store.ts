@@ -70,6 +70,7 @@ const PROVIDER_EXECUTABLE_PATHS_SETTING = 'provider-executable-paths'
 const FEEDBACK_LEDGER_SETTING = 'feedback-ledger'
 const MODEL_LISTS_SETTING = 'model-lists'
 const PHONE_ACCESS_SETTING = 'phone-access'
+const SIMULATOR_SETTINGS_SETTING = 'simulator-settings'
 /** The model picker's hidden choice keys, as the desktop resolves them. */
 const HIDDEN_MODELS_SETTING = 'hidden-models'
 const PROVIDER_ROSTER_SETTING = 'provider-roster'
@@ -2655,6 +2656,15 @@ export class Store {
 
   setPhoneAccessState(value: string): void {
     this.#writeAppSetting.run(PHONE_ACCESS_SETTING, value)
+  }
+
+  /** Persisted simulator hub and agent control toggles. */
+  simulatorSettings(): string | undefined {
+    return sqliteRow<StringValueRow>(this.#readAppSetting, SIMULATOR_SETTINGS_SETTING)?.value
+  }
+
+  setSimulatorSettings(value: string): void {
+    this.#writeAppSetting.run(SIMULATOR_SETTINGS_SETTING, value)
   }
 
   hiddenModels(): string[] {

@@ -192,6 +192,19 @@ type SubagentEventHandler = (
 /** The header value's credential reference in the reserved `tastecode` server. */
 const AGENT_TOOLS_CREDENTIAL = 'tastecode-agent-tools'
 
+export type SimulatorAgentBridge = {
+  readonly serverId: string
+  readonly instructions: string
+  mcpConfigForThread(threadId: string):
+    | {
+        readonly server: McpServerConfig
+        readonly credentials: Record<string, string>
+      }
+    | undefined
+  rebindThread(fromId: string, toThreadId: string): void
+  onThreadClosed(threadId: string): void
+}
+
 type HistoryEntry = { seq: number; event: DomainEvent }
 type HistoryRead = { events: HistoryEntry[]; serializedEvents?: string | undefined }
 
@@ -466,6 +479,8 @@ export class Orchestrator {
   #subagents: SubagentBroker
   /** TasteCode's agent tools; absent when this orchestrator serves none. */
   #agentTools: AgentToolsEndpoint | undefined
+  /** Optional local iOS/Android simulator MCP bridge. */
+  #simulatorAgent: SimulatorAgentBridge | undefined
   /** Each parent chat's token for the agent tools, kept while it exists. */
   #agentToolGrants = new Map<string, AgentToolsGrant>()
   #activeTurns = new Set<string>()
@@ -667,6 +682,7 @@ export class Orchestrator {
       onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
       onLifecycleScheduleChanged?: (hint?: LifecycleScheduleHint) => void
       mcpConfig?: McpConfigStore
+      simulatorAgent?: SimulatorAgentBridge
       customHarnesses?: CustomHarnessStore
       readCredential?: (reference: string) => string
       voiceTranscriber?: VoiceTranscriber
@@ -760,6 +776,7 @@ export class Orchestrator {
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#onLifecycleScheduleChanged = handlers.onLifecycleScheduleChanged ?? (() => {})
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
+    this.#simulatorAgent = handlers.simulatorAgent
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
     this.#voice = new VoiceService(handlers.voiceTranscriber)
@@ -1350,6 +1367,7 @@ export class Orchestrator {
             }),
       })
     }
+    if (this.#simulatorAgent) servers.delete(this.#simulatorAgent.serverId)
     return {
       capabilities: inventory.capabilities,
       servers: [...servers.values()],
@@ -1463,14 +1481,20 @@ export class Orchestrator {
   #sessionStart(
     provider: ProviderId,
     instructions?: string,
-    { skills = true }: { skills?: boolean } = {},
+    { skills = true, threadId }: { skills?: boolean; threadId?: string | undefined } = {},
   ): Pick<StartOptions, 'instructions' | 'skillPlugin'> {
     const bundled = skills ? this.#bundledSkills() : undefined
     const native = this.#controls.forProvider(provider).capabilities.defaultSkillsPlugin
     const catalog = bundled && !native ? bundled.catalog : ''
+    const simulatorInstructions =
+      threadId !== undefined &&
+      (PROVIDER_CAPABILITIES[provider].managedMcp || PROVIDER_CAPABILITIES[provider].agentTools) &&
+      this.#simulatorAgent?.mcpConfigForThread(threadId)
+        ? this.#simulatorAgent.instructions
+        : undefined
     return {
       instructions: composeInstructions(
-        [catalog, instructions?.trim()].filter(Boolean).join('\n\n'),
+        [catalog, instructions?.trim(), simulatorInstructions].filter(Boolean).join('\n\n'),
       ),
       ...(bundled?.skills.length && native ? { skillPlugin: bundled.root } : {}),
     }
@@ -1555,10 +1579,10 @@ export class Orchestrator {
     }
     // A runtime that starts from here reads the saved servers.
     if (active.size === 0) return
-    const options = this.#mcpRuntimeOptions(provider, projectPath)
     const results = await Promise.allSettled(
       [...active].map(async ([threadId, entry]) => {
         if (entry.session.reloadMcpServers) {
+          const options = this.#mcpRuntimeOptions(provider, projectPath, threadId)
           // A chat with agent tools keeps them through a reload.
           const own = this.#agentToolGrants.has(threadId)
             ? (await this.#agentToolsOptions(provider, threadId, options)).options
@@ -1680,9 +1704,11 @@ export class Orchestrator {
       throw new Error(`provider "${provider}" cannot manage MCP servers yet`)
   }
 
-  #mcpRuntimeOptions(provider: ProviderId, projectPath: string): StartOptions {
-    if (!PROVIDER_CAPABILITIES[provider].managedMcp) return {}
-    const mcpServers = this.#mcpConfig.list(provider, projectPath)
+  #mcpRuntimeOptions(provider: ProviderId, projectPath: string, threadId?: string): StartOptions {
+    const canManage = PROVIDER_CAPABILITIES[provider].managedMcp
+    const canInjectSimulator = canManage || PROVIDER_CAPABILITIES[provider].agentTools
+    if (!canInjectSimulator) return {}
+    const mcpServers = canManage ? [...this.#mcpConfig.list(provider, projectPath)] : []
     const mcpCredentials: Record<string, string> = {}
     for (const server of mcpServers) {
       if (!server.enabled) continue
@@ -1696,6 +1722,14 @@ export class Orchestrator {
         }
       }
     }
+    if (threadId !== undefined && this.#simulatorAgent) {
+      const injected = this.#simulatorAgent.mcpConfigForThread(threadId)
+      if (injected && !mcpServers.some((entry) => entry.id === injected.server.id)) {
+        mcpServers.push(injected.server)
+        Object.assign(mcpCredentials, injected.credentials)
+      }
+    }
+    if (!canManage && mcpServers.length === 0) return {}
     return { mcpServers, mcpCredentials }
   }
 
@@ -2118,16 +2152,16 @@ export class Orchestrator {
         ...(target.effort ? { effort: target.effort } : {}),
         ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
         ...(approval ? { approval } : {}),
-        ...this.#sessionStart(target.provider),
+        ...this.#sessionStart(target.provider, undefined, { threadId }),
         ...(this.#offersAgentTools(target.provider)
           ? (
               await this.#agentToolsOptions(
                 target.provider,
                 threadId,
-                this.#mcpRuntimeOptions(target.provider, stored.projectPath),
+                this.#mcpRuntimeOptions(target.provider, stored.projectPath, threadId),
               )
             ).options
-          : this.#mcpRuntimeOptions(target.provider, stored.projectPath)),
+          : this.#mcpRuntimeOptions(target.provider, stored.projectPath, threadId)),
         ...this.#contextRuntimeOptions(target.provider, target.agent, accountId),
       }
       // Another account of the same provider can take the session itself.
@@ -2300,7 +2334,10 @@ export class Orchestrator {
     },
     generation: { dispose: number; panic: number; project: number },
   ): Promise<Thread> {
-    const mcp = this.#mcpRuntimeOptions(provider, workspacePath)
+    const simulatorThreadKey = options.ephemeral
+      ? undefined
+      : `${provider}-${crypto.randomUUID()}`
+    const mcp = this.#mcpRuntimeOptions(provider, workspacePath, simulatorThreadKey)
     // Awaited only when offered, so other starts keep their timing.
     const agentTools =
       !options.ephemeral && this.#offersAgentTools(provider)
@@ -2313,6 +2350,7 @@ export class Orchestrator {
         options,
         generation,
         agentTools.options,
+        simulatorThreadKey,
       )
       if (agentTools.grant) {
         agentTools.grant.bind(thread.id)
@@ -2320,6 +2358,9 @@ export class Orchestrator {
       }
       return thread
     } catch (error) {
+      if (simulatorThreadKey !== undefined) {
+        this.#simulatorAgent?.onThreadClosed(simulatorThreadKey)
+      }
       agentTools.grant?.revoke()
       throw error
     }
@@ -2335,6 +2376,7 @@ export class Orchestrator {
     }: StartOptions & { accountId?: AccountId | undefined; continueFrom?: string | undefined },
     generation: { dispose: number; panic: number; project: number },
     mcpOptions: StartOptions,
+    simulatorThreadKey?: string,
   ): Promise<Thread> {
     const cancelled = () =>
       generation.dispose !== this.#disposeGeneration ||
@@ -2352,13 +2394,14 @@ export class Orchestrator {
     if (continueFrom !== undefined) this.#assertContinuable(continueFrom, provider)
     // The id has to exist before the worktree, and the worktree before the
     // agent — it is the directory the agent will be spawned in.
-    const threadId = `${provider}-${crypto.randomUUID()}`
+    const threadId = simulatorThreadKey ?? `${provider}-${crypto.randomUUID()}`
     const resolvedWorkspacePath = resolveWorkspacePath(workspacePath)
     const runtime = this.#runtimeFor(provider, this.#onLog, accountHome)
     const runtimeOptions = {
       ...options,
       ...this.#sessionStart(provider, options.instructions, {
         skills: !options.ephemeral,
+        threadId: simulatorThreadKey,
       }),
       ...mcpOptions,
       ...this.#contextRuntimeOptions(provider, options.agent, accountId),
@@ -2406,7 +2449,11 @@ export class Orchestrator {
 
     const { session } = started
     const thread = onAccount(started.thread, accountId)
+    if (simulatorThreadKey !== undefined) {
+      this.#simulatorAgent?.rebindThread(simulatorThreadKey, thread.id)
+    }
     if (cancelled()) {
+      if (simulatorThreadKey !== undefined) this.#simulatorAgent?.onThreadClosed(thread.id)
       this.#checkoutAccess.retainStopping(directory, thread.id)
       await this.#stopThreadProvider(thread.id, session)
       if (worktree) await removeWorktree(worktree, true)
@@ -2531,8 +2578,11 @@ export class Orchestrator {
       ...options,
       approval,
       ...(storedParent.agent ? { agent: storedParent.agent } : {}),
-      instructions: composeInstructions(sideChatInstructionsFromReplay(parentHistory)),
-      ...this.#mcpRuntimeOptions(provider, storedParent.projectPath),
+      ...this.#sessionStart(provider, sideChatInstructionsFromReplay(parentHistory), {
+        skills: false,
+        threadId: parentThreadId,
+      }),
+      ...this.#mcpRuntimeOptions(provider, storedParent.projectPath, parentThreadId),
       ...this.#contextRuntimeOptions(provider, storedParent.agent, storedParent.accountId),
     }
 
@@ -3796,6 +3846,7 @@ export class Orchestrator {
     }
     this.#inboxProjections.delete(threadId)
     this.#staleInboxProjectionThreads.delete(threadId)
+    this.#simulatorAgent?.onThreadClosed(threadId)
     this.#heldQueues.delete(threadId)
   }
 
@@ -5109,6 +5160,7 @@ export class Orchestrator {
     // chat that starts meanwhile sees the closed parent and refuses to attach.
     this.#store.closeThread(threadId)
     this.#revokeAgentTools(threadId)
+    this.#simulatorAgent?.onThreadClosed(threadId)
     this.#onLifecycleScheduleChanged()
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
@@ -5587,18 +5639,23 @@ export class Orchestrator {
       ...(approval ? { approval } : {}),
       // Side chats and sub-agents never get the agent tools: one level deep.
       ...(stored.ephemeral || !this.#offersAgentTools(stored.provider)
-        ? this.#mcpRuntimeOptions(stored.provider, stored.projectPath)
+        ? this.#mcpRuntimeOptions(
+            stored.provider,
+            stored.projectPath,
+            stored.ephemeral ? undefined : threadId,
+          )
         : (
             await this.#agentToolsOptions(
               stored.provider,
               threadId,
-              this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
+              this.#mcpRuntimeOptions(stored.provider, stored.projectPath, threadId),
             )
           ).options),
       ...this.#contextRuntimeOptions(stored.provider, stored.agent, stored.accountId),
     }
     const sessionStart = this.#sessionStart(stored.provider, undefined, {
       skills: !stored.ephemeral,
+      threadId: stored.ephemeral ? undefined : threadId,
     })
     let freshSessionId: string | undefined
     // The provider has no saved conversation for this chat's session. With no turn ever

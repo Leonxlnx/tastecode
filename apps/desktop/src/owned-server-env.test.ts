@@ -31,6 +31,9 @@ describe('owned server endpoint', () => {
 
   it('honors a custom endpoint compiled into the renderer and its CSP', () => {
     expect(ownedServerEnvironment({}, html('ws://127.0.0.1:5555')).HARNESS_PORT).toBe('5555')
+    expect(
+      ownedServerEnvironment({}, html('ws://127.0.0.1:5555 http://127.0.0.1:5555')).HARNESS_PORT,
+    ).toBe('5555')
   })
 
   it('preserves isolated server ports while trusting only the file renderer', () => {
