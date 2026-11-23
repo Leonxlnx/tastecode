@@ -34,19 +34,19 @@ function nestedUses(text: string): string[] {
     throw new Error(`App should hold one frame store structure snapshot, found ${snapshots.length}`)
   }
   const snapshot = snapshots[0]!
-  const watched = new Set<ts.Node>([snapshot])
-  // A value taken from the snapshot's items (a message, a list of them) keeps
-  // transcript data alive the same way. An item's id or a count does not.
-  const isSnapshot = (node: ts.Expression) =>
-    ts.isIdentifier(node) && resolveName(node, body) === snapshot
+  // What App's own bindings hold of the snapshot: itself, its items, or an
+  // item (or data read out of one). Aliases and destructuring carry it on; an
+  // item's id, a count or a yes/no answer about the items does not.
+  const held = new Map<ts.Node, Held>([[snapshot, 'snapshot']])
+  const heldBy = (value: ts.Expression): Held | undefined => holding(value, held, body)
   for (const statement of body.statements) {
     if (!ts.isVariableStatement(statement)) continue
     for (const declaration of statement.declarationList.declarations) {
-      if (declaration.initializer && takesItems(declaration.initializer, isSnapshot)) {
-        watched.add(declaration)
-      }
+      if (!declaration.initializer || declaration === snapshot) continue
+      bind(declaration.name, declaration, heldBy(declaration.initializer), held)
     }
   }
+  const watched = new Set<ts.Node>(held.keys())
 
   const uses: string[] = []
   const visit = (node: ts.Node) => {
@@ -64,47 +64,101 @@ function nestedUses(text: string): string[] {
   return uses
 }
 
-/** Whether a value can be the snapshot itself or something read out of its `items`. */
-function takesItems(value: ts.Expression, isSnapshot: (node: ts.Expression) => boolean): boolean {
+/** The snapshot, its item list, or one item and the data read out of it. */
+type Held = 'snapshot' | 'items' | 'item'
+
+/** Reads of an item list that answer with an item, or with more items. */
+const ITEM_READS = new Set(['at', 'find', 'findLast'])
+const LIST_READS = new Set([
+  'concat',
+  'filter',
+  'flat',
+  'slice',
+  'toReversed',
+  'toSorted',
+  'toSpliced',
+])
+/** Fields of an item that hold no transcript text. */
+const ITEM_SCALARS = new Set(['createdAt', 'id', 'role', 'status', 'turnId', 'type'])
+
+function member(base: Held | undefined, name: string): Held | undefined {
+  if (base === 'snapshot') return name === 'items' ? 'items' : undefined
+  if (base === 'item') return ITEM_SCALARS.has(name) ? undefined : 'item'
+  return undefined
+}
+
+/** What an App-level initializer holds of the snapshot, following earlier bindings. */
+function holding(
+  value: ts.Expression,
+  held: ReadonlyMap<ts.Node, Held>,
+  body: ts.Block,
+): Held | undefined {
+  const of = (inner: ts.Expression) => holding(inner, held, body)
   if (
     ts.isParenthesizedExpression(value) ||
     ts.isAsExpression(value) ||
     ts.isSatisfiesExpression(value) ||
     ts.isNonNullExpression(value)
   ) {
-    return takesItems(value.expression, isSnapshot)
+    return of(value.expression)
   }
-  if (ts.isConditionalExpression(value)) {
-    return takesItems(value.whenTrue, isSnapshot) || takesItems(value.whenFalse, isSnapshot)
-  }
+  if (ts.isConditionalExpression(value)) return of(value.whenTrue) ?? of(value.whenFalse)
   if (ts.isBinaryExpression(value)) {
     const operator = value.operatorToken.kind
-    if (operator === ts.SyntaxKind.AmpersandAmpersandToken)
-      return takesItems(value.right, isSnapshot)
+    if (operator === ts.SyntaxKind.AmpersandAmpersandToken) return of(value.right)
     if (
       operator === ts.SyntaxKind.BarBarToken ||
       operator === ts.SyntaxKind.QuestionQuestionToken
     ) {
-      return takesItems(value.left, isSnapshot) || takesItems(value.right, isSnapshot)
+      return of(value.left) ?? of(value.right)
     }
-    return false
+    return undefined
   }
-  if (isSnapshot(value)) return true
-  if (ts.isPropertyAccessExpression(value) && ['id', 'length'].includes(value.name.text)) {
-    return false
+  if (ts.isIdentifier(value)) {
+    const declaration = resolveName(value, body)
+    return declaration ? held.get(declaration) : undefined
   }
-  // Down the chain of calls and reads to where it starts.
-  for (let node: ts.Expression = value; ;) {
-    if (ts.isPropertyAccessExpression(node)) {
-      if (node.name.text === 'items' && isSnapshot(node.expression)) return true
-      node = node.expression
-    } else if (ts.isCallExpression(node) || ts.isElementAccessExpression(node)) {
-      node = node.expression
-    } else if (ts.isNonNullExpression(node) || ts.isParenthesizedExpression(node)) {
-      node = node.expression
-    } else {
-      return false
-    }
+  if (ts.isPropertyAccessExpression(value)) return member(of(value.expression), value.name.text)
+  if (ts.isElementAccessExpression(value)) {
+    const base = of(value.expression)
+    if (base === 'items' || base === 'item') return 'item'
+    return ts.isStringLiteral(value.argumentExpression)
+      ? member(base, value.argumentExpression.text)
+      : undefined
+  }
+  if (ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression)) {
+    if (of(value.expression.expression) !== 'items') return undefined
+    const method = value.expression.name.text
+    if (ITEM_READS.has(method)) return 'item'
+    if (LIST_READS.has(method)) return 'items'
+  }
+  return undefined
+}
+
+/** Records what each name a declaration binds holds, through destructuring. */
+function bind(
+  name: ts.BindingName,
+  owner: ts.Node,
+  value: Held | undefined,
+  held: Map<ts.Node, Held>,
+): void {
+  if (ts.isIdentifier(name)) {
+    if (value) held.set(owner, value)
+    return
+  }
+  for (const element of name.elements) {
+    if (ts.isOmittedExpression(element)) continue
+    const key = element.propertyName ?? element.name
+    const part = ts.isArrayBindingPattern(name)
+      ? element.dotDotDotToken
+        ? value
+        : value === 'items' || value === 'item'
+          ? 'item'
+          : undefined
+      : ts.isIdentifier(key) || ts.isStringLiteral(key)
+        ? member(value, key.text)
+        : undefined
+    bind(element.name, element, part, held)
   }
 }
 
@@ -299,6 +353,43 @@ describe('App closures', () => {
       ),
     )
     expect(uses).toEqual(['App.tsx:6 request'])
+  })
+
+  it('follows the items through aliases, destructuring and reads that return an item', () => {
+    const uses = nestedUses(
+      app(
+        '  const items = thread.items',
+        '  const request = items.findLast(isUser)',
+        '  const resume = () => schedule(request)',
+        '  const { items: rows } = thread',
+        '  const first = rows[0]',
+        '  const [latest] = rows.slice(-1)',
+        '  const text = latest?.text',
+        '  const later = () => use(rows, first, latest, text)',
+      ),
+    )
+    expect(uses).toEqual([
+      'App.tsx:5 request',
+      'App.tsx:10 rows',
+      'App.tsx:10 first',
+      'App.tsx:10 latest',
+      'App.tsx:10 text',
+    ])
+  })
+
+  it('does not count what a read of the items answers with a number or a yes or no', () => {
+    const uses = nestedUses(
+      app(
+        '  const hasUser = thread.items.some(isUser)',
+        '  const { items } = thread',
+        '  const count = items.length',
+        '  const index = items.findIndex(isUser)',
+        '  const empty = items.length === 0',
+        '  const lastId = items.at(-1)?.id',
+        '  const later = () => use(hasUser, count, index, empty, lastId)',
+      ),
+    )
+    expect(uses).toEqual([])
   })
 
   it('does not count an unrelated method or property called thread', () => {
