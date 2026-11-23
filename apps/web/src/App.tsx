@@ -61,7 +61,7 @@ import {
   type Shortcut,
 } from './shortcuts.js'
 import { sliceCodeUnits } from './slice-code-units.js'
-import { useStableEntries } from './stable-entries.js'
+import { useStableNotices } from './stable-notices.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
 import { useChatNotifications } from './use-chat-notifications.js'
 import { useAppUpdateInstallGate } from './app-update-install.js'
@@ -7800,7 +7800,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       : undefined
   // Rebuilt on every render; kept as one list while it says the same, so the
   // memoized composer does not re-render with every App render of a turn.
-  const composerErrors = useStableEntries<ComposerError>([
+  const composerErrors = useStableNotices([
     ...(actionError
       ? [reportable({ ...actionError, dismiss: () => setActionError(undefined) }, 'action')]
       : []),
@@ -7864,7 +7864,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       ? [{ id: `ask-first:${provider}`, role: 'alert' as const, message: askFirstBlock }]
       : []),
   ])
-  const [composerProviderNotice] = useStableEntries<ComposerError>(
+  const [composerProviderNotice] = useStableNotices(
     composerProviderError ? [reportable(composerProviderError, 'provider')] : [],
   )
 
