@@ -704,11 +704,13 @@ export async function transcriptEvents(
 
 // One worker read at a time, across every source: each holds a heap the size of its whole
 // transcript (1.2 GB for a 234 MB one), and several large chats opened together held one each.
-let workerReads: Promise<unknown> = Promise.resolve()
+// The queue holds no result, only when the worker before has exited.
+let workerSlots: Promise<void> = Promise.resolve()
 
 /**
  * The same read in a worker thread, queued behind the one running. `open` throws when its
- * source closed meanwhile; `running` holds the worker until it ends, so a dispose can stop it.
+ * source closed meanwhile; `running` holds the worker until it has exited, so a dispose can
+ * stop it and wait for it.
  */
 function readInWorker(
   url: URL,
@@ -717,12 +719,19 @@ function readInWorker(
   running: Set<Worker>,
   open: () => void,
 ): Promise<DomainEvent[]> {
-  const read = workerReads.then(() => {
-    open()
-    return startWorker(url, locator, session, running)
+  let release!: () => void
+  const slot = new Promise<void>((resolve) => (release = resolve))
+  const turn = workerSlots
+  workerSlots = turn.then(() => slot)
+  return turn.then(() => {
+    try {
+      open()
+    } catch (error) {
+      release()
+      throw error
+    }
+    return startWorker(url, locator, session, running, release)
   })
-  workerReads = read.catch(() => undefined)
-  return read
 }
 
 function startWorker(
@@ -730,25 +739,37 @@ function startWorker(
   locator: string,
   session: ProviderHistorySession,
   running: Set<Worker>,
+  release: () => void,
 ): Promise<DomainEvent[]> {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(url, {
-      workerData: { locator, session },
-      name: 'harness-claude-history',
-    })
-    running.add(worker)
-    const settle = (outcome: () => void) => {
-      if (!running.delete(worker)) return
-      outcome()
-      void worker.terminate()
+    let worker: Worker
+    try {
+      worker = new Worker(url, { workerData: { locator, session }, name: 'harness-claude-history' })
+    } catch (error) {
+      release()
+      reject(error)
+      return
     }
-    worker.on('message', (message: { events?: DomainEvent[]; error?: string }) =>
+    running.add(worker)
+    let settled = false
+    const settle = (outcome: () => void) => {
+      if (settled) return
+      settled = true
+      outcome()
+    }
+    worker.on('message', (message: { events?: DomainEvent[]; error?: string }) => {
       settle(() =>
         message.events ? resolve(message.events) : reject(new Error(message.error ?? 'failed')),
-      ),
-    )
+      )
+      void worker.terminate()
+    })
     worker.on('error', (error) => settle(() => reject(error)))
-    worker.on('exit', () => settle(() => reject(new Error('Claude history read was stopped'))))
+    // The next read starts, and a dispose returns, only once this worker is gone.
+    worker.once('exit', () => {
+      running.delete(worker)
+      settle(() => reject(new Error('Claude history read was stopped')))
+      release()
+    })
   })
 }
 
