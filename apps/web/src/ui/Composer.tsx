@@ -1186,6 +1186,18 @@ function ComposerComponent(props: {
     const el = area.current
     if (!el) return
     const currentHeight = el.offsetHeight
+    // A one-line box whose text still fits cannot change height. Its overflow
+    // is read from the layout offsetHeight just made; the height: auto
+    // measurement below forces a second layout of the composer on every key.
+    if (
+      resizeFrame.current === undefined &&
+      currentHeight === COMPOSER_MIN_HEIGHT &&
+      el.scrollHeight <= currentHeight
+    ) {
+      composerAtMaximumHeight.current = false
+      el.style.overflowY = 'hidden'
+      return
+    }
     el.style.height = 'auto'
     const contentHeight = el.scrollHeight
     composerAtMaximumHeight.current = contentHeight > COMPOSER_MAX_HEIGHT
