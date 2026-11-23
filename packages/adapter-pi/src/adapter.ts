@@ -6,6 +6,7 @@ import type {
   Capabilities,
   DomainEvent,
   Item,
+  McpServerConfig,
   Model,
   Thread,
 } from '@harness/contracts'
@@ -19,6 +20,7 @@ import {
 } from '@harness/proc'
 import { z } from 'zod'
 import { PI_CAPABILITIES } from './capabilities.js'
+import { preparePiMcpExtension } from './mcp-extension.js'
 
 export { PI_CAPABILITIES } from './capabilities.js'
 
@@ -31,6 +33,8 @@ export type PiAdapterOptions = {
   displayName?: string
   spawn?: Spawn
   workspacePath?: string
+  mcpServers?: McpServerConfig[] | undefined
+  mcpCredentials?: Record<string, string> | undefined
 }
 
 type PiStartOptions = {
@@ -38,6 +42,8 @@ type PiStartOptions = {
   effort?: string | undefined
   approval?: ApprovalMode | undefined
   instructions?: string | undefined
+  mcpServers?: McpServerConfig[] | undefined
+  mcpCredentials?: Record<string, string> | undefined
 }
 
 type PiTurnOptions = Pick<PiStartOptions, 'model' | 'effort'>
@@ -124,6 +130,10 @@ export class PiAdapter extends EventEmitter<Events> {
   readonly #displayName: string
   readonly #spawn: Spawn
   readonly #defaultWorkspacePath: string | undefined
+  readonly #defaultMcpServers: McpServerConfig[]
+  readonly #defaultMcpCredentials: Record<string, string>
+  #mcpServers: McpServerConfig[] = []
+  #mcpCredentials: Record<string, string> = {}
   #child: ChildProcessWithoutNullStreams | undefined
   #workspacePath = ''
   #threadId: string | undefined
@@ -157,6 +167,8 @@ export class PiAdapter extends EventEmitter<Events> {
     this.#displayName = options.displayName ?? 'Pi'
     this.#spawn = options.spawn ?? spawnCli
     this.#defaultWorkspacePath = options.workspacePath
+    this.#defaultMcpServers = options.mcpServers ?? []
+    this.#defaultMcpCredentials = options.mcpCredentials ?? {}
   }
 
   get capabilities(): Capabilities {
@@ -172,6 +184,8 @@ export class PiAdapter extends EventEmitter<Events> {
     this.#instructionsPending = Boolean(options.instructions)
     this.#model = options.model
     this.#effort = options.effort
+    this.#mcpServers = options.mcpServers ?? this.#defaultMcpServers
+    this.#mcpCredentials = options.mcpCredentials ?? this.#defaultMcpCredentials
     await this.#startProcess(workspacePath)
     const state = await this.#requestParsed('get_state', {}, PiStateSchema)
     await this.#applyModelOptions()
@@ -342,10 +356,19 @@ export class PiAdapter extends EventEmitter<Events> {
   async #startProcess(cwd: string, ephemeral = false): Promise<void> {
     if (this.#child) return
     this.#intentionalStop = false
+    const mcpExtension = ephemeral
+      ? undefined
+      : preparePiMcpExtension(this.#mcpServers, this.#mcpCredentials)
     const child = this.#spawn(
       this.#command,
-      [...this.#args, ...(ephemeral ? ['--no-session'] : []), '--mode', 'rpc'],
-      { cwd },
+      [
+        ...this.#args,
+        ...(ephemeral ? ['--no-session'] : []),
+        ...(mcpExtension ? ['-e', mcpExtension.file] : []),
+        '--mode',
+        'rpc',
+      ],
+      { cwd, ...(mcpExtension ? { env: mcpExtension.env } : {}) },
     )
     this.#child = child
     readNdjson(
