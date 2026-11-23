@@ -138,6 +138,31 @@ describe('useStableNotices', () => {
     expect(schedule).not.toHaveBeenCalled()
   })
 
+  it('never runs the replacement when the only offer on a failure changes its target', () => {
+    const toClaude = vi.fn()
+    const toGrok = vi.fn()
+    const offer = (key: string, label: string, run: () => void): ComposerError => ({
+      id: 'chat:a:limit',
+      message: "You've hit your usage limit.",
+      action: { key, label, run },
+    })
+    const view = renderHook((notices: ComposerError[]) => useStableNotices(notices), {
+      initialProps: [offer('switch:claude-code:opus', 'Switch to Claude Code', toClaude)],
+    })
+    const saved = view.result.current[0]!.action!
+
+    // Same failure, another destination (the catalog changed).
+    view.rerender([offer('switch:grok:grok-5', 'Switch to Grok', toGrok)])
+    saved.run()
+    expect(toGrok).not.toHaveBeenCalled()
+    expect(toClaude).not.toHaveBeenCalled()
+
+    // A same-key callback from a newer render still runs.
+    view.rerender([offer('switch:claude-code:opus', 'Switch to Claude Code', toClaude)])
+    saved.run()
+    expect(toClaude).toHaveBeenCalledOnce()
+  })
+
   it("keeps chat A's visible button on A while a render for chat B has not committed", async () => {
     const forA = vi.fn()
     const forB = vi.fn()

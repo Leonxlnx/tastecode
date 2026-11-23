@@ -27,12 +27,29 @@ export function useStableNotices(notices: readonly ComposerError[]): readonly Co
   return useMemo(() => notices.map((notice) => owned(notice, committed)), [key])
 }
 
+/** What a single action does and to what; a kept notice never runs another offer. */
+function actionIdentity(action: NonNullable<ComposerError['action']>): string {
+  return action.key ?? action.label
+}
+
 function owned(notice: ComposerError, committed: Committed): ComposerError {
   const current = () => committed.current.get(notice.id)
   const { action, choices, usageReset, report, dismiss } = notice
+  const actionKey = action && actionIdentity(action)
   return {
     ...notice,
-    ...(action ? { action: { label: action.label, run: () => current()?.action?.run() } } : {}),
+    ...(action
+      ? {
+          action: {
+            ...(action.key === undefined ? {} : { key: action.key }),
+            label: action.label,
+            run: () => {
+              const now = current()?.action
+              if (now && actionIdentity(now) === actionKey) now.run()
+            },
+          },
+        }
+      : {}),
     ...(choices
       ? {
           choices: {

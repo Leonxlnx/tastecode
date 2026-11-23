@@ -18,7 +18,12 @@ export type ComposerError = {
   /** A note rather than a problem: drawn neutral, never red. */
   tone?: 'info'
   usageReset?: UsageResetNoticeProps | undefined
-  action?: { label: string; run: () => void }
+  /**
+   * `key` names what the action does and to what (an account, a provider and
+   * model, a chat); a kept notice runs it only while that is unchanged. Without
+   * a key the label stands for it.
+   */
+  action?: { key?: string; label: string; run: () => void }
   /** One action with several places to go, offered as a menu instead of a button. */
   choices?: {
     label: string

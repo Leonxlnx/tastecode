@@ -7748,6 +7748,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const continueOffer: Pick<ComposerError, 'action' | 'choices'> = continuedChat
     ? {
         action: {
+          key: `open:${continuedChat.id}`,
           label: `Continued on ${accountLabelOf(providerAccounts, continuedChat.provider, continuedChat.accountId)}`,
           run: () => void selectSession(continuedChat.id),
         },
@@ -7758,10 +7759,12 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         ? {
             action: continueOptions[0]
               ? {
+                  key: `continue:${continueOptions[0].id}`,
                   label: `Continue on ${continueOptions[0].label}`,
                   run: () => void continueOnAccount(continueOptions[0]!.id),
                 }
               : {
+                  key: `switch:${switchOptions[0]!.key}`,
                   label: `Switch to ${switchOptions[0]!.sourceName}`,
                   run: () => switchAtLimit(switchOptions[0]!),
                 },
