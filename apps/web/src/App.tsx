@@ -911,6 +911,12 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     threadFrameStore.subscribeStructure,
     threadFrameStore.getStructureSnapshot,
   )
+  // No function below may use `thread` itself. V8 keeps a variable that any
+  // closure of a render uses in that render's context, and every callback a
+  // render memoized kept the context, and with it the whole transcript of the
+  // chat shown then, long after that chat was closed (19 MB of one closed chat
+  // in a measured session). Closures read the store or this flag instead.
+  const threadRunning = thread.running
   /** Draw into the focused column, whatever it shows. */
   const setThread = useCallback(
     (next: ThreadState) => threadController.frames.publish(next),
@@ -3982,11 +3988,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   }, [activeId])
 
   useEffect(() => {
-    if (!activeId || thread.running) return
+    if (!activeId || threadRunning) return
     void refreshCheckpoints(activeId).catch(() => {
       if (activeIdRef.current === activeId) setCheckpoints([])
     })
-  }, [activeId, thread.running, refreshCheckpoints])
+  }, [activeId, threadRunning, refreshCheckpoints])
 
   // Plan limits belong to the account, so a chat switch neither asks again nor
   // resets them; the thread token totals the request could carry are unused.
@@ -5416,10 +5422,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const stopping = stoppingThreadId !== undefined && stoppingThreadId === activeId && thread.running
   const visibleRunning = thread.running && !stopping
   useEffect(() => {
-    if (stoppingThreadId && !thread.running && stoppingThreadId === activeId) {
+    if (stoppingThreadId && !threadRunning && stoppingThreadId === activeId) {
       setStoppingThreadId(undefined)
     }
-  }, [thread.running, stoppingThreadId, activeId])
+  }, [threadRunning, stoppingThreadId, activeId])
 
   const transcribeVoice = useCallback(
     async (requestId: string, recording: VoiceRecording): Promise<string> => {
@@ -7156,7 +7162,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         setComposerFocusRequest((request) => request + 1)
       },
       interrupt: () => {
-        if (thread.running) interrupt()
+        if (threadRunning) interrupt()
       },
       previousChat: () => cycleChat(-1),
       nextChat: () => cycleChat(1),
@@ -7200,7 +7206,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       openRollback,
       openSettings,
       startNewChat,
-      thread.running,
+      threadRunning,
       toggleFastMode,
       toggleRail,
       toggleSidebarSessionPin,
@@ -7476,7 +7482,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
               shortcut: keybind('toggleSessionPin'),
               run: () => toggleSidebarSessionPin(activeId),
             },
-            ...(thread.running
+            ...(threadRunning
               ? [
                   {
                     id: 'stop-response',
@@ -7553,7 +7559,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     beginSession,
     terminalOpen,
     terminalPlacement,
-    thread.running,
+    threadRunning,
     toggleSidebarSessionPin,
     toggleDefaultTerminal,
     toggleWorkspacePanel,
@@ -7741,7 +7747,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const switchAtLimit = (choice: ModelChoice) => {
     if (activeId) usageResumes.cancel(activeId)
     commitModelChoice(choice)
-    const request = lastRequest(thread.items)
+    const request = lastRequest(threadFrameStore.getStructureSnapshot().items)
     if (request) editMessage(request.text, request.attachments)
   }
   const continueOffer: Pick<ComposerError, 'action' | 'choices'> = continuedChat
@@ -7967,7 +7973,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       title={active?.session.title}
       pinned={active?.session.pinned ?? false}
       projectPath={activePath}
-      checkpointCount={thread.running ? 0 : checkpoints.length}
+      checkpointCount={threadRunning ? 0 : checkpoints.length}
       worktreeBranch={active?.session.worktreeBranch}
       pullRequest={checkoutPullRequest}
       onOpenPullRequest={openCheckoutPullRequest}
