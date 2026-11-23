@@ -7799,7 +7799,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                   run: () => void continueOnAccount(continueOptions[0]!.id),
                 }
               : {
-                  key: `switch:${switchOptions[0]!.key}`,
+                  key: `switch:${switchOptions[0]!.key}:${offerRequestId ?? ''}`,
                   label: `Switch to ${switchOptions[0]!.sourceName}`,
                   run: () => switchAtLimit(switchOptions[0]!),
                 },
@@ -7820,7 +7820,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                   run: () => void continueOnAccount(account.id),
                 })),
                 ...switchOptions.map((choice) => ({
-                  id: `provider:${modelSource(choice)}`,
+                  id: `provider:${modelSource(choice)}:${offerRequestId ?? ''}`,
                   label: choice.sourceName,
                   detail: formatModelName(choice.model.displayName),
                   run: () => switchAtLimit(choice),
