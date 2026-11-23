@@ -686,6 +686,14 @@ function eventsFor(rows: SavedRecord[], session: ProviderHistorySession): Domain
   return events
 }
 
+/** A transcript's events, read whole: compaction and branches are resolved over every row. */
+export async function transcriptEvents(
+  locator: string,
+  session: ProviderHistorySession,
+): Promise<DomainEvent[]> {
+  return eventsFor(await conversation(await records(locator), session), session)
+}
+
 /** A sidechain's last read. Claude only appends, so a longer file reads on from `complete`. */
 type SidechainRead = {
   size: number
@@ -1045,8 +1053,7 @@ export function createClaudeHistorySource(
       const locator = session.locator
       if (!locator || path.basename(locator) !== `${session.id}.jsonl`) return []
       if (!(await validLocator(locator).catch(() => false))) return []
-      const rows = await records(locator)
-      return eventsFor(await conversation(rows, session), session)
+      return transcriptEvents(locator, session)
     },
     dispose() {
       cache.clear()
