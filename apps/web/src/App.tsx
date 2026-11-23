@@ -7608,13 +7608,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       : []
     : (resetSummary?.limits ?? [])
   const resetAt = scheduledResume?.resetsAt ?? usageResetAt(resetLimits, Date.now())
-  const resetRequest =
+  // Only the id: a callback below keeps it, and the whole message (a long
+  // pasted prompt, attachments) would stay alive with that callback.
+  const resetRequestId =
     thread.error && !thread.running
-      ? thread.items.findLast((item) => item.type === 'message' && item.role === 'user')
+      ? thread.items.findLast((item) => item.type === 'message' && item.role === 'user')?.id
       : undefined
   const usageReset: ComposerError['usageReset'] =
     activeSession &&
-    resetRequest &&
+    resetRequestId &&
     !continuedChat &&
     (scheduledResume ||
       accountAtLimit(usageState, activeSession.provider, activeSession.accountId, Date.now()))
@@ -7622,7 +7624,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           resetsAt: resetAt,
           source: `${providerName(activeSession.provider)}${selectedModelChoice ? ` · ${formatModelName(selectedModelChoice.model.displayName)}` : ''}`,
           scheduled: Boolean(scheduledResume),
-          schedule: () => usageResumes.schedule(activeSession, resetRequest.id, resetAt!),
+          schedule: () => usageResumes.schedule(activeSession, resetRequestId, resetAt!),
           cancel: () => usageResumes.cancel(activeSession.id),
         }
       : undefined

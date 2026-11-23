@@ -33,7 +33,20 @@ function nestedUses(text: string): string[] {
   if (snapshots.length !== 1) {
     throw new Error(`App should hold one frame store structure snapshot, found ${snapshots.length}`)
   }
-  const watched = new Set<ts.Node>(snapshots)
+  const snapshot = snapshots[0]!
+  const watched = new Set<ts.Node>([snapshot])
+  // A value taken from the snapshot's items (a message, a list of them) keeps
+  // transcript data alive the same way. An item's id or a count does not.
+  const isSnapshot = (node: ts.Expression) =>
+    ts.isIdentifier(node) && resolveName(node, body) === snapshot
+  for (const statement of body.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    for (const declaration of statement.declarationList.declarations) {
+      if (declaration.initializer && takesItems(declaration.initializer, isSnapshot)) {
+        watched.add(declaration)
+      }
+    }
+  }
 
   const uses: string[] = []
   const visit = (node: ts.Node) => {
@@ -51,6 +64,50 @@ function nestedUses(text: string): string[] {
   return uses
 }
 
+/** Whether a value can be the snapshot itself or something read out of its `items`. */
+function takesItems(value: ts.Expression, isSnapshot: (node: ts.Expression) => boolean): boolean {
+  if (
+    ts.isParenthesizedExpression(value) ||
+    ts.isAsExpression(value) ||
+    ts.isSatisfiesExpression(value) ||
+    ts.isNonNullExpression(value)
+  ) {
+    return takesItems(value.expression, isSnapshot)
+  }
+  if (ts.isConditionalExpression(value)) {
+    return takesItems(value.whenTrue, isSnapshot) || takesItems(value.whenFalse, isSnapshot)
+  }
+  if (ts.isBinaryExpression(value)) {
+    const operator = value.operatorToken.kind
+    if (operator === ts.SyntaxKind.AmpersandAmpersandToken)
+      return takesItems(value.right, isSnapshot)
+    if (
+      operator === ts.SyntaxKind.BarBarToken ||
+      operator === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      return takesItems(value.left, isSnapshot) || takesItems(value.right, isSnapshot)
+    }
+    return false
+  }
+  if (isSnapshot(value)) return true
+  if (ts.isPropertyAccessExpression(value) && ['id', 'length'].includes(value.name.text)) {
+    return false
+  }
+  // Down the chain of calls and reads to where it starts.
+  for (let node: ts.Expression = value; ;) {
+    if (ts.isPropertyAccessExpression(node)) {
+      if (node.name.text === 'items' && isSnapshot(node.expression)) return true
+      node = node.expression
+    } else if (ts.isCallExpression(node) || ts.isElementAccessExpression(node)) {
+      node = node.expression
+    } else if (ts.isNonNullExpression(node) || ts.isParenthesizedExpression(node)) {
+      node = node.expression
+    } else {
+      return false
+    }
+  }
+}
+
 /** `useSyncExternalStore(store.subscribeStructure, store.getStructureSnapshot)`, whatever its name. */
 function isStructureSnapshot(declaration: ts.VariableDeclaration): boolean {
   const call = declaration.initializer
@@ -58,7 +115,7 @@ function isStructureSnapshot(declaration: ts.VariableDeclaration): boolean {
     ts.isIdentifier(declaration.name) &&
     call !== undefined &&
     ts.isCallExpression(call) &&
-    /useSyncExternalStore$/.test(call.expression.getText()) &&
+    call.expression.getText().endsWith('useSyncExternalStore') &&
     call.arguments.some(
       (argument) =>
         ts.isPropertyAccessExpression(argument) && argument.name.text === 'getStructureSnapshot',
@@ -230,6 +287,18 @@ describe('App closures', () => {
     expect(() =>
       nestedUses('export function App() {\n  const thread = read()\n  return null\n}'),
     ).toThrow('found 0')
+  })
+
+  it('counts a message taken from the items, but not an item id or a count', () => {
+    const uses = nestedUses(
+      app(
+        '  const request = thread.error ? thread.items.findLast(isUser) : undefined',
+        '  const requestId = thread.items.findLast(isUser)?.id',
+        '  const count = thread.items.length',
+        '  const resume = () => schedule(request, requestId, count)',
+      ),
+    )
+    expect(uses).toEqual(['App.tsx:6 request'])
   })
 
   it('does not count an unrelated method or property called thread', () => {
