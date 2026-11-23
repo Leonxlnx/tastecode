@@ -140,6 +140,7 @@ import {
   type EarlierChanges,
   lastRequest,
   lastRequestId,
+  lastSubmissionId,
   requestById,
 } from './continue-account.js'
 import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
@@ -7754,10 +7755,12 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const offerFailureId = thread.error?.id
   // Read only while a switch is offered: an idle failure without one renders
   // on, and each render would scan back for the request.
-  const offerRequestId =
-    thread.error && !thread.running && !continuedChat && switchOptions.length > 0
-      ? lastRequestId(thread.items)
-      : undefined
+  const switchOffered =
+    thread.error !== undefined && !thread.running && !continuedChat && switchOptions.length > 0
+  // The submission the failure answers (a file sent without text counts), and the text request
+  // whose words go back into the composer; both must still be the same when the switch runs.
+  const offerSubmissionId = switchOffered ? lastSubmissionId(thread.items) : undefined
+  const offerRequestId = switchOffered ? lastRequestId(thread.items) : undefined
   /** Sets the chat up to switch, with the request that failed back in the composer. */
   const switchAtLimit = (choice: ModelChoice) => {
     const shown = threadController.frames.getStructureSnapshot()
@@ -7770,6 +7773,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       activeIdRef.current !== offerSessionId ||
       threadController.draftOwner !== composerDraftKey(offerSessionId) ||
       shown.error?.id !== offerFailureId ||
+      lastSubmissionId(shown.items) !== offerSubmissionId ||
       lastRequestId(shown.items) !== offerRequestId
     ) {
       return

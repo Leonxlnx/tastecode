@@ -114,6 +114,20 @@ export function lastRequestId(items: readonly Item[]): string | undefined {
   return items.findLast((item) => asRequest(item) !== undefined)?.id
 }
 
+/**
+ * The id of the latest submission a failure can answer: a user message with text or with only
+ * attachments. A file sent without text is a submission of its own, although `lastRequest`
+ * skips it for the draft it restores.
+ */
+export function lastSubmissionId(items: readonly Item[]): string | undefined {
+  return items.findLast(
+    (item) =>
+      item.type === 'message' &&
+      item.role === 'user' &&
+      (Boolean(item.text?.trim()) || (item.attachments?.length ?? 0) > 0),
+  )?.id
+}
+
 /** The request with this id, as `lastRequest` offers it; undefined once it is not there. */
 export function requestById(
   items: readonly Item[],
