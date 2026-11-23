@@ -14,6 +14,7 @@ import {
 } from 'react'
 import {
   IconArrowLeft as ArrowLeft,
+  IconDeviceMobile as DeviceMobile,
   IconFileDiff as FileDiff,
   IconFolderOpen as FolderOpen,
   IconWorld as Globe2,
@@ -39,6 +40,7 @@ import type {
 } from './WorkspaceSideChat.js'
 import type { AnnotationDraft } from './browser-annotations.js'
 import type { AgentBrowserLink, BrowserNavigationRequest } from './WorkspaceBrowser.js'
+import type { SimulatorTabInfo } from './WorkspaceSimulator.js'
 import { browserPageLabel, type BrowserPageInfo } from './browser-page.js'
 import { WorkspaceTabs } from './WorkspaceTabs.js'
 import {
@@ -69,6 +71,9 @@ const WorkspaceBrowser = lazy(() =>
 const WorkspaceFiles = lazy(() =>
   import('./WorkspaceFiles.js').then((module) => ({ default: module.WorkspaceFiles })),
 )
+const WorkspaceSimulator = lazy(() =>
+  import('./WorkspaceSimulator.js').then((module) => ({ default: module.WorkspaceSimulator })),
+)
 const WorkspaceSideChat = lazy(() =>
   import('./WorkspaceSideChat.js').then((module) => ({ default: module.WorkspaceSideChat })),
 )
@@ -83,7 +88,14 @@ export type WorkspaceProviderLoginRequest = {
   canCancelSignIn?: boolean
 }
 
-export type WorkspaceTool = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat' | 'agents'
+export type SimulatorOpenRequest = {
+  requestId: number
+  deviceId: string
+  name: string
+}
+
+export type WorkspaceTool =
+  'review' | 'terminal' | 'browser' | 'files' | 'simulator' | 'side-chat' | 'agents'
 
 type WorkspaceTab =
   | {
@@ -91,6 +103,9 @@ type WorkspaceTab =
       kind: WorkspaceTool
       /** Opened by the user, not restored or opened for them: take focus. */
       userOpened?: boolean
+      /** Pre-selected simulator device when opened by an agent calling `device_open`. */
+      initialDeviceId?: string
+      initialDeviceRequestId?: number
     }
   | {
       id: string
@@ -125,6 +140,11 @@ const TOOLS: Array<{
     kind: 'files',
     title: 'Files',
     Icon: FolderOpen,
+  },
+  {
+    kind: 'simulator',
+    title: 'Simulator',
+    Icon: DeviceMobile,
   },
   {
     kind: 'side-chat',
@@ -174,6 +194,7 @@ function WorkspacePanelComponent(props: {
   imagesSupported?: boolean | undefined
   onAnnotationDraft?: ((draft: AnnotationDraft) => void) | undefined
   designPreviewRequest?: BrowserNavigationRequest | undefined
+  simulatorOpenRequest?: SimulatorOpenRequest | undefined
   /** Opens the Pull requests surface on the pull request the Review tab shows. */
   onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
 }) {
@@ -206,6 +227,32 @@ function WorkspacePanelComponent(props: {
       return next
     })
   }, [])
+  const [simulatorTabs, setSimulatorTabs] = useState<ReadonlyMap<string, SimulatorTabInfo>>(
+    () => new Map(),
+  )
+  const simulatorTabsRef = useRef(simulatorTabs)
+  simulatorTabsRef.current = simulatorTabs
+  const updateSimulatorTab = useCallback((id: string, info: SimulatorTabInfo) => {
+    setSimulatorTabs((current) => {
+      const previous = current.get(id)
+      if (
+        previous?.deviceId === info.deviceId &&
+        previous?.name === info.name &&
+        previous?.platform === info.platform
+      ) {
+        return current
+      }
+      return new Map(current).set(id, info)
+    })
+  }, [])
+  const forgetSimulatorTab = useCallback((id: string) => {
+    setSimulatorTabs((current) => {
+      if (!current.has(id)) return current
+      const next = new Map(current)
+      next.delete(id)
+      return next
+    })
+  }, [])
   const tabLabels = useMemo(() => {
     let terminalNumber = 0
     return tabs.map((tab) => {
@@ -222,6 +269,17 @@ function WorkspacePanelComponent(props: {
           accessibleName: `Browser: ${title}`,
         }
       }
+      if (tab.kind === 'simulator') {
+        const info = simulatorTabs.get(tab.id)
+        const title = info?.name || definition.title
+        return {
+          id: tab.id,
+          title,
+          icon: <Icon size={14} aria-hidden />,
+          tooltip: title,
+          accessibleName: title === definition.title ? title : `Simulator: ${title}`,
+        }
+      }
       const title =
         tab.kind === 'provider-login'
           ? tab.title
@@ -230,7 +288,7 @@ function WorkspacePanelComponent(props: {
             : definition.title
       return { id: tab.id, title, icon: <Icon size={14} aria-hidden /> }
     })
-  }, [tabs, browserPages])
+  }, [tabs, browserPages, simulatorTabs])
   // Surfaces keep an order no tab move changes; React moving an iframe or webview reloads it.
   const surfaces = useMemo(() => [...tabs].sort((a, b) => (a.id < b.id ? -1 : 1)), [tabs])
   const [designPreview, setDesignPreview] = useState<BrowserNavigationRequest>()
@@ -240,13 +298,16 @@ function WorkspacePanelComponent(props: {
   const handledTerminalRequest = useRef(0)
   const handledExternalRequest = useRef(0)
   const handledPreviewRequest = useRef<string | undefined>(undefined)
+  const handledSimulatorRequest = useRef(0)
   toolRef.current = tool
 
   // A Browser tab the user just opened, whose surface may still be loading.
   const focusNewBrowserTab = useRef<string | undefined>(undefined)
   const openTool = useCallback(
     (kind: WorkspaceTool) => {
-      const id = ['terminal', 'browser', 'files'].includes(kind) ? crypto.randomUUID() : kind
+      const id = ['terminal', 'browser', 'files', 'simulator'].includes(kind)
+        ? crypto.randomUUID()
+        : kind
       if (kind === 'browser') focusNewBrowserTab.current = id
       showTool({ id, kind, userOpened: true })
       props.onOpen()
@@ -280,6 +341,7 @@ function WorkspacePanelComponent(props: {
     setTabs([])
     setActiveId(undefined)
     setBrowserPages(new Map())
+    setSimulatorTabs(new Map())
     for (const tab of current) {
       if (tab.kind === 'provider-login') props.onProviderLoginClose?.(tab.requestId)
     }
@@ -308,10 +370,29 @@ function WorkspacePanelComponent(props: {
       const remaining = tabsRef.current.filter((tab) => tab.id !== id)
       setTabs(remaining)
       forgetBrowserPage(id)
+      if (current.kind === 'simulator') {
+        const simInfo = simulatorTabsRef.current.get(id)
+        forgetSimulatorTab(id)
+        if (simInfo?.deviceId) {
+          void props.transport
+            .request('simulator.close', {
+              threadId: props.threadId ?? `panel:${id}`,
+              deviceId: simInfo.deviceId,
+            })
+            .catch(() => undefined)
+        }
+      }
       if (current?.kind === 'provider-login') props.onProviderLoginClose?.(current.requestId)
       else if (!remaining.length) props.onClose()
     },
-    [forgetBrowserPage, props.onClose, props.onProviderLoginClose],
+    [
+      forgetBrowserPage,
+      forgetSimulatorTab,
+      props.onClose,
+      props.onProviderLoginClose,
+      props.threadId,
+      props.transport,
+    ],
   )
 
   // Ctrl+W in a Browser tab removes the surface that had focus. Hand focus to
@@ -397,6 +478,49 @@ function WorkspacePanelComponent(props: {
     showTool({ id: DESIGN_PREVIEW_TAB_ID, kind: 'browser' })
     props.onOpen()
   }, [props.designPreviewRequest, props.onOpen, showTool])
+
+  useEffect(() => {
+    const request = props.simulatorOpenRequest
+    if (!request || request.requestId === handledSimulatorRequest.current) return
+    handledSimulatorRequest.current = request.requestId
+    const existing = tabsRef.current.find(
+      (tab) =>
+        tab.kind === 'simulator' &&
+        simulatorTabsRef.current.get(tab.id)?.deviceId === request.deviceId,
+    )
+    if (existing) {
+      setActiveId(existing.id)
+      props.onOpen()
+      return
+    }
+    const emptySim = tabsRef.current.find(
+      (tab) => tab.kind === 'simulator' && !simulatorTabsRef.current.get(tab.id)?.deviceId,
+    )
+    if (emptySim) {
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.id === emptySim.id && tab.kind === 'simulator'
+            ? {
+                ...tab,
+                initialDeviceId: request.deviceId,
+                initialDeviceRequestId: request.requestId,
+              }
+            : tab,
+        ),
+      )
+      setActiveId(emptySim.id)
+      props.onOpen()
+      return
+    }
+    const id = crypto.randomUUID()
+    showTool({
+      id,
+      kind: 'simulator',
+      initialDeviceId: request.deviceId,
+      initialDeviceRequestId: request.requestId,
+    })
+    props.onOpen()
+  }, [props.onOpen, props.simulatorOpenRequest, showTool])
 
   // The agent's browser: commands for the chat this panel shows run in its own tab.
   const [agentCommand, setAgentCommand] = useState<BrowserCommand>()
@@ -738,6 +862,7 @@ function WorkspacePanelComponent(props: {
                   onAnnotationDraft={props.onAnnotationDraft}
                   browserAgent={tab.id === AGENT_BROWSER_TAB_ID ? agentLink : undefined}
                   onBrowserPage={updateBrowserPage}
+                  onSimulatorDevice={updateSimulatorTab}
                   onCloseTab={closeTabByShortcut}
                   onClose={() => closeTab(tab.id)}
                 />
@@ -802,6 +927,7 @@ function WorkspaceToolSurface(props: {
   /** Set on the chat's agent tab: its commands, its bar and Stop. */
   browserAgent?: AgentBrowserLink | undefined
   onBrowserPage: (tabId: string, page: BrowserPageInfo) => void
+  onSimulatorDevice: (tabId: string, info: SimulatorTabInfo) => void
   /** Ctrl+W in a Browser tab. Stable, so a memoized Browser surface keeps its props. */
   onCloseTab: (tabId: string) => void
   onClose: () => void
@@ -869,6 +995,20 @@ function WorkspaceToolSurface(props: {
         projectPath={props.projectPath}
         projectName={props.projectName}
         threadId={props.threadId}
+      />
+    )
+  }
+  if (props.tab.kind === 'simulator') {
+    return (
+      <WorkspaceSimulator
+        tabId={props.tab.id}
+        active={props.active}
+        transport={props.transport}
+        threadId={props.threadId}
+        initialDeviceId={props.tab.initialDeviceId}
+        initialDeviceRequestId={props.tab.initialDeviceRequestId}
+        onDeviceInfo={props.onSimulatorDevice}
+        onClose={props.onClose}
       />
     )
   }

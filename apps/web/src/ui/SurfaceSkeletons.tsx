@@ -217,8 +217,8 @@ export function PullRequestsSkeleton() {
   )
 }
 
-// Review, Terminal, Browser, Files, Temporary chat.
-const WORKSPACE_TOOL_LABELS: readonly number[] = [42, 50, 46, 30, 94]
+// Review, Terminal, Browser, Files, Simulator, Temporary chat.
+const WORKSPACE_TOOL_LABELS: readonly number[] = [42, 50, 46, 30, 56, 94]
 
 /**
  * The workspace panel as it always opens: an empty tab strip over the tool
