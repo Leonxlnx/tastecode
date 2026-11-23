@@ -289,6 +289,9 @@ importers:
 
   packages/adapter-antigravity:
     dependencies:
+      '@harness/adapter-acp':
+        specifier: workspace:*
+        version: link:../adapter-acp
       '@harness/contracts':
         specifier: workspace:*
         version: link:../contracts

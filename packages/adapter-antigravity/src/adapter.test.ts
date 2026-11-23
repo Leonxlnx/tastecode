@@ -1,57 +1,67 @@
-import path from 'node:path'
 import { ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
-import type { DomainEvent } from '@harness/contracts'
-import { describe, expect, it, vi } from 'vitest'
+import type { DomainEvent, McpServerConfig } from '@harness/contracts'
+import { describe, expect, it } from 'vitest'
 import {
   AntigravityAdapter,
   ANTIGRAVITY_CAPABILITIES,
-  ANTIGRAVITY_RESULT_EXIT_GRACE_MS,
-  antigravityBackgroundNote,
-  antigravityImagePrompt,
-  antigravityTurnArgs,
+  antigravityModeForApproval,
   parseAntigravityModels,
 } from './adapter.js'
 import { resetAntigravityIndexForTests } from './models.js'
 
-/** Frames captured from agy 1.1.10 on Windows through real non-TTY pipes. */
-const CAPTURED_FRAMES = [
-  '{"event":"init","conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","init":{"model":"gemini-3.6-flash-low","cwd":"C:\\\\tmp"}}',
-  '{"event":"step_update","step_update":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","step_index":0,"state":"DONE","step_type":"user_input"}}',
-  '{"event":"step_update","step_update":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","step_index":2,"state":"ACTIVE","step_type":"agent_response","text_delta":"MOND"}}',
-  '{"event":"step_update","step_update":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","step_index":2,"state":"DONE","step_type":"agent_response","text_delta":"LICHT\\n","usage":{"input_tokens":26267,"output_tokens":3,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":26270}}',
-  '{"event":"step_update","step_update":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","step_index":3,"state":"DONE","step_type":"checkpoint"}}',
-  '{"event":"result","result":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","status":"SUCCESS","response":"MONDLICHT\\n","num_turns":1,"usage":{"input_tokens":26368,"output_tokens":6,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":26374}}}',
+/** Captured initialize and session/new config options from agy acp 1.5.14. */
+const AGY_INIT_RESULT = {
+  protocolVersion: 1,
+  agentCapabilities: {
+    loadSession: true,
+    promptCapabilities: { image: true, audio: false, embeddedContext: true },
+  },
+  agentInfo: { name: 'Antigravity ACP Server', version: '1.5.14' },
+}
+
+const AGY_CONFIG_OPTIONS = [
+  {
+    id: 'model',
+    name: 'Model',
+    category: 'model',
+    type: 'select',
+    currentValue: 'gemini-4-neon',
+    options: [
+      { value: 'gemini-4-neon', name: 'Gemini 4 Neon' },
+      { value: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash' },
+    ],
+  },
+  {
+    id: 'thought_level',
+    name: 'Thinking Level',
+    category: 'thought_level',
+    type: 'select',
+    currentValue: 'high',
+    options: [
+      { value: 'low', name: 'Low' },
+      { value: 'medium', name: 'Medium' },
+      { value: 'high', name: 'High' },
+    ],
+  },
+  {
+    id: 'mode',
+    name: 'Mode',
+    category: 'mode',
+    type: 'select',
+    currentValue: 'default',
+    options: [
+      { value: 'default', name: 'Default' },
+      { value: 'accept-edits', name: 'Accept edits' },
+      { value: 'auto', name: 'Auto' },
+      { value: 'plan', name: 'Plan' },
+    ],
+  },
 ]
 
-/**
- * The result agy 1.4.7 prints when the conversation holds an error step, as
- * one that failed in an earlier turn does: CAPTURED_FRAMES' result with the
- * fields steps.JSONOutput fills in then (json tags read from the agy.exe
- * binary): status ERROR and that step's message in `error`. The status is
- * the same whether this turn finished (exit 0) or failed (exit 3).
- */
-const ERROR_RESULT_FRAME = JSON.stringify({
-  event: 'result',
-  result: {
-    conversation_id: '9f1827a7-3506-4a85-add9-63182b9917a4',
-    status: 'ERROR',
-    response: 'MONDLICHT\n',
-    error: 'UNAUTHENTICATED (code 401): Request had invalid authentication credentials.',
-    duration_seconds: 4.2,
-    num_turns: 1,
-    usage: {
-      input_tokens: 26368,
-      output_tokens: 6,
-      thinking_tokens: 0,
-      cache_read_tokens: 0,
-      total_tokens: 26374,
-    },
-  },
-})
-const ERROR_RESULT_TURN = [...CAPTURED_FRAMES.slice(0, -1), ERROR_RESULT_FRAME]
+type RpcFrame = { jsonrpc: '2.0'; id?: number | string; method?: string; params?: unknown }
 
-class FakeChild extends ChildProcess {
+class FakeAgyAcpChild extends ChildProcess {
   override stdout = new PassThrough()
   override stderr = new PassThrough()
   override stdin = new PassThrough()
@@ -62,545 +72,273 @@ class FakeChild extends ChildProcess {
     null,
     null,
   ]
+  readonly requests: RpcFrame[] = []
+  #buffer = ''
+
+  constructor(private readonly onPrompt?: (child: FakeAgyAcpChild, frame: RpcFrame) => void) {
+    super()
+    this.stdin.setEncoding('utf8')
+    this.stdin.on('data', (chunk: string) => {
+      this.#buffer += chunk
+      let nl: number
+      while ((nl = this.#buffer.indexOf('\n')) !== -1) {
+        const line = this.#buffer.slice(0, nl).trim()
+        this.#buffer = this.#buffer.slice(nl + 1)
+        if (!line) continue
+        const frame = JSON.parse(line) as RpcFrame
+        this.requests.push(frame)
+        this.#handle(frame)
+      }
+    })
+  }
+
+  send(payload: unknown): void {
+    this.stdout.write(`${JSON.stringify(payload)}\n`)
+  }
+
+  #handle(frame: RpcFrame): void {
+    if (frame.id === undefined) return
+    switch (frame.method) {
+      case 'initialize':
+        this.send({ jsonrpc: '2.0', id: frame.id, result: AGY_INIT_RESULT })
+        return
+      case 'session/new':
+        this.send({
+          jsonrpc: '2.0',
+          id: frame.id,
+          result: { sessionId: 'agy-sess-1', configOptions: AGY_CONFIG_OPTIONS },
+        })
+        return
+      case 'session/load':
+        this.send({
+          jsonrpc: '2.0',
+          id: frame.id,
+          result: { configOptions: AGY_CONFIG_OPTIONS },
+        })
+        return
+      case 'session/set_config_option':
+        this.send({ jsonrpc: '2.0', id: frame.id, result: { configOptions: AGY_CONFIG_OPTIONS } })
+        return
+      case 'session/prompt':
+        if (this.onPrompt) {
+          this.onPrompt(this, frame)
+          return
+        }
+        this.send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: 'agy-sess-1',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: 'MOND' },
+            },
+          },
+        })
+        this.send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: 'agy-sess-1',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: 'LICHT' },
+            },
+          },
+        })
+        this.send({
+          jsonrpc: '2.0',
+          id: frame.id,
+          result: {
+            stopReason: 'end_turn',
+            usage: { inputTokens: 100, outputTokens: 12, thoughtTokens: 4, totalTokens: 116 },
+          },
+        })
+        return
+      default:
+        this.send({ jsonrpc: '2.0', id: frame.id, result: {} })
+    }
+  }
 
   override kill(): boolean {
     setImmediate(() => {
       this.stdout.end()
       this.stderr.end()
-      this.emit('close', null)
+      this.emit('exit', 0, null)
+      this.emit('close', 0)
     })
     return true
   }
 }
 
-type SpawnRecord = { command?: string; args?: string[] }
+describe('Antigravity ACP adapter', () => {
+  it('declares ACP capabilities for approvals, reasoning items and native images', () => {
+    expect(ANTIGRAVITY_CAPABILITIES).toEqual({
+      steer: false,
+      fork: false,
+      interrupt: true,
+      reasoningItems: true,
+      approvals: true,
+      images: true,
+      imageFiles: true,
+    })
+  })
 
-function fakeSpawn(record: SpawnRecord, child: FakeChild) {
-  return (command: string, args: string[]) => {
-    record.command = command
-    record.args = args
-    return child
-  }
-}
+  it('maps approval modes onto agy acp mode options', () => {
+    const modes = ['default', 'accept-edits', 'auto', 'plan']
+    expect(antigravityModeForApproval('ask', modes)).toBe('default')
+    expect(antigravityModeForApproval('auto', modes)).toBe('accept-edits')
+    expect(antigravityModeForApproval('full', modes)).toBe('auto')
+    expect(antigravityModeForApproval('auto', ['default'])).toBeUndefined()
+  })
 
-describe('Antigravity turn invocation', () => {
-  it('maps approval modes onto the CLI switches', () => {
-    expect(antigravityTurnArgs('Hi', { approval: 'ask' }, undefined)).not.toContain('--mode')
-    expect(antigravityTurnArgs('Hi', { approval: 'auto' }, undefined)).toContain('accept-edits')
-    expect(antigravityTurnArgs('Hi', { approval: 'full' }, undefined)).toContain(
-      '--dangerously-skip-permissions',
+  it('starts agy acp, passes HTTP MCP servers directly, applies config options, and streams a turn', async () => {
+    resetAntigravityIndexForTests()
+    parseAntigravityModels(
+      [
+        'gemini-3.8-flash-high\tGemini 3.8 Flash (High)',
+        'gemini-3.8-flash-low\tGemini 3.8 Flash (Low)',
+      ].join('\n'),
     )
-  })
 
-  it('resumes with the conversation id from the init frame', () => {
-    const args = antigravityTurnArgs('Hi', {}, 'conv-1')
-    expect(args.slice(-2)).toEqual(['--conversation', 'conv-1'])
-  })
+    const spawned: Array<{ command: string; args: string[] }> = []
+    let acpChild: FakeAgyAcpChild | undefined
+    const mcpServers: McpServerConfig[] = [
+      {
+        id: 'tastecode',
+        enabled: true,
+        transport: {
+          type: 'http',
+          url: 'http://127.0.0.1:4444/agents/abc',
+          headers: { Authorization: { source: 'credential', credentialRef: 'tc-token' } },
+        },
+      },
+    ]
 
-  it('streams a captured turn into message deltas, usage, and completion', async () => {
-    const record: SpawnRecord = {}
-    const child = new FakeChild()
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, child) })
+    const adapter = new AntigravityAdapter({
+      spawn: ((command: string, args: string[]) => {
+        spawned.push({ command, args })
+        acpChild = new FakeAgyAcpChild()
+        return acpChild
+      }) as never,
+      mcpServers,
+      mcpCredentials: { 'tc-token': 'Bearer secret-token' },
+    })
     const events: DomainEvent[] = []
     adapter.on('event', (event) => events.push(event))
 
-    const thread = await adapter.startThread('C:\\repo', { model: 'gemini-3.6-flash-low' })
-    await adapter.sendTurn(thread.id, 'Say only the word MONDLICHT.')
-    for (const frame of CAPTURED_FRAMES) child.stdout.write(`${frame}\n`)
-    child.stdout.end()
-    child.emit('close', 0)
-    await new Promise((resolve) => setImmediate(resolve))
+    const thread = await adapter.startThread('C:\\repo', {
+      model: 'gemini-3.8-flash-high',
+      effort: 'low',
+      approval: 'auto',
+      instructions: 'Be concise.',
+    })
+    expect(thread.id).toBe('acp-antigravity-agy-sess-1')
+    expect(thread.provider).toBe('antigravity')
+    expect(spawned).toEqual([expect.objectContaining({ args: ['acp'] })])
 
-    expect(record.args).toContain('stream-json')
+    const sessionNew = acpChild!.requests.find((r) => r.method === 'session/new')
+    expect(sessionNew?.params).toEqual({
+      cwd: 'C:\\repo',
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'tastecode',
+          url: 'http://127.0.0.1:4444/agents/abc',
+          headers: [{ name: 'Authorization', value: 'Bearer secret-token' }],
+        },
+      ],
+    })
+
+    const configCalls = acpChild!.requests.filter((r) => r.method === 'session/set_config_option')
+    expect(configCalls.map((call) => call.params)).toEqual([
+      { sessionId: 'agy-sess-1', configId: 'model', value: 'gemini-3.8-flash-low' },
+      { sessionId: 'agy-sess-1', configId: 'thought_level', value: 'low' },
+      { sessionId: 'agy-sess-1', configId: 'mode', value: 'accept-edits' },
+    ])
+
+    const turnDone = new Promise<void>((resolve) => {
+      adapter.on('event', (event) => {
+        if (event.type === 'turn.completed') resolve()
+      })
+    })
+    await adapter.sendTurn(thread.id, 'Say MONDLICHT')
+    await turnDone
+
     expect(events).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ type: 'item.delta', textDelta: 'MOND' }),
+        expect.objectContaining({ type: 'item.delta', textDelta: 'LICHT' }),
         expect.objectContaining({
           type: 'item.completed',
           item: expect.objectContaining({ type: 'message', text: 'MONDLICHT' }),
         }),
         expect.objectContaining({
           type: 'usage.updated',
-          usage: expect.objectContaining({ inputTokens: 26368, totalTokens: 26374 }),
+          usage: expect.objectContaining({
+            inputTokens: 100,
+            outputTokens: 16,
+            reasoningTokens: 4,
+            totalTokens: 116,
+          }),
         }),
         expect.objectContaining({ type: 'turn.completed', status: 'completed' }),
       ]),
     )
-    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
-
-    // The next turn resumes the conversation the init frame announced.
-    await adapter.sendTurn(thread.id, 'And again?')
-    expect(record.args?.slice(-2)).toEqual([
-      '--conversation',
-      '9f1827a7-3506-4a85-add9-63182b9917a4',
-    ])
+    await adapter.dispose()
   })
 
-  it('completes a turn agy finished although its result says ERROR', async () => {
-    const child = new FakeChild()
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
-    const events: DomainEvent[] = []
-    const logs: string[] = []
-    adapter.on('event', (event) => events.push(event))
-    adapter.on('log', (line) => logs.push(line))
-    const thread = await adapter.startThread('C:\\repo')
-    const turnId = await adapter.sendTurn(thread.id, 'Say only the word MONDLICHT.')
-    for (const frame of ERROR_RESULT_TURN) child.stdout.write(`${frame}\n`)
-    child.stdout.end()
-    await new Promise((resolve) => setImmediate(resolve))
-
-    // The answer is in, but the verdict is agy's exit code.
-    expect(events.find((event) => event.type === 'item.completed')).toMatchObject({
-      item: { id: `${turnId}-message`, status: 'completed', text: 'MONDLICHT' },
-    })
-    expect(events.some((event) => event.type === 'turn.completed')).toBe(false)
-
-    child.emit('exit', 0, null)
-    child.emit('close', 0, null)
-    await new Promise((resolve) => setImmediate(resolve))
-
-    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
-      { type: 'turn.completed', turnId, status: 'completed' },
-    ])
-    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
-    expect(logs.some((line) => line.includes('UNAUTHENTICATED (code 401)'))).toBe(true)
-  })
-
-  it('still fails a turn that agy exits non-zero after an ERROR result', async () => {
-    const child = new FakeChild()
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
-    const events: DomainEvent[] = []
-    adapter.on('event', (event) => events.push(event))
-    const thread = await adapter.startThread('C:\\repo')
-    const turnId = await adapter.sendTurn(thread.id, 'Hello')
-    for (const frame of ERROR_RESULT_TURN) child.stdout.write(`${frame}\n`)
-    child.stdout.end()
-    await new Promise((resolve) => setImmediate(resolve))
-    child.emit('exit', 3, null)
-    child.emit('close', 3, null)
-    await new Promise((resolve) => setImmediate(resolve))
-
-    expect(events.filter((event) => event.type === 'thread.error')).toEqual([
-      {
-        type: 'thread.error',
-        threadId: thread.id,
-        message: 'Antigravity finished with status ERROR',
-      },
-    ])
-    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
-      { type: 'turn.completed', turnId, status: 'failed' },
-    ])
-  })
-
-  it('judges an ERROR result on the frame alone when agy does not exit', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    try {
-      const child = new FakeChild()
-      const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
-      const events: DomainEvent[] = []
-      adapter.on('event', (event) => events.push(event))
-      const thread = await adapter.startThread('C:\\repo')
-      const turnId = await adapter.sendTurn(thread.id, 'Hello')
-      for (const frame of ERROR_RESULT_TURN) child.stdout.write(`${frame}\n`)
-      await new Promise((resolve) => setImmediate(resolve))
-      expect(events.some((event) => event.type === 'turn.completed')).toBe(false)
-
-      vi.advanceTimersByTime(ANTIGRAVITY_RESULT_EXIT_GRACE_MS)
-      child.emit('exit', 0, null)
-      child.emit('close', 0, null)
-
-      expect(events.filter((event) => event.type === 'thread.error')).toHaveLength(1)
-      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
-        { type: 'turn.completed', turnId, status: 'failed' },
-      ])
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('completes a turn stopped while agy exits after an ERROR result as interrupted', async () => {
-    const child = new FakeChild()
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
-    const events: DomainEvent[] = []
-    adapter.on('event', (event) => events.push(event))
-    const thread = await adapter.startThread('C:\\repo')
-    const turnId = await adapter.sendTurn(thread.id, 'Hello')
-    for (const frame of ERROR_RESULT_TURN) child.stdout.write(`${frame}\n`)
-    await new Promise((resolve) => setImmediate(resolve))
-
-    await adapter.interrupt()
-    await new Promise((resolve) => setImmediate(resolve))
-
-    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
-      { type: 'turn.completed', turnId, status: 'interrupted' },
-    ])
-    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
-  })
-
-  it('reports a dead CLI instead of hanging silently', async () => {
-    const child = new FakeChild()
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
-    const events: DomainEvent[] = []
-    adapter.on('event', (event) => events.push(event))
-    const thread = await adapter.startThread('C:\\repo')
-    await adapter.sendTurn(thread.id, 'Hello')
-    child.stdout.end()
-    child.emit('close', 3)
-    await new Promise((resolve) => setImmediate(resolve))
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: 'thread.error' }),
-        expect.objectContaining({ type: 'turn.completed', status: 'failed' }),
-      ]),
-    )
-  })
-
-  it('completes a stopped turn as interrupted and closes its open message', async () => {
-    const child = new FakeChild()
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
-    const events: DomainEvent[] = []
-    adapter.on('event', (event) => events.push(event))
-    const thread = await adapter.startThread('C:\\repo')
-    const turnId = await adapter.sendTurn(thread.id, 'Hello')
-    child.stdout.write(`${CAPTURED_FRAMES[2]}\n`)
-    await new Promise((resolve) => setImmediate(resolve))
-
-    await adapter.interrupt()
-    await new Promise((resolve) => setImmediate(resolve))
-
-    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
-      { type: 'turn.completed', turnId, status: 'interrupted' },
-    ])
-    expect(events.find((event) => event.type === 'item.completed')).toMatchObject({
-      item: { id: `${turnId}-message`, status: 'failed', text: 'MOND' },
-    })
-    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
-  })
-
-  it('reports a spawn failure once even though close follows the error', async () => {
-    const child = new FakeChild()
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
-    const events: DomainEvent[] = []
-    adapter.on('event', (event) => events.push(event))
-    const thread = await adapter.startThread('C:\\repo')
-    const turnId = await adapter.sendTurn(thread.id, 'Hello')
-    child.emit('error', new Error('spawn agy ENOENT'))
-    child.emit('close', -2)
-    await new Promise((resolve) => setImmediate(resolve))
-
-    expect(events.filter((event) => event.type === 'thread.error')).toHaveLength(1)
-    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
-      { type: 'turn.completed', turnId, status: 'failed' },
-    ])
-  })
-
-  it('fails an oversized frame once rather than again on exit', async () => {
-    const child = new FakeChild()
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
-    const events: DomainEvent[] = []
-    adapter.on('event', (event) => events.push(event))
-    const thread = await adapter.startThread('C:\\repo')
-    const turnId = await adapter.sendTurn(thread.id, 'Hello')
-    child.stdout.write('x'.repeat(16 * 1024 * 1024 + 1))
-    await new Promise((resolve) => setImmediate(resolve))
-    await new Promise((resolve) => setImmediate(resolve))
-
-    expect(events.filter((event) => event.type === 'thread.error')).toHaveLength(1)
-    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
-      { type: 'turn.completed', turnId, status: 'failed' },
-    ])
-  })
-
-  it('keeps the turn alive past a frame it cannot read', async () => {
-    const child = new FakeChild()
-    let killed = 0
-    child.kill = () => {
-      killed++
-      return true
-    }
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
-    const events: DomainEvent[] = []
-    const logs: string[] = []
-    adapter.on('event', (event) => events.push(event))
-    adapter.on('log', (line) => logs.push(line))
-    const thread = await adapter.startThread('C:\\repo')
-    const turnId = await adapter.sendTurn(thread.id, 'Hello')
-
-    // `step_update: null` fails the schema; the frames after it are still read.
-    child.stdout.write('{"event":"step_update","step_update":null}\n')
-    for (const frame of CAPTURED_FRAMES.slice(2)) child.stdout.write(`${frame}\n`)
-    child.stdout.end()
-    await new Promise((resolve) => setImmediate(resolve))
-
-    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
-      { type: 'turn.completed', turnId, status: 'completed' },
-    ])
-    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
-    expect(logs.some((line) => line.startsWith('Antigravity event handling failed'))).toBe(true)
-    expect(killed).toBe(0)
-    child.emit('close', 0)
-  })
-
-  it('logs a throwing event listener instead of failing the turn', async () => {
-    const child = new FakeChild()
-    let killed = 0
-    child.kill = () => {
-      killed++
-      return true
-    }
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
-    const events: DomainEvent[] = []
-    const logs: string[] = []
-    let thrown = false
-    adapter.on('event', (event) => {
-      events.push(event)
-      if (event.type === 'item.delta' && !thrown) {
-        thrown = true
-        throw new Error('listener failed')
-      }
-    })
-    adapter.on('log', (line) => logs.push(line))
-    const thread = await adapter.startThread('C:\\repo')
-    const turnId = await adapter.sendTurn(thread.id, 'Hello')
-
-    for (const frame of CAPTURED_FRAMES) child.stdout.write(`${frame}\n`)
-    child.stdout.end()
-    await new Promise((resolve) => setImmediate(resolve))
-
-    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
-      { type: 'turn.completed', turnId, status: 'completed' },
-    ])
-    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
-    expect(logs.some((line) => line.includes('listener failed'))).toBe(true)
-    expect(killed).toBe(0)
-    child.emit('close', 0)
-  })
-
-  it('hands attached images to the agent as files it opens, not as pixels', async () => {
-    expect(ANTIGRAVITY_CAPABILITIES).toMatchObject({ images: false, imageFiles: true })
-    const record: SpawnRecord = {}
-    const child = new FakeChild()
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, child) })
-    const thread = await adapter.startThread('C:\\repo')
-    const image = 'C:\\Temp\\TasteCode\\attachments\\shot.png'
-    await adapter.sendTurn(thread.id, 'What is wrong here?', [image])
-    const prompt = record.args?.[record.args.indexOf('-p') + 1]
-    // The first prompt also carries the session note in front of the request.
-    expect(prompt?.endsWith(antigravityImagePrompt('What is wrong here?', [image]))).toBe(true)
-    expect(prompt).toContain('What is wrong here?\n\n<attached-images>')
-    expect(prompt).toContain(`- ${image}`)
-    expect(record.args?.slice(record.args.indexOf('--add-dir'))).toEqual([
-      '--add-dir',
-      path.dirname(image),
-    ])
-    expect(antigravityImagePrompt('', ['a.png', 'b.png'])).toBe(
-      '<attached-images>\nThe user attached these images. Open each file with your file viewer to see it before you answer.\n- a.png\n- b.png\n</attached-images>',
-    )
-    expect(antigravityImagePrompt('Hi', [])).toBe('Hi')
-  })
-
-  it('prepends session instructions to the first prompt only', async () => {
-    const record: SpawnRecord = {}
-    const child = new FakeChild()
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, child) })
-    const thread = await adapter.startThread('C:\\repo', {
-      instructions: 'Answer plainly.\nNo filler.',
-    })
-    await adapter.sendTurn(thread.id, 'Hello there')
-    const prompt = record.args?.[record.args.indexOf('-p') + 1]
-    expect(prompt).toContain('<system-instructions>')
-    expect(prompt).toContain('No filler.')
-    expect(prompt).toContain('Hello there')
-  })
-
-  it('tells agy how to leave a server running, even without session instructions', async () => {
-    const record: SpawnRecord = {}
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, new FakeChild()) })
-    const thread = await adapter.startThread('C:\\repo')
-    await adapter.sendTurn(thread.id, 'Start the site')
-    const prompt = record.args?.[record.args.indexOf('-p') + 1]
-    expect(prompt).toContain('<system-instructions>')
-    expect(prompt).toContain(antigravityBackgroundNote('C:\\repo'))
-    expect(prompt).toContain('Start the site')
-  })
-
-  it('starts a lasting server outside agy on each platform', () => {
-    // agy's Windows job object ends what agy started; WMI creates outside it,
-    // hidden and in the chat's folder.
-    const windows = antigravityBackgroundNote("C:\\Leon's work", 'win32')
-    expect(windows).toContain('Invoke-CimMethod -ClassName Win32_Process')
-    expect(windows).toContain("CurrentDirectory = 'C:\\Leon''s work'")
-    expect(windows).toContain('ShowWindow = [uint16]0')
-    expect(windows).toContain('%TEMP%\\dev-server.log')
-    expect(antigravityBackgroundNote('/work', 'darwin')).toContain('nohup ')
-    expect(antigravityBackgroundNote('/work', 'darwin')).toContain('< /dev/null &')
-    expect(antigravityBackgroundNote('/work', 'linux')).not.toContain('Invoke-CimMethod')
-  })
-
-  it('lets a queued turn start without stopping what the answered turn left running', async () => {
-    const first = new FakeChild()
-    const second = new FakeChild()
-    let killed = false
-    first.kill = () => {
-      killed = true
-      return true
-    }
-    const children = [first, second]
-    const adapter = new AntigravityAdapter({ spawn: () => children.shift()! })
-    const thread = await adapter.startThread('C:\\repo')
-    await adapter.sendTurn(thread.id, 'Start the site')
-    for (const frame of CAPTURED_FRAMES) first.stdout.write(`${frame}\n`)
-    await new Promise((resolve) => setImmediate(resolve))
-
-    // The SUCCESS result is in and agy is closing when the queued prompt starts.
-    const next = adapter.sendTurn(thread.id, 'Now add a footer')
-    await new Promise((resolve) => setImmediate(resolve))
-    first.emit('exit', 0, null)
-    await next
-
-    expect(killed).toBe(false)
-    expect(children).toEqual([])
-  })
-
-  it('resolves a changed effort on the next invocation', async () => {
-    const [model] = parseAntigravityModels(
-      'gemini-3.6-flash-high\ngemini-3.6-flash-medium\ngemini-3.6-flash-low\n',
-    )
-    const record: SpawnRecord = {}
-    const child = new FakeChild()
-    const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, child) })
-    const thread = await adapter.startThread('C:\\repo', {
-      model: model!.id,
-      effort: 'high',
-    })
-
-    await adapter.sendTurn(thread.id, 'Use less reasoning', [], {
-      model: model!.id,
-      effort: 'low',
-    })
-
-    expect(
-      record.args?.slice(record.args.indexOf('--model'), record.args.indexOf('--model') + 2),
-    ).toEqual(['--model', 'gemini-3.6-flash-low'])
-  })
-
-  it("runs each turn with agy's auto-updater switched off", async () => {
-    const child = new FakeChild()
-    const seen: Array<NodeJS.ProcessEnv> = []
+  it('resumes ACP sessions via session/load and marks legacy print-mode threads missing', async () => {
+    let acpChild: FakeAgyAcpChild | undefined
     const adapter = new AntigravityAdapter({
-      spawn: (_command, _args, options) => {
-        seen.push(options.env)
-        return child
-      },
+      spawn: (() => {
+        acpChild = new FakeAgyAcpChild()
+        return acpChild
+      }) as never,
     })
-    const thread = await adapter.startThread('C:\\repo')
-    await adapter.sendTurn(thread.id, 'Hi')
 
-    expect(seen).toEqual([{ AGY_CLI_DISABLE_AUTO_UPDATE: 'true' }])
+    await expect(
+      adapter.resumeThread('antigravity-legacy-uuid', 'C:\\repo'),
+    ).rejects.toMatchObject({ code: 'provider_session_missing' })
+
+    const resumed = await adapter.resumeThread('acp-antigravity-agy-sess-1', 'C:\\repo', {
+      approval: 'ask',
+    })
+    expect(resumed.id).toBe('acp-antigravity-agy-sess-1')
+    expect(acpChild!.requests.some((r) => r.method === 'session/load')).toBe(true)
+    await adapter.dispose()
   })
 
-  it('refreshes a cold model index before applying an effort', async () => {
+  it('rejects automatic approval review', async () => {
+    const adapter = new AntigravityAdapter()
+    await expect(adapter.startThread('C:\\repo', { approval: 'auto-review' })).rejects.toThrow(
+      'automatic approval review',
+    )
+  })
+
+  it('parses agy models output and collapses per-effort variants', () => {
     resetAntigravityIndexForTests()
-    const discovery = new FakeChild()
-    const turn = new FakeChild()
-    const record: SpawnRecord = {}
-    const adapter = new AntigravityAdapter({
-      spawn: (command, args) => {
-        if (args[0] === 'models') return discovery
-        return fakeSpawn(record, turn)(command, args)
-      },
-    })
-    const thread = await adapter.startThread('C:\\repo', {
-      model: 'gemini-3.6-flash-high',
-      effort: 'low',
-    })
-
-    const sending = adapter.sendTurn(thread.id, 'Use less reasoning')
-    discovery.stdout.write(
-      'gemini-3.6-flash-high\tGemini 3.6 Flash (High)\n' +
-        'gemini-3.6-flash-low\tGemini 3.6 Flash (Low)\n',
-    )
-    discovery.stdout.end()
-    discovery.emit('close', 0)
-    await sending
-
-    expect(
-      record.args?.slice(record.args.indexOf('--model'), record.args.indexOf('--model') + 2),
-    ).toEqual(['--model', 'gemini-3.6-flash-low'])
-  })
-})
-
-describe('Antigravity model list', () => {
-  it('closes stdin for discovery — the CLI blocks forever on an open pipe', async () => {
-    const child = new FakeChild()
-    let stdinEnded = false
-    child.stdin.on('finish', () => (stdinEnded = true))
-    const adapter = new AntigravityAdapter({
-      spawn: () => child,
-    })
-    const listing = adapter.listModels()
-    await new Promise((resolve) => setImmediate(resolve))
-    expect(stdinEnded).toBe(true)
-    child.stdout.write('gemini-3.6-flash-high\n')
-    child.stdout.end()
-    child.emit('close', 0)
-    await expect(listing).resolves.toMatchObject([{ id: 'gemini-3.6-flash-high' }])
-  })
-
-  it('collapses the agy models output into base models with efforts', () => {
     const models = parseAntigravityModels(
-      'Fetching available models...\n' +
-        'gemini-3.6-flash-high\tGemini 3.6 Flash (High)\n' +
-        'gemini-3.6-flash-low\tGemini 3.6 Flash (Low)\n' +
-        'claude-sonnet-4-6\tClaude Sonnet 4.6\n' +
-        'futuremodel\n',
+      [
+        'Fetching available models...',
+        'gemini-4-neon-high\tGemini 4 Neon (High)',
+        'gemini-4-neon-low\tGemini 4 Neon (Low)',
+        'gpt-oss-120b-medium\tGPT-OSS 120B (Medium)',
+      ].join('\n'),
     )
-    expect(models).toMatchObject([
-      {
-        id: 'gemini-3.6-flash-high',
-        displayName: 'Gemini 3.6 Flash',
+    expect(models).toEqual([
+      expect.objectContaining({
+        id: 'gemini-4-neon-high',
+        displayName: 'Gemini 4 Neon',
         isDefault: true,
         reasoningEfforts: ['low', 'high'],
         defaultReasoningEffort: 'high',
-      },
-      {
-        id: 'claude-sonnet-4-6',
-        displayName: 'Claude Sonnet 4.6',
-        isDefault: false,
+      }),
+      expect.objectContaining({
+        id: 'gpt-oss-120b-medium',
+        displayName: 'GPT-OSS 120B',
+        description: 'Fixed at medium effort',
         reasoningEfforts: [],
-      },
-      {
-        id: 'futuremodel',
-        displayName: 'Futuremodel',
-        isDefault: false,
-        reasoningEfforts: [],
-      },
+      }),
     ])
   })
-
-  it('declares the print-mode capability set', () => {
-    expect(ANTIGRAVITY_CAPABILITIES).toMatchObject({ steer: false, approvals: false })
-  })
-})
-
-describe('bounded model discovery capture', () => {
-  it.each(['stdout', 'stderr'] as const)(
-    'rejects a %s flood before parsing output',
-    async (stream) => {
-      const child = new FakeChild()
-      let killed = 0
-      child.kill = () => {
-        killed++
-        return true
-      }
-      const adapter = new AntigravityAdapter({ spawn: () => child })
-      const discovery = adapter.listModels()
-      const rejected = expect(discovery).rejects.toThrow('CLI output exceeded the size limit')
-      child[stream].write('harmless-fixture'.repeat(100_000))
-      await rejected
-      child[stream].write('late output')
-      child.emit('close', 0)
-      expect(killed).toBe(1)
-    },
-  )
 })
