@@ -181,6 +181,26 @@ describe('PushBus', () => {
     expect(sequences(second)).toEqual([1])
   })
 
+  it('does not number a push for a connection that never receives its channel', () => {
+    const bus = new PushBus()
+    const desktop = socket()
+    const phone = socket()
+    phone.accepts = (channel) => channel !== 'preview.captureCancelled'
+    const requestId = '00000000-0000-4000-8000-000000000000'
+    bus.add(phone)
+    bus.broadcast('skills.changed', { provider: 'codex', projectPath: 'C:\\repo' })
+    bus.broadcast('preview.captureCancelled', { requestId })
+    bus.send(phone, 'preview.captureCancelled', { requestId })
+    bus.add(desktop)
+    bus.broadcast('preview.captureCancelled', { requestId })
+    bus.broadcast('skills.changed', { provider: 'codex', projectPath: 'C:\\repo' })
+
+    // A gap would make the phone resync everything for a push it may not see.
+    expect(sequences(phone)).toEqual([1, 2])
+    expect(sequences(desktop)).toEqual([1, 2])
+    expect(phone.sent.some((frame) => frame.includes('preview.'))).toBe(false)
+  })
+
   it('does not restart a live connection sequence when it is added twice', () => {
     const bus = new PushBus()
     const client = socket()

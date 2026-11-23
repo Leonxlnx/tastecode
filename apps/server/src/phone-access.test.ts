@@ -16,6 +16,7 @@ import {
   type NoiseKeyPair,
   type NoiseSession,
 } from './phone-noise.js'
+import { PushBus } from './push-bus.js'
 
 const lanInterfaces = () => ({
   en0: [
@@ -165,6 +166,16 @@ describe('phone access', () => {
     server!.send('{"channel":"thread.event","sequence":2,"data":{}}')
     // The phone never hears its own pairing state.
     expect(await frame).toBe('{"channel":"thread.event","sequence":2,"data":{}}')
+
+    // Nor does a hidden push use up a number: a gap would make the phone resync everything.
+    const bus = new PushBus<PhoneLinkSocket>()
+    bus.add(server!)
+    const numbered = nextFrame(linked)
+    bus.broadcast('phone.changed', access.status())
+    bus.broadcast('skills.changed', { provider: 'codex', projectPath: '/repo' })
+    expect(await numbered).toBe(
+      '{"channel":"skills.changed","sequence":1,"data":{"provider":"codex","projectPath":"/repo"}}',
+    )
     linked.socket.close()
   })
 

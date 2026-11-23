@@ -8,6 +8,8 @@ export type PushSocket = {
   send(frame: string, callback?: (error?: Error) => void): void
   terminate(): void
   readonly bufferedAmount?: number
+  /** False for a channel this connection never receives; such a push must not use up a sequence number. */
+  accepts?(channel: ChannelName): boolean
 }
 export const MAX_PUSH_BUFFER_BYTES = 8 * 1024 * 1024
 export const MAX_REPLY_FRAME_BYTES = 128 * 1024 * 1024
@@ -76,6 +78,7 @@ export class PushBus<Socket extends PushSocket = WebSocket> {
    */
   send<C extends ChannelName>(socket: Socket, channel: C, data: DataOf<C>): void {
     if (socket.readyState !== socket.OPEN || !this.#sockets.has(socket)) return
+    if (socket.accepts?.(channel) === false) return
     const dataJson = JSON.stringify(data)
     this.#sendSerialized(socket, framePrefix(channel), dataJson)
   }
@@ -146,6 +149,7 @@ export class PushBus<Socket extends PushSocket = WebSocket> {
       // The desktop normally owns one renderer. Use the retained Map entry
       // directly so that hot pushes do not allocate a Map iterator.
       if (onlySocket.readyState !== onlySocket.OPEN) return
+      if (onlySocket.accepts?.(channel) === false) return
       const sequence = ++onlyState.sequence
       const frame = `${framePrefix(channel)}${sequence},"data":${JSON.stringify(data)}}`
       this.#sendFrame(onlySocket, onlyState, frame)
@@ -159,6 +163,7 @@ export class PushBus<Socket extends PushSocket = WebSocket> {
     let previousFrame = ''
     for (const [socket, state] of this.#sockets) {
       if (socket.readyState !== socket.OPEN) continue
+      if (socket.accepts?.(channel) === false) continue
       const sequence = ++state.sequence
       if (sequence !== previousSequence) {
         previousSequence = sequence
