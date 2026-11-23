@@ -310,12 +310,31 @@ describe('sub-agents on another provider', { timeout: 30_000 }, () => {
     ])
   })
 
-  it('offers no agent tools to a provider without them', async () => {
+  it('offers agent tools to every active provider and omits them for removed or ephemeral chats', async () => {
     const h = harness()
     await h.orchestrator.listModels('claude-code')
-    await h.orchestrator.startThread('grok', process.cwd())
+    for (const provider of [
+      'codex',
+      'claude-code',
+      'grok',
+      'cursor',
+      'opencode',
+      'antigravity',
+      'pi',
+      'acp',
+    ] as const) {
+      await h.orchestrator.startThread(provider, process.cwd())
+      expect(
+        h.started.at(-1)!.options.mcpServers?.some((entry) => entry.id === AGENT_TOOLS_SERVER_ID),
+      ).toBe(true)
+    }
+    await h.orchestrator.startThread('grok', process.cwd(), { ephemeral: true })
     expect(
-      h.started[0]!.options.mcpServers?.some((entry) => entry.id === AGENT_TOOLS_SERVER_ID),
+      h.started.at(-1)!.options.mcpServers?.some((entry) => entry.id === AGENT_TOOLS_SERVER_ID),
+    ).not.toBe(true)
+    await h.orchestrator.startThread('api', process.cwd())
+    expect(
+      h.started.at(-1)!.options.mcpServers?.some((entry) => entry.id === AGENT_TOOLS_SERVER_ID),
     ).not.toBe(true)
   })
 

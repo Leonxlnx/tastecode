@@ -102,6 +102,8 @@ class FakeResumableAdapter extends FakeTurnAdapter {
 }
 
 class FakeCursorAdapter extends FakeResumableAdapter {
+  readonly promptLimit = 15_000
+
   constructor(options?: Record<string, unknown>) {
     super('cursor', options)
   }
@@ -153,11 +155,23 @@ class FakeAcpAdapter extends FakeResumableAdapter {
   respondToApproval(): void {}
 }
 
-class FakeAntigravityAdapter extends FakeTurnAdapter {
-  readonly promptLimit = 15_000
+class FakeAntigravityAdapter extends FakeResumableAdapter {
+  readonly resumable = true
 
   constructor(options?: Record<string, unknown>) {
     super('antigravity', options)
+  }
+
+  respondToApproval(): void {}
+  setApproval(): void {}
+  async listCommands() {
+    return []
+  }
+  onCommandsChanged() {
+    return () => {}
+  }
+  onDisconnected() {
+    return () => {}
   }
 }
 
@@ -332,11 +346,34 @@ describe('resumable provider setup', () => {
   )
 
   it('passes on how long a prompt a command-line engine can take', async () => {
-    const { session } = await providerRuntime('antigravity', () => {}).start('/repo', {})
+    const { session } = await providerRuntime('cursor', () => {}).start('/repo', {})
     expect(session.promptLimit).toBe(15_000)
+    const antigravity = await providerRuntime('antigravity', () => {}).start('/repo', {})
+    expect(antigravity.session.promptLimit).toBeUndefined()
     const codex = await providerRuntime('codex', () => {}).start('/repo', {})
     expect(codex.session.promptLimit).toBeUndefined()
   })
+
+  it.each(['antigravity', 'cursor', 'pi'] as const)(
+    'forwards managed MCP servers and credentials into %s sessions',
+    async (provider) => {
+      const mcpServers = [
+        {
+          id: 'tastecode',
+          enabled: true as const,
+          transport: { type: 'http' as const, url: 'http://127.0.0.1:4321/agents/abc' },
+        },
+      ]
+      const mcpCredentials = { token: 'Bearer test' }
+      await providerRuntime(provider, () => {}).start('/repo', { mcpServers, mcpCredentials })
+      const adapter = turnAdapters.at(-1)!
+      if (provider === 'cursor') {
+        expect(adapter.launchOptions).toMatchObject({ mcpServers, mcpCredentials })
+      } else {
+        expect(adapter.startOptions).toMatchObject({ mcpServers, mcpCredentials })
+      }
+    },
+  )
 
   it('resumes an MCP-enabled Grok session a chat moved to, under the chat id', async () => {
     const runtime = providerRuntime('grok', () => {})
@@ -499,7 +536,7 @@ describe('resumable provider setup', () => {
             spawn: expect.any(Function),
             ...(provider === 'cursor' ? { run: expect.any(Function) } : {}),
             ...(provider === 'acp' ? { name: 'Custom', command: 'custom-agent', args: [] } : {}),
-            ...(provider === 'codex' || provider === 'opencode'
+            ...(provider === 'codex' || provider === 'opencode' || provider === 'cursor'
               ? { mcpServers: [], mcpCredentials: {} }
               : {}),
             // A wrapper may run another account, so its limit windows stay out of the default's.

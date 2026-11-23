@@ -269,7 +269,7 @@ const CUSTOM_HARNESS_PROTOCOL_LABELS = {
   grok: 'Grok streaming JSON',
   cursor: 'Cursor stream JSON',
   opencode: 'OpenCode HTTP server',
-  antigravity: 'Antigravity stream JSON',
+  antigravity: 'Antigravity ACP',
   pi: 'Pi RPC',
   acp: 'ACP',
 } satisfies Record<CustomHarness['provider'], string>
@@ -673,34 +673,64 @@ function antigravityRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
 ): ProviderRuntime {
+  const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
+    const harness = harnessFor('antigravity', options.agent, resolveHarness)
+    const { AntigravityAdapter } = await loadAntigravityAdapter()
+    const adapter = new AntigravityAdapter({
+      ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
+      ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+      ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
+    })
+    adapter.on('log', onLog)
+    const session: AgentSession = {
+      get capabilities() {
+        return adapter.capabilities
+      },
+      get resumable() {
+        return adapter.resumable
+      },
+      sendTurn: (id, text, attachments, turnOptions) =>
+        adapter.sendTurn(id, text, attachments, turnOptions),
+      interrupt: () => adapter.interrupt(),
+      respondToApproval: (approvalId, decision) => adapter.respondToApproval(approvalId, decision),
+      setApproval: (approval) => adapter.setApproval(approval),
+      listCommands: () => adapter.listCommands(),
+      onCommandsChanged: (listener) => adapter.onCommandsChanged(listener),
+      onDisconnected: (listener) => adapter.onDisconnected(listener),
+      dispose: () => adapter.dispose(),
+      on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
+    }
+    const selection = {
+      model: options.model,
+      effort: options.effort,
+      approval: options.approval,
+      instructions: options.instructions,
+      mcpServers: options.mcpServers,
+      mcpCredentials: options.mcpCredentials,
+    }
+    return startedSession(session, async () => {
+      const opening =
+        threadId === undefined
+          ? adapter.startThread(workspacePath, selection)
+          : adapter.resumeThread(threadId, workspacePath, selection)
+      return harness
+        ? await customHarnessOperation(
+            harness,
+            threadId === undefined
+              ? 'complete the Antigravity ACP handshake'
+              : 'resume the Antigravity ACP session',
+            opening,
+          )
+        : await opening
+    })
+  }
   return {
-    async start(workspacePath, options) {
-      const harness = harnessFor('antigravity', options.agent, resolveHarness)
-      const { AntigravityAdapter } = await loadAntigravityAdapter()
-      const adapter = new AntigravityAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
-      adapter.on('log', onLog)
-      const thread = await adapter.startThread(workspacePath, {
-        model: options.model,
-        effort: options.effort,
-        approval: options.approval,
-        instructions: options.instructions,
-      })
-      return {
-        thread,
-        session: {
-          capabilities: adapter.capabilities,
-          promptLimit: adapter.promptLimit,
-          sendTurn: (threadId, text, attachments, turnOptions) =>
-            adapter.sendTurn(threadId, text, attachments, turnOptions),
-          interrupt: () => adapter.interrupt(),
-          // Print mode decides permissions from the launch switches; there is
-          // no mid-turn callback to answer.
-          respondToApproval: () => {},
-          dispose: () => adapter.dispose(),
-          on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
-        },
-      }
-    },
+    start: open,
+    resume: async (threadId, workspacePath, options) =>
+      mapProviderSession(
+        threadId,
+        await open(workspacePath, options, options.providerSessionId ?? threadId),
+      ),
     async listModels(agent) {
       const harness = harnessFor('antigravity', agent, resolveHarness)
       const { AntigravityAdapter } = await loadAntigravityAdapter()
@@ -718,9 +748,11 @@ function cursorRuntime(
   const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
     const harness = harnessFor('cursor', options.agent, resolveHarness)
     const { CursorAdapter } = await loadCursorAdapter()
-    const adapter = new CursorAdapter(
-      harness ? { spawn: customHarnessSpawn(harness), run: customHarnessRun(harness) } : {},
-    )
+    const adapter = new CursorAdapter({
+      ...(harness ? { spawn: customHarnessSpawn(harness), run: customHarnessRun(harness) } : {}),
+      ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+      ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
+    })
     adapter.on('log', onLog)
     const selection = {
       ...(options.model ? { model: options.model } : {}),
@@ -1150,6 +1182,8 @@ function piRuntime(
           effort: options.effort,
           approval: options.approval,
           instructions: options.instructions,
+          mcpServers: options.mcpServers,
+          mcpCredentials: options.mcpCredentials,
         })
         return harness
           ? customHarnessOperation(harness, 'complete the Pi RPC handshake', starting)
