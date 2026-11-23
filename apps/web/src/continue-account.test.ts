@@ -6,6 +6,8 @@ import {
   continuationNote,
   continuedIn,
   lastRequest,
+  lastRequestId,
+  requestById,
 } from './continue-account.js'
 import type { ProviderAccountsSnapshot } from './provider-accounts-state.js'
 import type { UsageSummaryState } from './usage-summary-state.js'
@@ -107,6 +109,31 @@ describe('continue on another account', () => {
       ]),
     ).toEqual({ text: 'Second', attachments: ['C:\\shots\\comment.png'] })
     expect(lastRequest([message('assistant', 'Only an answer')])).toBeUndefined()
+  })
+
+  it('finds that request again by its id, and nothing once it is not a request', () => {
+    const message = (id: string, role: 'user' | 'assistant', text: string): Item => ({
+      id,
+      turnId: 't',
+      type: 'message',
+      role,
+      status: 'completed',
+      text,
+      createdAt: 1,
+    })
+    const items = [
+      message('first', 'user', 'First'),
+      { ...message('second', 'user', ' Second '), attachments: ['C:\\shots\\comment.png'] },
+      message('blank', 'user', '  '),
+      message('answer', 'assistant', 'Answer'),
+    ]
+    expect(lastRequestId(items)).toBe('second')
+    expect(requestById(items, 'second')).toEqual(lastRequest(items))
+    expect(requestById(items, 'first')).toEqual({ text: 'First', attachments: undefined })
+    expect(requestById(items, 'blank')).toBeUndefined()
+    expect(requestById(items, 'answer')).toBeUndefined()
+    expect(requestById(items, undefined)).toBeUndefined()
+    expect(requestById(items.slice(0, 1), 'second')).toBeUndefined()
   })
 })
 

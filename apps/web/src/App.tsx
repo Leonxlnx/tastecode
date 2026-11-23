@@ -139,6 +139,8 @@ import {
   continuedIn,
   type EarlierChanges,
   lastRequest,
+  lastRequestId,
+  requestById,
 } from './continue-account.js'
 import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
 import {
@@ -7745,11 +7747,27 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         }
       : error
   // Once continued, the failed turn's row leads to the chat that carries it on.
+  // A provider switch acts on the chat, the failure and the request it was
+  // offered for. A saved handler does nothing once another chat took the
+  // column or a newer turn replaced that failure.
+  const offerSessionId = activeId
+  const offerFailureId = thread.error?.id
+  const offerRequestId = thread.error && !thread.running ? lastRequestId(thread.items) : undefined
   /** Sets the chat up to switch, with the request that failed back in the composer. */
   const switchAtLimit = (choice: ModelChoice) => {
-    if (activeId) usageResumes.cancel(activeId)
+    const shown = threadController.frames.getStructureSnapshot()
+    if (
+      !offerSessionId ||
+      !offerFailureId ||
+      activeIdRef.current !== offerSessionId ||
+      threadController.draftOwner !== composerDraftKey(offerSessionId) ||
+      shown.error?.id !== offerFailureId
+    ) {
+      return
+    }
+    usageResumes.cancel(offerSessionId)
     commitModelChoice(choice)
-    const request = lastRequest(threadFrameStore.getStructureSnapshot().items)
+    const request = requestById(shown.items, offerRequestId)
     if (request) editMessage(request.text, request.attachments)
   }
   const continueOffer: Pick<ComposerError, 'action' | 'choices'> = continuedChat
