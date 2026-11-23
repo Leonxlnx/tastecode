@@ -37,6 +37,10 @@ const state = vi.hoisted(() => ({
   recovered: 0,
   historyScans: new Map<string, Promise<void>>(),
   historyCopies: new Set<string>(),
+  /** Chats with an imported revision of their saved session in the store. */
+  historyLoadedCopies: new Set<string>(),
+  /** Imports that finish only when the test says so. */
+  historyLoadGates: new Map<string, Promise<void>>(),
   idleCheckouts: [] as string[],
   handled: [] as string[],
   accountCalls: [] as unknown[][],
@@ -365,8 +369,12 @@ vi.mock('./provider-history.js', () => ({
     hasCopy(threadId: string) {
       return state.historyCopies.has(threadId)
     }
+    hasLoadedCopy(threadId: string) {
+      return state.historyLoadedCopies.has(threadId)
+    }
     async load(threadId: string) {
       state.historyLoads.push(threadId)
+      await state.historyLoadGates.get(threadId)
       return state.historyChanged.has(threadId)
     }
     readSubagentTranscript(threadId: string, itemId: string) {
@@ -435,6 +443,8 @@ afterEach(async () => {
   state.recovered = 0
   state.historyScans.clear()
   state.historyCopies.clear()
+  state.historyLoadedCopies.clear()
+  state.historyLoadGates.clear()
   state.idleCheckouts.length = 0
   state.handled.length = 0
   state.accountCalls.length = 0
@@ -1621,7 +1631,7 @@ describe('chat history during the first provider scan', () => {
     }
   })
 
-  it('imports before reading once the scan is done, as before', async () => {
+  it('imports a native chat behind its read once the scan is done', async () => {
     state.historyPage.mockResolvedValue(opened)
     const { port } = await listen()
     await askForProjects(port)
@@ -1639,9 +1649,105 @@ describe('chat history during the first provider scan', () => {
       await vi.waitFor(() =>
         expect(reader.messages).toContainEqual(expect.objectContaining({ id: 'local' })),
       )
-      expect(state.historyLoads).toEqual(['local'])
+      await vi.waitFor(() => expect(state.historyLoads).toEqual(['local']))
     } finally {
       reader.client.terminate()
+    }
+  })
+})
+
+describe('outside changes to a chat already in the store', () => {
+  async function connect(port: number) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    const messages: Array<{ id?: string; channel?: string; data?: unknown; result?: unknown }> = []
+    client.on('message', (message) => messages.push(JSON.parse(String(message))))
+    await once(client, 'message')
+    return { client, messages }
+  }
+  const opened = { events: [], page: { olderCursor: null, snapshotSeq: 0 } }
+  const imported = 'external:claude-code:s'
+
+  async function scanned() {
+    state.historyPage.mockResolvedValue(opened)
+    const { port } = await listen()
+    await askForProjects(port)
+    // Let the already-resolved scan settle.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const viewer = await connect(port)
+    const ask = (id: string, method: string, params: unknown) =>
+      viewer.client.send(JSON.stringify({ id, method, params }))
+    const replied = (id: string) => viewer.messages.some((message) => message.id === id)
+    return { ...viewer, ask, replied }
+  }
+
+  it('opens from the stored copy and announces the import that runs behind it', async () => {
+    let finishImport!: () => void
+    state.historyLoadGates.set(imported, new Promise<void>((resolve) => (finishImport = resolve)))
+    state.historyLoadedCopies.add(imported)
+    state.historyChanged.add(imported)
+    const viewer = await scanned()
+    try {
+      viewer.ask('open', 'thread.history', { threadId: imported, page: {} })
+      viewer.ask('again', 'thread.history', { threadId: imported, page: {} })
+      await vi.waitFor(() => expect(viewer.replied('open') && viewer.replied('again')).toBe(true))
+      // One import for both reads, still running.
+      expect(state.historyLoads).toEqual([imported])
+      expect(viewer.messages.some((message) => message.channel === 'providerHistory.changed')).toBe(
+        false,
+      )
+
+      finishImport()
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(
+          expect.objectContaining({
+            channel: 'providerHistory.changed',
+            data: { threadIds: [imported] },
+          }),
+        ),
+      )
+      expect(state.invalidated).toEqual([imported])
+    } finally {
+      viewer.client.terminate()
+    }
+  })
+
+  it('still imports a chat with no stored copy before it answers', async () => {
+    let finishImport!: () => void
+    state.historyLoadGates.set(imported, new Promise<void>((resolve) => (finishImport = resolve)))
+    const viewer = await scanned()
+    try {
+      viewer.ask('open', 'thread.history', { threadId: imported, page: {} })
+      await vi.waitFor(() => expect(state.historyLoads).toEqual([imported]))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(viewer.replied('open')).toBe(false)
+
+      finishImport()
+      await vi.waitFor(() => expect(viewer.replied('open')).toBe(true))
+    } finally {
+      viewer.client.terminate()
+    }
+  })
+
+  it('holds a turn until the import behind a read is done', async () => {
+    let finishImport!: () => void
+    state.historyLoadGates.set(imported, new Promise<void>((resolve) => (finishImport = resolve)))
+    state.historyLoadedCopies.add(imported)
+    const viewer = await scanned()
+    try {
+      viewer.ask('open', 'thread.history', { threadId: imported, page: {} })
+      await vi.waitFor(() => expect(viewer.replied('open')).toBe(true))
+      viewer.ask('turn', 'thread.sendTurn', { threadId: imported, text: 'hi' })
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(viewer.replied('turn')).toBe(false)
+
+      finishImport()
+      await vi.waitFor(() => expect(viewer.replied('turn')).toBe(true))
+      // An import that changed nothing is not announced.
+      expect(viewer.messages.some((message) => message.channel === 'providerHistory.changed')).toBe(
+        false,
+      )
+    } finally {
+      viewer.client.terminate()
     }
   })
 })

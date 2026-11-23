@@ -574,22 +574,50 @@ export function startServer(
     void orchestrator.recoverWorktrees().catch(() => undefined)
   }
 
+  /** Chats whose outside changes are imported behind a read that did not wait for them. */
+  const importsBehindReads = new Set<string>()
+
   /** Import outside changes before a history read, without holding a native chat on the first scan. */
   async function loadProviderHistoryForRead(threadId: string): Promise<void> {
     if (!initialProviderHistorySettled && !threadId.startsWith('external:')) {
       importsAfterInitialScan.add(threadId)
       return
     }
+    // A chat whose transcript is already in the store opens from it. Reading a
+    // transcript again after it grew outside TasteCode took 13-21 s for a 234 MB
+    // one, all of it before the chat opened. The import runs behind the answer
+    // and announces the chat if it changed, so open clients reload it as they do
+    // for any outside change; a turn still waits for it.
+    if (!threadId.startsWith('external:') || providerHistoryReady?.hasLoadedCopy(threadId)) {
+      importBehindRead(threadId)
+      return
+    }
     await loadProviderHistory(threadId)
   }
 
-  async function loadProviderHistory(threadId: string): Promise<void> {
+  function importBehindRead(threadId: string): void {
+    if (importsBehindReads.has(threadId)) return
+    importsBehindReads.add(threadId)
+    void loadProviderHistory(threadId)
+      .then((changed) => {
+        if (changed && !historyClosing) {
+          lifecycleScheduler.changed()
+          push.broadcast('providerHistory.changed', { threadIds: [threadId] })
+        }
+      })
+      // The chat's next read or turn retries the import.
+      .catch(() => undefined)
+      .finally(() => importsBehindReads.delete(threadId))
+  }
+
+  /** Resolves whether the import changed the chat. */
+  async function loadProviderHistory(threadId: string): Promise<boolean> {
     // An imported chat or a turn needs the scan now, not after the start delay.
     startBackgroundWork()
     historySchedule.activity()
     // A first scan of a large history took minutes, and a new chat's first
     // message waited for it although it had nothing to merge.
-    if (startedThisRun.has(threadId) && !providerHistoryReady?.hasCopy(threadId)) return
+    if (startedThisRun.has(threadId) && !providerHistoryReady?.hasCopy(threadId)) return false
     let history: ProviderHistory
     try {
       if (!providerHistory) throw new Error('Provider history is closed')
@@ -597,7 +625,7 @@ export function startServer(
     } catch (error) {
       // Only an imported chat depends on the history service for its transcript.
       if (threadId.startsWith('external:')) throw error
-      return
+      return false
     }
     for (const [prefix, reason] of unavailableHistory) {
       if (threadId.startsWith(prefix)) throw reason
@@ -607,7 +635,9 @@ export function startServer(
     // which took 30-180 s on a large Claude history.
     const provider = historyProvider(threadId)
     if (provider) await history.scanned(provider)
-    if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
+    if (!(await history.load(threadId))) return false
+    orchestrator.invalidateImportedHistory(threadId)
+    return true
   }
 
   const chatImport = new ChatImportService({
