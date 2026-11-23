@@ -1088,7 +1088,6 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       name: names.get(id) ?? id,
       models,
     }))
-    if (connected.length === 0) throw new Error('OpenCode listed no connected provider yet.')
     return { providers: connected }
   }
 
