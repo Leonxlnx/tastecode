@@ -1945,7 +1945,10 @@ export function startServer(
     )
   }
 
-  console.log(`[server] listening on ws://${host}:${port}`)
+  // The desktop opens its window's socket on this line. Printed when the
+  // port is bound, not when listen() was asked for: a socket dialed in
+  // between is refused, and on Windows Chromium retries it only ~0.5 s later.
+  wss.once('listening', () => console.log(`[server] listening on ws://${host}:${port}`))
 
   return {
     port,

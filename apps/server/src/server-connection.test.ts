@@ -1170,6 +1170,23 @@ describe('git writes in a chat checkout', () => {
   // Every step spawns git, which takes a while on a busy Windows machine.
 }, 60_000)
 
+describe('the ready line', () => {
+  it('says the server listens only once its port is bound', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    try {
+      const ready = () =>
+        log.mock.calls.filter(([line]) => String(line).startsWith('[server] listening on '))
+      running = startServer({ port: 0 })
+      const listener = state.servers.at(-1)!
+      expect(ready()).toHaveLength(0)
+      await once(listener, 'listening')
+      expect(ready()).toHaveLength(1)
+    } finally {
+      log.mockRestore()
+    }
+  })
+})
+
 describe('server shutdown', () => {
   it('starts closing terminals before it waits on provider history', async () => {
     let finishHistory: () => void = () => {}
