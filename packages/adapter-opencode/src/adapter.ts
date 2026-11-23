@@ -65,6 +65,14 @@ export const OPENCODE_SERVER_START_TIMEOUT_MS = 30_000
  * limit then chose v2, which that version refuses for every prompt.
  */
 const OPENCODE_PROTOCOL_PROBE_TIMEOUT_MS = 30_000
+/**
+ * How long the v2 catalog may take to settle. A configured provider arrives
+ * with its own package, which is resolved after the bundled ones, so the list
+ * keeps growing for a while; 2.4.0 measured at well over 30 s on a cold start.
+ */
+const OPENCODE_CATALOG_SETTLE_TIMEOUT_MS = 90_000
+/** How often the settled read is polled; two equal answers mean it is done. */
+const OPENCODE_CATALOG_POLL_MS = 1_500
 
 function applyOpenCodeTurnOptions(
   current: OpenCodeTurnOptions,
@@ -1057,21 +1065,32 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
    */
   /**
    * `/api/model` answers with no row until OpenCode has finished loading its
-   * catalog, which happens after the server starts listening. A cold start
-   * therefore needs a retry, the same wait the older `/config/providers` route
-   * did internally.
+   * catalog, which happens after the server starts listening, and it grows in
+   * stages: a configured provider such as `commandcode` arrives only once its
+   * own package has been resolved, well after the bundled ones. Waiting for
+   * the first non-empty answer therefore returned a partial catalog, which
+   * looked like missing models rather than a list still filling in.
+   *
+   * So the read keeps polling until the row count stops changing, and only
+   * then answers.
    */
   async #readV2ModelRows(location: string): Promise<z.infer<typeof OpenCodeV2ModelsSchema>> {
-    const deadline = Date.now() + OPENCODE_PROTOCOL_PROBE_TIMEOUT_MS
-    for (;;) {
-      const rows = await this.#v2RequestParsed(
-        `/api/model${location}`,
-        {},
-        OpenCodeV2ModelsSchema,
-      )
-      if (rows.data.length > 0 || Date.now() >= deadline) return rows
-      await new Promise((resolve) => setTimeout(resolve, 750))
+    const deadline = Date.now() + OPENCODE_CATALOG_SETTLE_TIMEOUT_MS
+    let rows = await this.#v2RequestParsed(`/api/model${location}`, {}, OpenCodeV2ModelsSchema)
+    let stableFor = 0
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, OPENCODE_CATALOG_POLL_MS))
+      const next = await this.#v2RequestParsed(`/api/model${location}`, {}, OpenCodeV2ModelsSchema)
+      if (next.data.length === rows.data.length) {
+        stableFor += 1
+        // Two identical answers in a row mean the catalog has settled.
+        if (stableFor >= 2) return next
+      } else {
+        stableFor = 0
+      }
+      rows = next
     }
+    return rows
   }
 
   async #readV2Providers(directory: string): Promise<ConnectedProviders> {
