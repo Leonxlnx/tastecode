@@ -1066,7 +1066,8 @@ describe('idle thread runtime retention', () => {
 
       await vi.advanceTimersByTimeAsync(500)
       await orchestrator.history(thread.id)
-      expect(vi.getTimerCount()).toBe(1)
+      // The runtime's own timer, and the write of the replay that read built.
+      expect(vi.getTimerCount()).toBe(2)
 
       await vi.advanceTimersByTimeAsync(500)
       expect(sessions[0]?.disposed).toBe(false)
