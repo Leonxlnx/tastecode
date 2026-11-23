@@ -16,9 +16,13 @@ type Committed = { readonly current: ReadonlyMap<string, ComposerError> }
  * an old button never reaches into a newer list by position.
  */
 export function useStableNotices(notices: readonly ComposerError[]): readonly ComposerError[] {
-  const committed = useRef<ReadonlyMap<string, ComposerError>>(new Map())
+  const committed = useRef<ReadonlyMap<string, ComposerError>>(NONE)
   useLayoutEffect(() => {
     committed.current = new Map(notices.map((notice) => [notice.id, notice]))
+    // Unmounted, a kept notice does nothing and holds no callback of the last list.
+    return () => {
+      committed.current = NONE
+    }
   })
   const key = JSON.stringify(notices, (_name, value: unknown) =>
     typeof value === 'function' ? CALLBACK : value,
@@ -27,13 +31,17 @@ export function useStableNotices(notices: readonly ComposerError[]): readonly Co
   return useMemo(() => notices.map((notice) => owned(notice, committed)), [key])
 }
 
+const NONE: ReadonlyMap<string, ComposerError> = new Map()
+
 /** What a single action does and to what; a kept notice never runs another offer. */
 function actionIdentity(action: NonNullable<ComposerError['action']>): string {
   return action.key ?? action.label
 }
 
+/** The callbacks below keep only ids, never the notice or option they were made from. */
 function owned(notice: ComposerError, committed: Committed): ComposerError {
-  const current = () => committed.current.get(notice.id)
+  const id = notice.id
+  const current = () => committed.current.get(id)
   const { action, choices, usageReset, report, dismiss } = notice
   const actionKey = action && actionIdentity(action)
   return {
@@ -54,13 +62,16 @@ function owned(notice: ComposerError, committed: Committed): ComposerError {
       ? {
           choices: {
             label: choices.label,
-            options: choices.options.map((option) => ({
-              ...option,
-              run: () =>
-                current()
-                  ?.choices?.options.find((choice) => choice.id === option.id)
-                  ?.run(),
-            })),
+            options: choices.options.map((option) => {
+              const optionId = option.id
+              return {
+                ...option,
+                run: () =>
+                  current()
+                    ?.choices?.options.find((choice) => choice.id === optionId)
+                    ?.run(),
+              }
+            }),
           },
         }
       : {}),

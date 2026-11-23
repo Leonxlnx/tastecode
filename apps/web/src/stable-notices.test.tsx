@@ -163,6 +163,32 @@ describe('useStableNotices', () => {
     expect(toClaude).toHaveBeenCalledOnce()
   })
 
+  it('does nothing from a kept notice once its owner unmounted', async () => {
+    const run = vi.fn()
+    const schedule = vi.fn(() => Promise.resolve())
+    const choice = vi.fn()
+    const view = renderHook(() =>
+      useStableNotices([
+        {
+          id: 'limit',
+          message: 'Limit reached',
+          action: { label: 'Retry', run },
+          choices: { label: 'Continue', options: [{ id: 'work', label: 'Work', run: choice }] },
+          usageReset: { source: 'Codex', scheduled: false, schedule, cancel: vi.fn() },
+        },
+      ]),
+    )
+    const kept = view.result.current[0]!
+    view.unmount()
+
+    kept.action!.run()
+    kept.choices!.options[0]!.run()
+    await expect(kept.usageReset!.schedule()).resolves.toBeUndefined()
+    expect(run).not.toHaveBeenCalled()
+    expect(choice).not.toHaveBeenCalled()
+    expect(schedule).not.toHaveBeenCalled()
+  })
+
   it("keeps chat A's visible button on A while a render for chat B has not committed", async () => {
     const forA = vi.fn()
     const forB = vi.fn()
