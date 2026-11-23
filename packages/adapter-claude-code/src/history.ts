@@ -953,7 +953,8 @@ export function createClaudeHistorySource(
           const info = await stat(indexFile)
           const key = `${info.size}:${info.mtimeMs}`
           const known = indexes.get(project)
-          if (known?.key === key) entries = known.entries
+          // A rewrite that kept both is caught by the full listing every ten minutes.
+          if (!full && known?.key === key) entries = known.entries
           else {
             const index = object(JSON.parse(await readFile(indexFile, 'utf8')))
             if (Array.isArray(index.entries)) entries = index.entries.map(object)
