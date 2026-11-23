@@ -7752,7 +7752,12 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   // column or a newer turn replaced that failure.
   const offerSessionId = activeId
   const offerFailureId = thread.error?.id
-  const offerRequestId = thread.error && !thread.running ? lastRequestId(thread.items) : undefined
+  // Read only while a switch is offered: an idle failure without one renders
+  // on, and each render would scan back for the request.
+  const offerRequestId =
+    thread.error && !thread.running && !continuedChat && switchOptions.length > 0
+      ? lastRequestId(thread.items)
+      : undefined
   /** Sets the chat up to switch, with the request that failed back in the composer. */
   const switchAtLimit = (choice: ModelChoice) => {
     const shown = threadController.frames.getStructureSnapshot()

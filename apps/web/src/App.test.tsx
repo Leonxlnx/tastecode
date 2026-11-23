@@ -334,6 +334,18 @@ vi.mock('./bridge.js', async (importOriginal) => ({
   },
 }))
 
+const requestReads = vi.hoisted(() => ({ lastRequestId: vi.fn() }))
+vi.mock('./continue-account.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./continue-account.js')>()
+  return {
+    ...original,
+    lastRequestId: (...args: Parameters<typeof original.lastRequestId>) => {
+      requestReads.lastRequestId(...args)
+      return original.lastRequestId(...args)
+    },
+  }
+})
+
 vi.mock('./voice-capability.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./voice-capability.js')>()),
   canCaptureVoice: () => true,
@@ -6659,6 +6671,75 @@ describe('new chats', () => {
     await act(async () => newer.action!.run())
     await waitFor(() => expect(composerProps().modelId).toBe('claude-code:opus'))
     await waitFor(() => expect(composerProps().draftRequest?.text).toBe('Try the retries again'))
+  })
+
+  it('looks for the request to retry only while a provider switch is offered', async () => {
+    serverProjects[0]!.sessions = [
+      { id: 'chat-limited', title: 'Webhook retries', provider: 'codex', createdAt: 1 },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'usage.summary') {
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [{ label: '5 hours', usedPercent: 100, resetsAt: Date.now() + 3_600_000 }],
+        }))
+      }
+      if (
+        method === 'thread.history' &&
+        (params as { threadId: string }).threadId === 'chat-limited'
+      ) {
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'item.completed',
+                item: {
+                  id: 'ask',
+                  turnId: 'turn-1',
+                  type: 'message',
+                  role: 'user',
+                  status: 'completed',
+                  text: 'Fix the webhook retries',
+                  createdAt: 1,
+                },
+              },
+            },
+            {
+              seq: 2,
+              event: {
+                type: 'thread.error',
+                threadId: 'chat-limited',
+                message: "You've hit your usage limit.",
+              },
+            },
+            { seq: 3, event: { type: 'turn.completed', turnId: 'turn-1', status: 'failed' } },
+          ],
+          running: false,
+          approval: 'ask',
+        })
+      }
+      return request(method, params)
+    })
+    requestReads.lastRequestId.mockClear()
+    render(<App />)
+
+    // Only Codex is set up: the failure offers no other provider.
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    await waitFor(() =>
+      expect(
+        (composerProps().errors ?? []).some(
+          (error) => error.message === "You've hit your usage limit.",
+        ),
+      ).toBe(true),
+    )
+    act(() => composerProps().onApprovalChange('full'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(requestReads.lastRequestId).not.toHaveBeenCalled()
   })
 
   it('does nothing from a saved provider switch after a restore dropped its request', async () => {
