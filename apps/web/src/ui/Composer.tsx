@@ -16,6 +16,7 @@ import type { ApprovalMode, ProviderId, QueuedTurn, Usage } from '@harness/contr
 import type { ModelChoice } from '../model-catalog.js'
 import {
   IconArrowUp as ArrowUp,
+  IconChevronDown as ChevronDown,
   IconCornerDownRight as CornerDownRight,
   IconFile as FileIcon,
   IconFolder as Folder,
@@ -234,7 +235,7 @@ export type WorkspaceInfo = {
 const IMAGE_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i
 const PREVIEWABLE_IMAGE_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
 const VIDEO_RE = /\.(avi|m4v|mkv|mov|mp4|mpe?g|ogg|ogv|webm)$/i
-const COMPOSER_MIN_HEIGHT = 48
+const COMPOSER_MIN_HEIGHT = 64
 const COMPOSER_MAX_HEIGHT = 242
 /** How long the composer's width must hold still before a draft is re-measured. */
 const COMPOSER_WIDTH_SETTLE_MS = 120
@@ -2075,6 +2076,141 @@ function ComposerComponent(props: {
             </div>
           ) : null}
 
+          {props.newSession ? (
+            <div className="composer__shelf composer__shelf--project">
+              <Menu
+                label="Choose project"
+                drop="down"
+                triggerClassName="shelf-control shelf-control--project"
+                panelClassName="menu--compact menu--project-picker"
+                trigger={() => (
+                  <span className="shelf-control__content">
+                    {props.projectName === undefined && props.projectsLoading ? (
+                      <Skeleton className="skeleton-group" width={56} height={9} />
+                    ) : (
+                      <span>{props.projectName ?? 'Choose project'}</span>
+                    )}
+                    <span className="shelf-control__chevron" aria-hidden>
+                      <ChevronDown size={14} strokeWidth={1.7} />
+                    </span>
+                  </span>
+                )}
+              >
+                {(close) => (
+                  <>
+                    {props.projects.map((project) => (
+                      <MenuItem
+                        key={project.path}
+                        title={project.name ?? basename(project.path)}
+                        icon={<Folder size={14} aria-hidden />}
+                        detail={project.path}
+                        active={project.path === props.projectPath}
+                        onClick={() => {
+                          props.onProjectChange(project.path)
+                          close()
+                        }}
+                      />
+                    ))}
+                    {/* With no project yet the list was empty, and no folder could be chosen here (#2194). */}
+                    <MenuItem
+                      title="New project"
+                      icon={<FolderPlus size={14} aria-hidden />}
+                      onClick={() => {
+                        close()
+                        props.onAddProject()
+                      }}
+                    />
+                  </>
+                )}
+              </Menu>
+
+              {props.branches.length > 0 ? (
+                <Menu
+                  label="Choose branch"
+                  drop="down"
+                  triggerClassName="shelf-control shelf-control--branch"
+                  panelRole="dialog"
+                  panelLabel="Choose branch"
+                  panelClassName="branch-menu"
+                  onOpen={props.onBranchMenuOpen}
+                  trigger={() => (
+                    <span className="shelf-control__content">
+                      <span>{props.branch ?? 'No branch'}</span>
+                      <span className="shelf-control__chevron" aria-hidden>
+                        <ChevronDown size={14} strokeWidth={1.7} />
+                      </span>
+                    </span>
+                  )}
+                >
+                  {(close) => (
+                    <BranchMenu
+                      branches={props.branches}
+                      activeBranch={props.branch}
+                      onSelect={(branch) => {
+                        props.onBranchChange(branch)
+                        close()
+                      }}
+                    />
+                  )}
+                </Menu>
+              ) : props.branchesLoading ? (
+                <SkeletonStatus
+                  label="Loading branches"
+                  className="menutrigger shelf-control shelf-control--branch composer-skeleton-branch"
+                >
+                  <span className="shelf-control__content">
+                    <Skeleton width={64} height={9} />
+                  </span>
+                </SkeletonStatus>
+              ) : null}
+
+              <Menu
+                label="Workspace mode"
+                drop="down"
+                triggerClassName="shelf-control shelf-control--mode"
+                panelClassName="menu--compact menu--mode"
+                shortcutAria={shortcutAria(keybindings.toggleIsolatedSession)}
+                trigger={() => (
+                  <span className="shelf-control__content">
+                    <IconMorph active={props.isolate ? 1 : 0}>
+                      <Laptop size={15} strokeWidth={1.6} aria-hidden />
+                      <GitBranch size={15} strokeWidth={1.6} aria-hidden />
+                    </IconMorph>
+                    <span>{props.isolate ? 'Isolated' : 'Local'}</span>
+                    <span className="shelf-control__chevron" aria-hidden>
+                      <ChevronDown size={14} strokeWidth={1.7} />
+                    </span>
+                  </span>
+                )}
+              >
+                {(close) => (
+                  <>
+                    <MenuItem
+                      title="Local"
+                      icon={<Laptop size={14} aria-hidden />}
+                      checked={!props.isolate}
+                      onClick={() => {
+                        props.onIsolateChange(false)
+                        close()
+                      }}
+                    />
+                    <MenuItem
+                      title="Isolated"
+                      icon={<GitBranch size={14} aria-hidden />}
+                      detail={props.isolateUnavailable}
+                      disabled={props.isolateUnavailable !== undefined}
+                      checked={props.isolate}
+                      onClick={() => {
+                        props.onIsolateChange(true)
+                        close()
+                      }}
+                    />
+                  </>
+                )}
+              </Menu>
+            </div>
+          ) : null}
+
           <ComposerErrors
             errors={composerErrors}
             visible={props.errorsVisible ?? true}
@@ -2100,141 +2236,7 @@ function ComposerComponent(props: {
             </Suspense>
           ) : null}
 
-          <DesignBeam
-            className={`composer__design-beam${props.newSession ? ' is-shelved' : ''}`}
-            strength={1}
-            active={props.designMode}
-          >
-            {/* New chat: the beam wraps shelf and prompt, so its clip and glow follow the one surface. */}
-            {props.newSession ? (
-              <div className="composer__shelf composer__shelf--project">
-                <Menu
-                  label="Choose project"
-                  drop="down"
-                  triggerClassName="shelf-control shelf-control--project"
-                  panelClassName="menu--compact menu--project-picker"
-                  trigger={() => (
-                    <span className="shelf-control__content">
-                      <Folder size={15} aria-hidden />
-                      {props.projectName === undefined && props.projectsLoading ? (
-                        <Skeleton className="skeleton-group" width={56} height={9} />
-                      ) : (
-                        <span>{props.projectName ?? 'Choose project'}</span>
-                      )}
-                    </span>
-                  )}
-                >
-                  {(close) => (
-                    <>
-                      {props.projects.map((project) => (
-                        <MenuItem
-                          key={project.path}
-                          title={project.name ?? basename(project.path)}
-                          icon={<Folder size={14} aria-hidden />}
-                          detail={project.path}
-                          active={project.path === props.projectPath}
-                          onClick={() => {
-                            props.onProjectChange(project.path)
-                            close()
-                          }}
-                        />
-                      ))}
-                      {/* With no project yet the list was empty, and no folder could be chosen here (#2194). */}
-                      <MenuItem
-                        title="New project"
-                        icon={<FolderPlus size={14} aria-hidden />}
-                        onClick={() => {
-                          close()
-                          props.onAddProject()
-                        }}
-                      />
-                    </>
-                  )}
-                </Menu>
-
-                <Menu
-                  label="Workspace mode"
-                  drop="down"
-                  triggerClassName="shelf-control shelf-control--mode"
-                  panelClassName="menu--compact menu--mode"
-                  shortcutAria={shortcutAria(keybindings.toggleIsolatedSession)}
-                  trigger={() => (
-                    <span className="shelf-control__content">
-                      <IconMorph active={props.isolate ? 1 : 0}>
-                        <Laptop size={15} aria-hidden />
-                        <GitBranch size={15} aria-hidden />
-                      </IconMorph>
-                      <span>{props.isolate ? 'Isolated' : 'Local'}</span>
-                    </span>
-                  )}
-                >
-                  {(close) => (
-                    <>
-                      <MenuItem
-                        title="Local"
-                        icon={<Laptop size={14} aria-hidden />}
-                        checked={!props.isolate}
-                        onClick={() => {
-                          props.onIsolateChange(false)
-                          close()
-                        }}
-                      />
-                      <MenuItem
-                        title="Isolated"
-                        icon={<GitBranch size={14} aria-hidden />}
-                        detail={props.isolateUnavailable}
-                        disabled={props.isolateUnavailable !== undefined}
-                        checked={props.isolate}
-                        onClick={() => {
-                          props.onIsolateChange(true)
-                          close()
-                        }}
-                      />
-                    </>
-                  )}
-                </Menu>
-
-                {props.branches.length > 0 ? (
-                  <Menu
-                    label="Choose branch"
-                    drop="down"
-                    triggerClassName="shelf-control shelf-control--branch"
-                    panelRole="dialog"
-                    panelLabel="Choose branch"
-                    panelClassName="branch-menu"
-                    onOpen={props.onBranchMenuOpen}
-                    trigger={() => (
-                      <span className="shelf-control__content">
-                        <GitBranch size={15} aria-hidden />
-                        <span>{props.branch ?? 'No branch'}</span>
-                      </span>
-                    )}
-                  >
-                    {(close) => (
-                      <BranchMenu
-                        branches={props.branches}
-                        activeBranch={props.branch}
-                        onSelect={(branch) => {
-                          props.onBranchChange(branch)
-                          close()
-                        }}
-                      />
-                    )}
-                  </Menu>
-                ) : props.branchesLoading ? (
-                  <SkeletonStatus
-                    label="Loading branches"
-                    className="menutrigger shelf-control shelf-control--branch composer-skeleton-branch"
-                  >
-                    <span className="shelf-control__content">
-                      <Skeleton className="skeleton--icon" />
-                      <Skeleton width={64} height={9} />
-                    </span>
-                  </SkeletonStatus>
-                ) : null}
-              </div>
-            ) : null}
-
+          <DesignBeam className="composer__design-beam" strength={1} active={props.designMode}>
             <div className="composer__prompt">
               <div className="chips">
                 {attachments.map((attachment) =>
@@ -2504,7 +2506,7 @@ function ComposerComponent(props: {
                     onClick={() => void pickFiles().then(attachFiles)}
                   >
                     <span className="tool tool--icon">
-                      <Plus size={16} aria-hidden />
+                      <Plus size={17} strokeWidth={1.65} aria-hidden />
                     </span>
                   </button>
                 ) : props.attachmentsLoading ? (

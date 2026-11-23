@@ -20,10 +20,10 @@ describe('composer height motion', () => {
   it('keeps the main composer autosize limits but removes CSS height motion', () => {
     const composer = rule(appCss, '.composer textarea')
 
-    expect(composer).toContain('min-height: 48px')
+    expect(composer).toContain('min-height: 64px')
     expect(composer).toContain('max-height: 242px')
-    expect(composer).toContain('padding: 12px calc(var(--chat-text-inset) - 1px) 6px')
-    expect(composerSource).toContain('const COMPOSER_MIN_HEIGHT = 48')
+    expect(composer).toContain('padding: 16px calc(var(--chat-text-inset) - 1px) 10px')
+    expect(composerSource).toContain('const COMPOSER_MIN_HEIGHT = 64')
     expect(composerSource).toContain('rows={1}')
     expect(composer).not.toContain('transition:')
     expect(composer).not.toContain('animation:')

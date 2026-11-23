@@ -76,11 +76,11 @@ describe('radius system', () => {
     expect(commandPaletteCss).toMatch(
       /\.command-palette__panel \{[^}]*--r-popup-item: var\(--r-lg\);[^}]*border-radius: var\(--r-panel\)/s,
     )
-    expect(tokensCss).toContain('--r-composer: var(--r-2xl);')
+    expect(tokensCss).toContain('--r-composer: 24px;')
     expect(appCss).toMatch(/\.composer__box \{[^}]*border-radius: var\(--r-composer\)/s)
     expect(appCss).toMatch(/\.composer__prompt \{[^}]*border-radius: var\(--r-composer\)/s)
     expect(appCss).toMatch(
-      /\.tools \.composer__add \{[^}]*height: 32px;[^}]*border-radius: var\(--r-xl\)/s,
+      /\.tools \.composer__add \{[^}]*height: 32px;[^}]*border-radius: var\(--r-circle\)/s,
     )
     expect(appCss).toMatch(/\.icon-btn\.titlebar__toggle \{[^}]*border-radius: var\(--r-md\);/s)
     expect(appCss).toMatch(/\.stage \{[^}]*border-top-left-radius: var\(--r-lg\)/s)

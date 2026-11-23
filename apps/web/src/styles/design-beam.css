@@ -50,10 +50,9 @@
 }
 
 .composer__design-button-beam {
-  /* Follow the real control corner instead of the old pill preset. A larger
-     mask curves inward too early and leaves a rough second edge in the button. */
-  --design-beam-radius: var(--r-xl);
-  --design-beam-inner-radius: calc(var(--r-xl) - 1px);
+  /* Follow the pill control corner in the prompt toolbar. */
+  --design-beam-radius: var(--r-pill);
+  --design-beam-inner-radius: var(--r-pill);
   --design-beam-stroke: 0.46;
   --design-beam-inner: 0.24;
   --design-beam-bloom: 0.38;

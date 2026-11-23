@@ -13,7 +13,7 @@
   z-index: 0;
   inset: 0;
   overflow: hidden;
-  padding: 12px calc(var(--chat-text-inset) - 1px) 6px;
+  padding: 16px calc(var(--chat-text-inset) - 1px) 10px;
   color: var(--text);
   font: inherit;
   font-size: var(--t-lg);

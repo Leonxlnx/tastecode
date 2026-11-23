@@ -58,22 +58,22 @@
   --queue-text: #ededed;
   --queue-action: #8a8a8a;
   --queue-hover: #2b2b2b;
-  --composer-placeholder: #828282;
+  --composer-placeholder: #9a9a9a;
   --composer-review: #65b8ff;
   --composer-danger: #fe8549;
-  --composer-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 4%), 0 1px 2px rgb(0 0 0 / 28%),
-    0 18px 40px -24px rgb(0 0 0 / 72%);
-  /* The prompt bar: the prompt colour, a touch see-through so a window
-     background shows faintly, edged by a hairline instead of a grey line. */
-  --composer-surface: color-mix(in srgb, var(--bg-prompt) 92%, transparent);
-  --composer-hairline: color-mix(in srgb, var(--text) 10%, transparent);
-  --composer-hairline-focus: color-mix(in srgb, var(--text) 18%, transparent);
+  --composer-shadow: 0 1px 2px rgb(0 0 0 / 24%), 0 14px 32px -22px rgb(0 0 0 / 60%);
+  /* The prompt bar: opaque so docked shelves and the queue tucked behind its
+     top corners cannot bleed through as a horizontal seam, edged by a hairline. */
+  --composer-surface: color-mix(in srgb, var(--bg-prompt) 96%, var(--bg));
+  --composer-hairline: color-mix(in srgb, var(--text) 13%, transparent);
+  --composer-hairline-focus: color-mix(in srgb, var(--text) 22%, transparent);
+  --composer-add-bg: color-mix(in srgb, var(--text) 8%, transparent);
+  --composer-add-bg-hover: color-mix(in srgb, var(--text) 14%, transparent);
   /* Chips in the bar are ghosts: no fill until hover or while their menu is open. */
   --composer-chip-bg-hover: color-mix(in srgb, var(--text) 7%, transparent);
   --composer-chip-bg-open: color-mix(in srgb, var(--text) 10%, transparent);
   --composer-orb-shadow: 0 1px 2px rgb(0 0 0 / 35%), inset 0 0 0 1px rgb(255 255 255 / 8%);
-  --composer-orb: #f2f2f2;
+  --composer-orb: #f5f5f5;
   --composer-on-orb: #101010;
   --composer-stop: #2b2b2b;
   --composer-on-stop: #f2f2f2;
@@ -202,9 +202,9 @@
   --r-card: 16px;
   --r-panel: 16px;
   --r-dialog: 20px;
-  /* The prompt bar and everything docked to it share one outer corner. 10px
-     controls sit ~10px inside it, so 20px keeps the two curves concentric. */
-  --r-composer: var(--r-2xl);
+  /* The prompt bar and everything docked to it share one outer corner.
+     Circular 32px controls sit ~11px inside it, so 24px keeps the curves concentric. */
+  --r-composer: 24px;
   /* Popup rows use 8px corners; the popup around them uses 12px. */
   --r-popup-item: var(--r-md);
   --r-popup: var(--r-lg);
@@ -379,10 +379,15 @@
   --queue-text: #18181b;
   --queue-action: #96969a;
   --queue-hover: #f5f5f6;
-  --composer-placeholder: #71717a;
+  --composer-placeholder: #6d6d75;
   --composer-review: #2d72dc;
   --composer-danger: #ef4d05;
   --composer-shadow: 0 1px 2px rgb(24 24 27 / 6%), 0 14px 34px -20px rgb(24 24 27 / 20%);
+  --composer-surface: var(--bg-prompt);
+  --composer-hairline: color-mix(in srgb, var(--text) 12%, transparent);
+  --composer-hairline-focus: color-mix(in srgb, var(--text) 22%, transparent);
+  --composer-add-bg: color-mix(in srgb, var(--text) 6%, transparent);
+  --composer-add-bg-hover: color-mix(in srgb, var(--text) 11%, transparent);
   --composer-orb-shadow: 0 1px 2px rgb(24 24 27 / 22%), inset 0 0 0 1px rgb(255 255 255 / 10%);
   --composer-orb: #18181b;
   --composer-on-orb: #ffffff;

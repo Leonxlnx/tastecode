@@ -1223,7 +1223,7 @@
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
-  --composer-overlay-height: 120px;
+  --composer-overlay-height: 136px;
 }
 
 .stage__conversation.is-new-session {
@@ -1692,15 +1692,11 @@
   transition: border-color var(--dur-fast) var(--ease-out);
 }
 
-.composer__design-beam.is-shelved {
-  margin-top: 0;
-}
-
 .composer__prompt:focus-within {
   border-color: var(--composer-hairline-focus);
 }
 
-.composer__box.is-dropping :is(.composer__prompt, .composer__shelf--project) {
+.composer__box.is-dropping .composer__prompt {
   border-color: var(--text-2);
   background: var(--surface-2);
 }
@@ -1728,30 +1724,19 @@
   pointer-events: none;
 }
 
-/* New chat: shelf and prompt are one surface with one edge and shadow. */
-.is-new-session .composer__box {
-  box-shadow: var(--composer-shadow);
-}
-
+/* New chat: context controls float cleanly above the rounded prompt card. */
 .composer__shelf--project {
-  background: var(--composer-surface);
-  border: 1px solid var(--composer-hairline);
-  border-bottom: 0;
-  transition: border-color var(--dur-fast) var(--ease-out);
+  gap: 10px;
+  min-height: 28px;
+  margin: 0 0 8px;
+  padding: 0 calc(var(--chat-text-inset) - 6px);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .composer__shelf--project::after {
   content: none;
-}
-
-.composer__box:has(.composer__prompt:focus-within) .composer__shelf--project {
-  border-color: var(--composer-hairline-focus);
-}
-
-.is-shelved .composer__prompt {
-  border-top: 0;
-  border-radius: 0 0 var(--r-composer) var(--r-composer);
-  box-shadow: none;
 }
 
 .composer__shelf .menuwrap {
@@ -1763,7 +1748,7 @@
   max-width: 260px;
 }
 
-.composer__shelf .menuwrap:last-child {
+.composer__shelf .menuwrap:not(:first-child) {
   max-width: 220px;
 }
 
@@ -2038,22 +2023,24 @@
 .shelf-control {
   width: auto;
   max-width: 100%;
-  padding: 3px 5px;
+  padding: 4px 6px;
   background: transparent;
   border: 0;
   border-radius: var(--r-md);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
-  font-size: var(--t-sm);
+  font-size: var(--t-md);
   box-shadow: none;
-  transition:
-    box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
 .menutrigger.shelf-control {
   border-radius: var(--r-md);
+}
+
+.shelf-control--project {
+  color: var(--text);
 }
 
 .shelf-control--mode {
@@ -2061,30 +2048,34 @@
   max-width: 150px;
 }
 
-/* Scoped to the shelf so this outranks the flat .menutrigger:hover background,
-   and the plain workspace-mode button picks up the same treatment. */
 .composer__shelf .shelf-control:hover:not(:disabled) {
-  background: var(--control-hover);
+  background: var(--composer-chip-bg-hover);
   box-shadow: none;
   color: var(--text);
 }
 
 .shelf-control[aria-expanded='true'] {
+  background: var(--composer-chip-bg-open);
   color: var(--text);
 }
 
 .shelf-control__content {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
-.shelf-control__content svg {
+.shelf-control__chevron {
+  display: grid;
+  place-items: center;
   flex: none;
-  width: 14px;
-  height: 14px;
-  color: currentColor;
+  color: var(--text-3);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.shelf-control[aria-expanded='true'] .shelf-control__chevron {
+  transform: rotate(180deg);
 }
 
 .shelf-control__content span {
@@ -2128,10 +2119,10 @@
   font: inherit;
   font-size: var(--t-lg);
   line-height: 1.45;
-  min-height: 48px;
+  min-height: 64px;
   /* The 1px is .composer__prompt's border; the transcript column reads the
      same inset, so its text starts where the prompt text starts. */
-  padding: 12px calc(var(--chat-text-inset) - 1px) 6px;
+  padding: 16px calc(var(--chat-text-inset) - 1px) 10px;
   resize: none;
   outline: none;
   max-height: 242px;
@@ -2338,7 +2329,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 9px 8px;
+  padding: 6px 12px 11px;
   /* Never wraps. Send has to stay on the row at every width, so the labels in
      the middle shrink and truncate instead. */
   flex-wrap: nowrap;
@@ -2425,14 +2416,14 @@
 
 :root[data-theme='light']
   .composer__design-beam:is([data-active], [data-fading])
-  :is(.composer__prompt, .composer__shelf--project) {
+  .composer__prompt {
   border-color: var(--composer-design-prompt-border);
 }
 
 .composer__design-button-beam {
   display: flex;
   flex: none;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-pill);
 }
 
 /* Scoped like the hover rule below: the later generic .menutrigger
@@ -2451,6 +2442,7 @@
   border: 1px solid transparent;
   box-shadow: none;
   transition:
+    background-color var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
@@ -2465,6 +2457,7 @@
     .composer-voice-button
   )[aria-expanded='true'] {
   background: var(--composer-chip-bg-open);
+  border-color: transparent;
 }
 
 /* Scoped under .tools so these outrank the later generic .menutrigger
@@ -2474,13 +2467,14 @@
   height: 32px;
   justify-content: center;
   padding: 0;
-  border-radius: var(--r-xl);
+  background: var(--composer-add-bg);
+  border-radius: var(--r-circle);
 }
 
 .tools :is(.composer__permission, .composer__design) {
   min-height: 32px;
   padding: 4px 11px;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-pill);
 }
 
 .tools .composer__permission .tool,
@@ -2490,8 +2484,8 @@
 
 .tools .menutrigger--model-selector {
   min-height: 32px;
-  padding: 4px 12px;
-  border-radius: var(--r-xl);
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
 }
 
 .composer-voice-button {
@@ -2504,7 +2498,7 @@
 .tools :is(.composer__add, .composer__permission) .tool:not(.tool--review):not(.tool--danger) svg,
 .tools .composer__design:not(.is-active),
 .tools .composer__design:not(.is-active) svg {
-  color: color-mix(in srgb, var(--text) 55%, var(--text-2));
+  color: var(--text-2);
 }
 
 @property --composer-permission-ink {
@@ -2517,7 +2511,7 @@
    snapping ahead of it. The ink moves through a registered property so the
    hover, which sets `color` directly, stays instant. */
 .tools .composer__permission .tool {
-  --composer-permission-ink: color-mix(in srgb, var(--text) 55%, var(--text-2));
+  --composer-permission-ink: var(--text-2);
   transition: --composer-permission-ink var(--dur-slow) var(--ease-in-out);
 }
 
@@ -3121,7 +3115,6 @@
   /* Composer controls keep their own hover surface and border. */
   .tools
     :is(
-      .composer__add,
       .composer__permission,
       .composer__design,
       .menutrigger--model-selector,
@@ -3130,6 +3123,10 @@
     background: var(--composer-chip-bg-hover);
     border-color: transparent;
     box-shadow: none;
+  }
+
+  .tools .composer__add:hover:not(:disabled) {
+    background: var(--composer-add-bg-hover);
   }
 
   /* Hover inks the label like every other chip instead of fading it. */
@@ -3297,7 +3294,7 @@
   }
 
   .tools {
-    padding-inline: 6px;
+    padding-inline: 10px;
   }
 
   .tools .composer__permission,

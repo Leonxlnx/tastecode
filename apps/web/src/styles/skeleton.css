@@ -239,6 +239,11 @@
   --skeleton-shine: color-mix(in srgb, var(--text) 15%, var(--bg-shelf));
 }
 
+.composer__shelf--project {
+  --skeleton: color-mix(in srgb, var(--text) 9%, var(--bg));
+  --skeleton-shine: color-mix(in srgb, var(--text) 15%, var(--bg));
+}
+
 .tools .composer-skeleton-model {
   /* Painted in the control colour like the permission placeholder, so its
      bars step up from that surface instead of matching it. */
@@ -262,7 +267,7 @@
 }
 
 .composer-skeleton-attachment > .skeleton {
-  border-radius: var(--r-xl);
+  border-radius: var(--r-circle);
 }
 
 .composer-skeleton-voice {

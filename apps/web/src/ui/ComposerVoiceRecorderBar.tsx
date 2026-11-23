@@ -81,7 +81,7 @@ export function ComposerVoiceRecorderBar(props: {
         onClick={props.idle ? props.onStart : props.isTranscribing ? props.onCancel : props.onStop}
       >
         <IconMorph active={props.idle ? 0 : props.isTranscribing ? 2 : 1}>
-          <Mic size={15} aria-hidden />
+          <Mic size={16} strokeWidth={1.7} aria-hidden />
           <Square size={15} aria-hidden />
           <X size={15} aria-hidden />
         </IconMorph>

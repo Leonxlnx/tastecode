@@ -317,18 +317,15 @@ describe('Composer loading controls', () => {
     expect(screen.queryByRole('button', { name: 'Record voice note' })).toBeNull()
   })
 
-  // The beam clips its content to its own rounded corners once its stylesheet has loaded; around
-  // the prompt alone it rounded the prompt's top corners under the shelf and split the surface.
-  it('wraps the new-chat shelf and prompt in one design beam, and only the prompt otherwise', () => {
+  it('floats the new-chat context shelf above the design beam and keeps the beam around the prompt', () => {
     const view = renderComposer(vi.fn(), { newSession: true })
     const beam = document.querySelector('.composer__design-beam')
-    expect(beam?.classList.contains('is-shelved')).toBe(true)
-    expect(beam?.querySelector('.composer__shelf--project')).toBeTruthy()
+    expect(document.querySelector('.composer__shelf--project')).toBeTruthy()
+    expect(beam?.querySelector('.composer__shelf--project')).toBeNull()
     expect(beam?.querySelector('.composer__prompt')).toBeTruthy()
 
     view.rerenderComposer({ newSession: false })
     const chatBeam = document.querySelector('.composer__design-beam')
-    expect(chatBeam?.classList.contains('is-shelved')).toBe(false)
     expect(document.querySelector('.composer__shelf--project')).toBeNull()
     expect(chatBeam?.querySelector('.composer__prompt')).toBeTruthy()
   })
@@ -2560,7 +2557,7 @@ describe('Composer height', () => {
     fireEvent.change(composer, { target: { value: 'Send this\n'.repeat(11) } })
     await waitFor(() => expect(composer.style.height).toBe('242px'))
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-    await waitFor(() => expect(composer.style.height).toBe('48px'))
+    await waitFor(() => expect(composer.style.height).toBe('64px'))
 
     contentHeight = 100
     const readsAfterSend = layoutReads
@@ -2577,11 +2574,11 @@ describe('Composer height', () => {
   it('keeps a one-line box whose text fits without the height: auto measurement', async () => {
     renderComposer(vi.fn())
     const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
-    let contentHeight = 48
+    let contentHeight = 64
     const heightsWhenMeasured: string[] = []
     Object.defineProperty(composer, 'offsetHeight', {
       configurable: true,
-      get: () => Number.parseInt(composer.style.height, 10) || 48,
+      get: () => Number.parseInt(composer.style.height, 10) || 64,
     })
     Object.defineProperty(composer, 'scrollHeight', {
       configurable: true,

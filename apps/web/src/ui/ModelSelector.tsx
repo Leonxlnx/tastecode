@@ -99,7 +99,7 @@ export const ModelSelector = memo(function ModelSelector(props: ModelSelectorPro
             <span className="model-selector__trigger-effort">{effortLabel}</span>
           </span>
           <span className="model-selector__trigger-chevron" aria-hidden>
-            <ChevronDown size={15} />
+            <ChevronDown size={14} strokeWidth={1.7} />
           </span>
         </span>
       )}

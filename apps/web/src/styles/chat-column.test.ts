@@ -65,7 +65,7 @@ describe('chat column', () => {
     expect(rule(appCss, '.composer')).toContain('padding: 4px var(--chat-gutter) 8px;')
     expect(rule(appCss, '.composer__box')).toContain('max-width: var(--chat-w);')
     expect(rule(appCss, '.composer textarea')).toContain(
-      'padding: 12px calc(var(--chat-text-inset) - 1px) 6px;',
+      'padding: 16px calc(var(--chat-text-inset) - 1px) 10px;',
     )
     expect(rule(appCss, '.composer__prompt')).toContain(
       'border: 1px solid var(--composer-hairline);',
@@ -73,22 +73,13 @@ describe('chat column', () => {
     expect(rule(voiceCss, '.composer__voice-error')).toContain('padding: 0 var(--chat-text-inset);')
   })
 
-  it('draws the new-chat shelf and prompt as one surface with one edge', () => {
+  it('floats the new-chat context shelf cleanly above the rounded prompt card', () => {
     const shelf = rule(appCss, '.composer__shelf--project')
-    const prompt = rule(appCss, '.is-shelved .composer__prompt')
 
-    expect(shelf).toContain('background: var(--composer-surface);')
-    expect(shelf).toContain('border: 1px solid var(--composer-hairline);')
-    expect(shelf).toContain('border-bottom: 0;')
+    expect(shelf).toContain('background: transparent;')
+    expect(shelf).toContain('border: 0;')
+    expect(shelf).toContain('padding: 0 calc(var(--chat-text-inset) - 6px);')
     expect(rule(appCss, '.composer__shelf--project::after')).toContain('content: none;')
-    expect(prompt).toContain('border-top: 0;')
-    expect(prompt).toContain('box-shadow: none;')
-    expect(rule(appCss, '.is-new-session .composer__box')).toContain(
-      'box-shadow: var(--composer-shadow);',
-    )
-    expect(
-      rule(appCss, '.composer__box:has(.composer__prompt:focus-within) .composer__shelf--project'),
-    ).toContain('border-color: var(--composer-hairline-focus);')
   })
 
   it('narrows only the gutter in a narrow pane or window', () => {

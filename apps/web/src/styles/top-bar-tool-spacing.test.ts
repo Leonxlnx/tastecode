@@ -17,6 +17,7 @@ function rule(source: string, selector: string): string {
 describe('top-bar tool spacing', () => {
   it('keeps the new-chat shelf compact and flat', () => {
     const shelf = rule(css, '.composer__shelf')
+    const projectShelf = rule(css, '.composer__shelf--project')
     const control = rule(css, '.shelf-control')
     const content = rule(css, '.shelf-control__content')
 
@@ -24,10 +25,12 @@ describe('top-bar tool spacing', () => {
     expect(shelf).toContain('min-height: 32px;')
     expect(shelf).toContain('padding: 1px 10px;')
     expect(shelf).not.toContain('linear-gradient')
-    expect(control).toContain('padding: 3px 5px;')
-    expect(control).toContain('font-size: var(--t-sm);')
+    expect(projectShelf).toContain('gap: 10px;')
+    expect(projectShelf).toContain('background: transparent;')
+    expect(control).toContain('padding: 4px 6px;')
+    expect(control).toContain('font-size: var(--t-md);')
     expect(control).toContain('border-radius: var(--r-md);')
-    expect(content).toContain('gap: 6px;')
+    expect(content).toContain('gap: 5px;')
     expect(rule(css, '.composer__shelf .shelf-control:hover:not(:disabled)')).toContain(
       'box-shadow: none;',
     )
