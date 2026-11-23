@@ -302,7 +302,8 @@ export class ProviderHistory {
           const listing = this.#listing(provider)
           const sessions = await history.list(listing.options).then(
             (sessions) => {
-              listing.save(true)
+              // A listing that closing cut short may have left transcripts out.
+              listing.save(!this.#closed)
               // The app's own background writing, saved by a provider that saves everything.
               return sessions.map((session) =>
                 !session.internal && isBackgroundWorkspace(session.workspacePath)
@@ -580,14 +581,17 @@ export class ProviderHistory {
   async close(): Promise<void> {
     this.#closed = true
     for (const scan of this.#scanned.values()) scan.settle()
-    await Promise.allSettled([this.#refreshing, ...this.#reading.values()])
+    // Sources are disposed before anything is awaited: that stops a read still running,
+    // such as a worker reading a large transcript, which closing waited for until it was
+    // done. Nothing a read or listing finds after this is merged.
+    const disposed = this.sources.map(({ history }) => history.dispose?.())
+    await Promise.allSettled([...disposed, this.#refreshing, ...this.#reading.values()])
     const accounts = await Promise.allSettled(this.#accountSources.values())
-    await Promise.allSettled([
-      ...this.sources.map(({ history }) => history.dispose?.()),
-      ...accounts.map((result) =>
+    await Promise.allSettled(
+      accounts.map((result) =>
         result.status === 'fulfilled' ? result.value.dispose?.() : undefined,
       ),
-    ])
+    )
     this.#accountSources.clear()
   }
 }

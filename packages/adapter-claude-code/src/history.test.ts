@@ -1093,6 +1093,90 @@ describe('Claude Code saved history', { timeout: 20_000 }, () => {
     expect(await f.source.list()).toEqual([])
   })
 
+  it('reads a large transcript in a worker, so the event loop keeps running', async () => {
+    const f = await fixture([row('u1', 'user', 'Large')])
+    const url = new URL('./fixtures/history-worker.mjs', import.meta.url)
+    const { size } = await stat(f.file)
+    const source = createClaudeHistorySource({
+      configDir: f.configDir,
+      readWorker: { fromBytes: size, url },
+    })
+    const session = (await source.list())[0]!
+    let ticks = 0
+    const timer = setInterval(() => ticks++, 10)
+    try {
+      expect(await source.read({ ...session, title: 'busy' })).toEqual([
+        { type: 'thread.started', thread: { id: SESSION, title: f.file } },
+      ])
+    } finally {
+      clearInterval(timer)
+    }
+    // The worker held its own thread for 300 ms; this one kept firing.
+    expect(ticks).toBeGreaterThan(10)
+    await expect(source.read({ ...session, title: 'failing' })).rejects.toThrow(
+      'Transcript could not be read',
+    )
+    const stopped = source.read({ ...session, title: 'running' })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    source.dispose?.()
+    await expect(stopped).rejects.toThrow('stopped')
+    // A transcript under the size is read here, as before.
+    const below = createClaudeHistorySource({
+      configDir: f.configDir,
+      readWorker: { fromBytes: size + 1, url },
+    })
+    expect(items(await below.read({ ...session, title: 'busy' })).map(({ text }) => text)).toEqual([
+      'Large',
+    ])
+  })
+
+  it('runs one worker read at a time, across sources', async () => {
+    const f = await fixture([row('u1', 'user', 'Large')])
+    const url = new URL('./fixtures/history-worker.mjs', import.meta.url)
+    const session = (await createClaudeHistorySource({ configDir: f.configDir }).list())[0]!
+    const sources = [0, 1, 2].map(() =>
+      createClaudeHistorySource({ configDir: f.configDir, readWorker: { fromBytes: 0, url } }),
+    )
+    const spans = (
+      await Promise.all(sources.map((source) => source.read({ ...session, title: 'timed' })))
+    ).map((events) => {
+      const started = events[0]?.type === 'thread.started' ? (events[0].thread.title ?? '') : ''
+      return started.split('-').map(Number) as [number, number]
+    })
+    spans.sort(([a], [b]) => a - b)
+    for (let index = 1; index < spans.length; index += 1)
+      expect(spans[index]![0]).toBeGreaterThanOrEqual(spans[index - 1]![1])
+  })
+
+  it('starts no worker once disposed, and stops a parked one before it resolves', async () => {
+    const f = await fixture([row('u1', 'user', 'Large')])
+    const url = new URL('./fixtures/history-worker.mjs', import.meta.url)
+    const listing = createClaudeHistorySource({ configDir: f.configDir })
+    const session = (await listing.list())[0]!
+    const source = createClaudeHistorySource({
+      configDir: f.configDir,
+      readWorker: { fromBytes: 0, url },
+    })
+    // Disposed while the read still checks its transcript, before any worker exists.
+    const validating = source.read({ ...session, title: 'busy' })
+    await source.dispose?.()
+    await expect(validating).rejects.toThrow('closed')
+    await expect(source.read({ ...session, title: 'busy' })).rejects.toThrow('closed')
+
+    const parked = createClaudeHistorySource({
+      configDir: f.configDir,
+      readWorker: { fromBytes: 0, url },
+    })
+    const running = parked.read({ ...session, title: 'running' })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    let stopped = false
+    void running.catch(() => (stopped = true))
+    await parked.dispose?.()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(stopped).toBe(true)
+    await expect(running).rejects.toThrow('stopped')
+  })
+
   it('refuses transcript paths outside its configured history root', async () => {
     const f = await fixture([row('u1', 'user', 'Inside')])
     const session = (await f.source.list())[0]!

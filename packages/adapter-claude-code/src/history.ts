@@ -4,6 +4,7 @@ import { open, readdir, readFile, realpath, stat, type FileHandle } from 'node:f
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
+import { Worker } from 'node:worker_threads'
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk'
 import type {
   ApprovalMode,
@@ -33,6 +34,8 @@ export type ClaudeHistoryOptions = {
   configDir?: string
   /** The clock that decides which transcripts are recent; tests pass their own. */
   now?: () => number
+  /** Where a transcript is read off the event loop, and the module that reads it; tests pass their own. */
+  readWorker?: { fromBytes: number; url: URL }
 }
 
 // A listing stats only new transcripts and those changed within a day; the rest, which a busy
@@ -67,6 +70,11 @@ const TOKEN_OVERLAP =
 const LINE_CHUNK_BYTES = 64 * 1024
 const SCAN_CHUNK_BYTES = 1024 * 1024
 const STAT_BATCH = 32
+// Reading a transcript resolves compaction and branches over all of its rows, synchronously
+// and once more for every compaction: 13-21 s for a 234 MB one in the app, during which every
+// other request waited. From this size it runs in a worker thread: starting one costs about
+// 0.35 s, which a read on the event loop of a transcript this large costs as well.
+const WORKER_READ_BYTES = 16 * 1024 * 1024
 // A transcript that grew is read on from where it stopped only while these still match.
 const HEAD_BYTES = 4096
 const SEAM_BYTES = 256
@@ -686,6 +694,85 @@ function eventsFor(rows: SavedRecord[], session: ProviderHistorySession): Domain
   return events
 }
 
+/** A transcript's events, read whole: compaction and branches are resolved over every row. */
+export async function transcriptEvents(
+  locator: string,
+  session: ProviderHistorySession,
+): Promise<DomainEvent[]> {
+  return eventsFor(await conversation(await records(locator), session), session)
+}
+
+// One worker read at a time, across every source: each holds a heap the size of its whole
+// transcript (1.2 GB for a 234 MB one), and several large chats opened together held one each.
+// The queue holds no result, only when the worker before has exited.
+let workerSlots: Promise<void> = Promise.resolve()
+
+/**
+ * The same read in a worker thread, queued behind the one running. `open` throws when its
+ * source closed meanwhile; `running` holds the worker until it has exited, so a dispose can
+ * stop it and wait for it.
+ */
+function readInWorker(
+  url: URL,
+  locator: string,
+  session: ProviderHistorySession,
+  running: Set<Worker>,
+  open: () => void,
+): Promise<DomainEvent[]> {
+  let release!: () => void
+  const slot = new Promise<void>((resolve) => (release = resolve))
+  const turn = workerSlots
+  workerSlots = turn.then(() => slot)
+  return turn.then(() => {
+    try {
+      open()
+    } catch (error) {
+      release()
+      throw error
+    }
+    return startWorker(url, locator, session, running, release)
+  })
+}
+
+function startWorker(
+  url: URL,
+  locator: string,
+  session: ProviderHistorySession,
+  running: Set<Worker>,
+  release: () => void,
+): Promise<DomainEvent[]> {
+  return new Promise((resolve, reject) => {
+    let worker: Worker
+    try {
+      worker = new Worker(url, { workerData: { locator, session }, name: 'harness-claude-history' })
+    } catch (error) {
+      release()
+      reject(error)
+      return
+    }
+    running.add(worker)
+    let settled = false
+    const settle = (outcome: () => void) => {
+      if (settled) return
+      settled = true
+      outcome()
+    }
+    worker.on('message', (message: { events?: DomainEvent[]; error?: string }) => {
+      settle(() =>
+        message.events ? resolve(message.events) : reject(new Error(message.error ?? 'failed')),
+      )
+      void worker.terminate()
+    })
+    worker.on('error', (error) => settle(() => reject(error)))
+    // The next read starts, and a dispose returns, only once this worker is gone.
+    worker.once('exit', () => {
+      running.delete(worker)
+      settle(() => reject(new Error('Claude history read was stopped')))
+      release()
+    })
+  })
+}
+
 /** A sidechain's last read. Claude only appends, so a longer file reads on from `complete`. */
 type SidechainRead = {
   size: number
@@ -930,6 +1017,16 @@ export function createClaudeHistorySource(
   let lastFullListing = -Infinity
   const validLocator = (locator: string) => isClaudeSessionFile(projects, locator)
   const subagents: SubagentCache = { files: new Map(), reading: new Map(), agents: new Map() }
+  const worker = options.readWorker ?? {
+    fromBytes: WORKER_READ_BYTES,
+    url: new URL('./history-worker.js', import.meta.url),
+  }
+  const workers = new Set<Worker>()
+  // Set by dispose: a read still validating its transcript then starts no worker.
+  let disposed = false
+  const open = () => {
+    if (disposed) throw new Error('Claude history was closed')
+  }
   return {
     resolveSessionId: (threadId) => (threadId.startsWith('claude-') ? threadId.slice(7) : threadId),
     readSubagentTranscript: (session, item) =>
@@ -1059,14 +1156,20 @@ export function createClaudeHistorySource(
       const locator = session.locator
       if (!locator || path.basename(locator) !== `${session.id}.jsonl`) return []
       if (!(await validLocator(locator).catch(() => false))) return []
-      const rows = await records(locator)
-      return eventsFor(await conversation(rows, session), session)
+      open()
+      const { size } = await stat(locator)
+      open()
+      if (size < worker.fromBytes) return transcriptEvents(locator, session)
+      return readInWorker(worker.url, locator, session, workers, open)
     },
-    dispose() {
+    async dispose() {
+      disposed = true
+      const stopping = [...workers].map((running) => running.terminate())
       cache.clear()
       indexes.clear()
       subagents.files.clear()
       subagents.agents.clear()
+      await Promise.allSettled(stopping)
     },
   }
 }

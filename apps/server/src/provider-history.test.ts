@@ -358,6 +358,47 @@ describe('provider history integration', () => {
     await expect(waiting).resolves.toBeUndefined()
   })
 
+  it('stops a read and a listing still running when it closes, and forgets no listing then', async () => {
+    let stop!: () => void
+    const stopped = new Promise<void>((resolve) => (stop = resolve))
+    let listings = 0
+    const source: ProviderHistorySource = {
+      list: vi.fn(async (options) => {
+        listings += 1
+        if (listings === 1) {
+          options?.remember?.('kept.jsonl', '1', metadata())
+          return [metadata()]
+        }
+        // Cut short by the close: it names nothing.
+        await stopped
+        return []
+      }),
+      read: vi.fn(async () => {
+        await stopped
+        throw new Error('Claude history was closed')
+      }),
+      dispose: vi.fn(() => stop()),
+    }
+    const history = new ProviderHistory(store, [{ provider: 'codex', history: source }], {
+      isBusy: () => false,
+      changed: vi.fn(),
+      log: vi.fn(),
+    })
+    await history.refresh()
+    const reading = history.load('external:codex:native')
+    void history.refresh()
+    await vi.waitFor(() => expect(listings).toBe(2))
+    await vi.waitFor(() => expect(source.read).toHaveBeenCalled())
+
+    const closing = await Promise.race([
+      history.close().then(() => 'closed'),
+      new Promise((resolve) => setTimeout(() => resolve('waiting'), 1_000)),
+    ])
+    expect(closing).toBe('closed')
+    await expect(reading).rejects.toThrow('closed')
+    expect([...store.providerHistoryMetadata('codex').keys()]).toEqual(['kept.jsonl'])
+  })
+
   it('honors a temporary-session tombstone created after discovery started and before its first scan', async () => {
     const { history, source } = setup()
     source.resolveSessionId = (id) => id.replace(/^local-/, '')
