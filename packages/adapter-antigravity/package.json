@@ -25,6 +25,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@harness/adapter-acp": "workspace:*",
     "@harness/contracts": "workspace:*",
     "@harness/proc": "workspace:*",
     "zod": "4.4.3"

@@ -5,7 +5,7 @@ import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { DomainEvent } from '@harness/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
-import { AntigravityAdapter, antigravityBackgroundNote } from './adapter.js'
+import { AntigravityAdapter } from './adapter.js'
 import { agyCommandName, isAgyAnsweredCommand, listAntigravityCommands } from './commands.js'
 
 class FakeChild extends ChildProcess {
@@ -36,6 +36,51 @@ class FakeChild extends ChildProcess {
   }
 }
 
+class FakeAcpChild extends FakeChild {
+  readonly prompts: string[] = []
+  #buf = ''
+  constructor() {
+    super()
+    this.stdin.setEncoding('utf8')
+    this.stdin.on('data', (chunk: string) => {
+      this.#buf += chunk
+      let nl: number
+      while ((nl = this.#buf.indexOf('\n')) !== -1) {
+        const line = this.#buf.slice(0, nl).trim()
+        this.#buf = this.#buf.slice(nl + 1)
+        if (!line) continue
+        const msg = JSON.parse(line) as {
+          id?: number
+          method?: string
+          params?: { prompt?: Array<{ text?: string }> }
+        }
+        if (msg.id === undefined) continue
+        if (msg.method === 'initialize') {
+          this.stdout.write(
+            `${JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } })}\n`,
+          )
+        } else if (msg.method === 'session/new') {
+          this.stdout.write(
+            `${JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'c-1' } })}\n`,
+          )
+        } else if (msg.method === 'session/prompt') {
+          const text = msg.params?.prompt?.[0]?.text ?? ''
+          this.prompts.push(text)
+          const reply = text.startsWith('/review') ? 'Reviewed.' : 'Ok.'
+          this.stdout.write(
+            `${JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'c-1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply } } } })}\n`,
+          )
+          this.stdout.write(
+            `${JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } })}\n`,
+          )
+        } else {
+          this.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} })}\n`)
+        }
+      }
+    })
+  }
+}
+
 const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
@@ -52,12 +97,17 @@ function tree(files: Record<string, string>): string {
   return root
 }
 
-function adapterWith(children: FakeChild[], calls: string[][]) {
+function adapterWith(commandChildren: FakeChild[], calls: string[][]) {
+  let acpChild: FakeAcpChild | undefined
   const adapter = new AntigravityAdapter({
     spawn: ((_command: string, args: string[]) => {
       calls.push(args)
+      if (args[0] === 'acp') {
+        acpChild = new FakeAcpChild()
+        return acpChild
+      }
       const child = new FakeChild()
-      children.push(child)
+      commandChildren.push(child)
       return child
     }) as never,
   })
@@ -72,7 +122,7 @@ function adapterWith(children: FakeChild[], calls: string[][]) {
       }
       adapter.on('event', listener)
     })
-  return { adapter, events, turnEnded }
+  return { adapter, events, turnEnded, getAcpChild: () => acpChild }
 }
 
 describe('Antigravity commands', () => {
@@ -104,42 +154,34 @@ describe('Antigravity commands', () => {
     ])
   })
 
-  it('shows an answered command as a reply and keeps the conversation and instructions', async () => {
-    const children: FakeChild[] = []
+  it('shows an answered command as a reply and keeps the ACP conversation and instructions', async () => {
+    const commandChildren: FakeChild[] = []
     const calls: string[][] = []
-    const { adapter, events, turnEnded } = adapterWith(children, calls)
+    const { adapter, events, turnEnded, getAcpChild } = adapterWith(commandChildren, calls)
     const thread = await adapter.startThread('C:\\repo', { instructions: 'Answer plainly.' })
 
     let ended = turnEnded()
     await adapter.sendTurn(thread.id, '/usage')
     // The JSON object agy 1.4.7 printed for -p "/usage" --output-format json.
-    children[0]!.finish(
+    commandChildren[0]!.finish(
       readFileSync(new URL('./fixtures/agy-usage-1.4.7.json', import.meta.url), 'utf8'),
     )
     await ended
 
     ended = turnEnded()
     await adapter.sendTurn(thread.id, '/review the last commit')
-    children[1]!.finish(
-      '{"event":"init","conversation_id":"c-1"}\n{"event":"result","result":{"conversation_id":"c-1","status":"SUCCESS","response":"Reviewed."}}\n',
-    )
     await ended
 
     ended = turnEnded()
     await adapter.sendTurn(thread.id, 'Thanks')
-    children[2]!.finish(
-      '{"event":"result","result":{"conversation_id":"c-1","status":"SUCCESS","response":"Ok."}}\n',
-    )
     await ended
 
-    expect(calls[0]).toEqual(['-p', '/usage', '--output-format', 'json'])
-    expect(calls[1]!.slice(0, 2)).toEqual(['-p', '/review the last commit'])
-    expect(calls[1]).not.toContain('--conversation')
-    expect(calls[2]!.slice(0, 2)).toEqual([
-      '-p',
-      `<system-instructions>\nAnswer plainly.\n\n${antigravityBackgroundNote('C:\\repo')}\n</system-instructions>\n\nThanks`,
+    expect(calls[0]).toEqual(['acp'])
+    expect(calls[1]).toEqual(['-p', '/usage', '--output-format', 'json'])
+    expect(getAcpChild()!.prompts).toEqual([
+      '/review the last commit',
+      '<system-instructions>\nAnswer plainly.\n</system-instructions>\n\nThanks',
     ])
-    expect(calls[2]!.slice(-2)).toEqual(['--conversation', 'c-1'])
     const replies = events.flatMap((event) =>
       event.type === 'item.completed' && event.item.type === 'message' ? [event.item.text] : [],
     )
@@ -148,15 +190,16 @@ describe('Antigravity commands', () => {
     expect(
       events.flatMap((event) => (event.type === 'turn.completed' ? [event.status] : [])),
     ).toEqual(['completed', 'completed', 'completed'])
+    await adapter.dispose()
   })
 
   it('fails an answered command that printed no answer, without agy text', async () => {
-    const children: FakeChild[] = []
-    const { adapter, events, turnEnded } = adapterWith(children, [])
+    const commandChildren: FakeChild[] = []
+    const { adapter, events, turnEnded } = adapterWith(commandChildren, [])
     const thread = await adapter.startThread('C:\\repo')
     const ended = turnEnded()
     await adapter.sendTurn(thread.id, '/credits')
-    children[0]!.finish('Error: signed out as someone@example.com\n')
+    commandChildren[0]!.finish('Error: signed out as someone@example.com\n')
     await ended
     expect(events.filter((event) => event.type !== 'turn.started')).toEqual([
       {
@@ -166,5 +209,6 @@ describe('Antigravity commands', () => {
       },
       expect.objectContaining({ type: 'turn.completed', status: 'failed' }),
     ])
+    await adapter.dispose()
   })
 })

@@ -2,9 +2,11 @@ export {
   AntigravityAdapter,
   ANTIGRAVITY_CAPABILITIES,
   ANTIGRAVITY_SUPPORTED_VERSION,
-  antigravityTurnArgs,
+  antigravityModeForApproval,
   parseAntigravityModels,
+  type AntigravityAdapterOptions,
   type AntigravityStartOptions,
+  type AntigravityTurnOptions,
 } from './adapter.js'
 export { antigravityCommand } from './command.js'
 export { antigravityInstallCommand } from './install.js'
