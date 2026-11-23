@@ -7,7 +7,12 @@ import type { SimulatorService } from './service.js'
 export const SIMULATOR_MCP_PATH = '/mcp'
 export const SIMULATOR_MCP_SERVER_ID = 'tastecode-simulator'
 const MAX_BODY_BYTES = 256 * 1024
-const SUPPORTED_PROTOCOL_VERSIONS = new Set(['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'])
+const SUPPORTED_PROTOCOL_VERSIONS = new Set([
+  '2025-11-25',
+  '2025-06-18',
+  '2025-03-26',
+  '2024-11-05',
+])
 
 export const SIMULATOR_AGENT_INSTRUCTIONS = [
   '## Simulator tools',
