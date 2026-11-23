@@ -7756,18 +7756,22 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   /** Sets the chat up to switch, with the request that failed back in the composer. */
   const switchAtLimit = (choice: ModelChoice) => {
     const shown = threadController.frames.getStructureSnapshot()
+    // Checked before anything changes: a restore can drop the request and fail
+    // another one under the same failure id, and a switch then would cancel
+    // the resume and change the model for a request it was not offered for.
     if (
       !offerSessionId ||
       !offerFailureId ||
       activeIdRef.current !== offerSessionId ||
       threadController.draftOwner !== composerDraftKey(offerSessionId) ||
-      shown.error?.id !== offerFailureId
+      shown.error?.id !== offerFailureId ||
+      lastRequestId(shown.items) !== offerRequestId
     ) {
       return
     }
+    const request = requestById(shown.items, offerRequestId)
     usageResumes.cancel(offerSessionId)
     commitModelChoice(choice)
-    const request = requestById(shown.items, offerRequestId)
     if (request) editMessage(request.text, request.attachments)
   }
   const continueOffer: Pick<ComposerError, 'action' | 'choices'> = continuedChat
