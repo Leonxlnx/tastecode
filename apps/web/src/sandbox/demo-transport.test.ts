@@ -193,6 +193,35 @@ describe('DemoTransport', () => {
     ).resolves.toEqual({})
   })
 
+  it('stages a second Claude Code account only when asked, and keeps the pick', async () => {
+    const claude = { provider: 'claude-code' } as const
+    const single = await call(transport.request('accounts.list', claude))
+    expect(single.accounts.map((account) => account.id)).toEqual(['default'])
+
+    const several = new DemoTransport({ latencyMs: 1, severalAccounts: true, platform: 'linux' })
+    several.connect()
+    await vi.advanceTimersByTimeAsync(1)
+    const listed = await call(several.request('accounts.list', claude))
+    expect(listed.accounts.map((account) => account.label)).toEqual(['Default', 'Work'])
+
+    const changed = vi.fn()
+    several.on('accounts.changed', changed)
+    await call(several.request('accounts.setActive', { ...claude, accountId: 'work-1a2b3c' }))
+    expect(changed).toHaveBeenCalledWith(claude)
+    const picked = await call(several.request('accounts.list', claude))
+    expect(picked.active).toEqual({ 'claude-code': 'work-1a2b3c' })
+
+    const { projects } = await call(several.request('projects.list', {}))
+    const started = await call(
+      several.request('thread.start', { ...claude, workspacePath: projects[0]!.path }),
+    )
+    const after = await call(several.request('projects.list', {}))
+    const chat = after.projects[0]!.sessions.find((session) => session.id === started.threadId)
+    expect(chat?.accountId).toBe('work-1a2b3c')
+    several.close()
+    several.server.dispose()
+  })
+
   it('fails requests still waiting when it closes, like the socket transport', async () => {
     const pending = transport.request('providers.list', {})
     transport.close()

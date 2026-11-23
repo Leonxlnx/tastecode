@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useEffect } from 'react'
 import { IconChevronDown as ChevronDown, IconBolt as Zap } from '@tabler/icons-react'
 import { preloadWhenIdle } from '../idle-preload.js'
+import { AccountBadge } from './AccountBadge.js'
 import { Menu } from './Menu.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
@@ -67,12 +68,13 @@ export const ModelSelector = memo(function ModelSelector(props: ModelSelectorPro
   const selectedEffort = getSelectedEffort(model, props.effort)
   const effortLabel = getFriendlyEffortLabel(selectedEffort)
   const fastEnabled = isFastModeEnabled(model, props.serviceTier)
+  const account = choice?.account
 
   return (
     <Menu
       align="right"
       disabled={props.disabled}
-      label={TRIGGER_LABEL}
+      label={account ? `${TRIGGER_LABEL}, account: ${account.label}` : TRIGGER_LABEL}
       triggerClassName="menutrigger--model-selector"
       panelRole="dialog"
       panelLabel={DIALOG_LABEL}
@@ -97,6 +99,9 @@ export const ModelSelector = memo(function ModelSelector(props: ModelSelectorPro
               </span>
             </span>
             <span className="model-selector__trigger-effort">{effortLabel}</span>
+            {account ? (
+              <AccountBadge account={account} className="model-selector__trigger-account" />
+            ) : null}
           </span>
           <span className="model-selector__trigger-chevron" aria-hidden>
             <ChevronDown size={15} />

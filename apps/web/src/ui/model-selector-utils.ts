@@ -28,6 +28,8 @@ export type ModelGroup = {
   key: string
   name: string
   mark: ModelChoice['mark']
+  /** Who the group's models run as; `name` says it too, for the source's accessible name. */
+  account?: ModelChoice['account']
   entries: ModelChoice[]
 }
 
@@ -143,7 +145,13 @@ export function groupModelsBySource(models: ModelChoice[]): ModelGroup[] {
     const group = groupsByKey.get(key)
     if (group) group.entries.push(entry)
     else {
-      const next = { key, name: entry.sourceName, mark: entry.mark, entries: [entry] }
+      const next = {
+        key,
+        name: entry.sourceName,
+        mark: entry.mark,
+        account: entry.account,
+        entries: [entry],
+      }
       groupsByKey.set(key, next)
       ranks.set(next, sourceRank(entry))
       groups.push(next)

@@ -134,7 +134,7 @@ function renderSelector(overrides: RenderOverrides = {}) {
 }
 
 async function openSelector() {
-  fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+  fireEvent.click(screen.getByRole('button', { name: /^Model and reasoning/ }))
   await waitFor(() => expect(screen.queryByText('Loading models…')).toBeNull())
 }
 
@@ -596,6 +596,68 @@ describe('ModelSelector', () => {
     expect(document.querySelector('.model-selector__controls.is-fast-only')).toBeTruthy()
     expect(screen.queryByRole('slider', { name: 'Reasoning effort' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Disable fast mode' })).toBeTruthy()
+  })
+
+  describe("a provider's accounts", () => {
+    const claude = (account: ModelChoice['account'], source: string): ModelChoice => ({
+      key: `${source}:sonnet`,
+      provider: 'claude-code',
+      sourceName: `Claude Code (${account?.label})`,
+      mark: 'anthropic',
+      ...(source === 'claude-code' ? {} : { accountId: source.split('@')[1]! }),
+      account,
+      model: {
+        id: 'sonnet',
+        displayName: 'Sonnet 5',
+        description: '',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    })
+    const personal = claude({ label: 'Personal', plan: 'Max x5', tone: 1 }, 'claude-code')
+    const work = claude({ label: 'Work', plan: 'Pro', tone: 2 }, 'claude-code@work-1a2b3c')
+    const trigger = (name: string) => screen.getByRole('button', { name })
+
+    it('names the account the next message runs on, on the trigger', () => {
+      renderSelector({ models: [personal, work], modelId: work.key })
+      const button = trigger('Model and reasoning, account: Work')
+      expect(button.textContent).toContain('Work')
+      const badge = button.querySelector('.account-badge')!
+      expect(badge.getAttribute('data-account-tone')).toBe('2')
+      expect(badge.getAttribute('title')).toBe('Work · Pro')
+    })
+
+    it('leaves a provider with one account as it was', async () => {
+      renderSelector()
+      await openSelector()
+      expect(document.querySelector('.account-badge, .account-dot')).toBeNull()
+    })
+
+    it('heads each list with its account and plan, and marks its models', async () => {
+      renderSelector({ models: [personal, work], modelId: personal.key })
+      await openSelector()
+      const headings = [...document.querySelectorAll('.model-selector__group-title')]
+      expect(headings.map((heading) => heading.textContent)).toEqual([
+        'Claude CodePersonalMax x5',
+        'Claude CodeWorkPro',
+      ])
+      const row = screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code (Work)' })
+      expect(row.querySelector('.account-dot')?.getAttribute('data-account-tone')).toBe('2')
+    })
+
+    it('tells two accounts of one provider apart on the logo rail', async () => {
+      localStorage.setItem('harness.modelPickerLayout', 'rail')
+      renderSelector({ models: [personal, work], modelId: personal.key })
+      await openSelector()
+      const tone = (name: string) =>
+        screen
+          .getByRole('button', { name })
+          .querySelector('.account-dot')
+          ?.getAttribute('data-account-tone')
+      expect(tone('Show Claude Code (Personal) models')).toBe('1')
+      expect(tone('Show Claude Code (Work) models')).toBe('2')
+    })
   })
 
   it('filters the model list through a provider logo rail', async () => {

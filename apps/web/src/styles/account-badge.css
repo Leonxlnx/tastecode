@@ -1,0 +1,77 @@
+/* ---------- which account ---------- */
+
+[data-account-tone='1'] {
+  --account-tone: var(--account-1);
+}
+
+[data-account-tone='2'] {
+  --account-tone: var(--account-2);
+}
+
+[data-account-tone='3'] {
+  --account-tone: var(--account-3);
+}
+
+[data-account-tone='4'] {
+  --account-tone: var(--account-4);
+}
+
+[data-account-tone='5'] {
+  --account-tone: var(--account-5);
+}
+
+[data-account-tone='6'] {
+  --account-tone: var(--account-6);
+}
+
+.account-dot,
+.account-badge__dot {
+  display: block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: var(--account-tone, var(--text-3));
+  border-radius: var(--r-circle);
+}
+
+.account-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 7px 2px 6px;
+  background: color-mix(in srgb, var(--account-tone, var(--text-3)) 15%, transparent);
+  border-radius: var(--r-pill);
+  color: var(--text);
+  font-size: var(--t-xs);
+  font-weight: 450;
+  line-height: 1.2;
+}
+
+.account-badge__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* On the model trigger the account stays whole while the name and the effort
+   give way: it is what tells two chips apart. A long label ends in an ellipsis
+   of its own. Here rather than in model-selector.css, the sheet with a startup
+   budget, because only a provider with several accounts draws it. */
+.model-selector__trigger-account {
+  flex: 0 0 auto;
+  max-width: 13ch;
+}
+
+/* Narrow composer: the colour stands in for the name, which the trigger still
+   announces. */
+@container chat-stage (max-width: 620px) {
+  .model-selector__trigger-account {
+    padding: 0;
+    background: none;
+  }
+
+  .model-selector__trigger-account .account-badge__label {
+    display: none;
+  }
+}

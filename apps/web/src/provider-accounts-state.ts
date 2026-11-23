@@ -362,6 +362,39 @@ export function accountLabelOf(
   return snapshot.phase === 'ready' ? 'Removed account' : 'Account'
 }
 
+/** How many account tones tokens.css defines (`--account-1` and on). */
+export const ACCOUNT_TONES = 6
+
+/**
+ * What the app shows to tell a provider's accounts apart. The email stays out
+ * of it: addresses stay in Settings > Providers, behind their reveal.
+ */
+export type AccountIdentity = {
+  label: string
+  plan?: string | undefined
+  /**
+   * 1 to `ACCOUNT_TONES`, by the account's place in its provider's list, which
+   * starts with the default account. So a provider's first accounts never
+   * share a tone and each keeps its own from day to day, whichever account a
+   * chat happens to be on. 0, no colour, for an account the list does not hold.
+   */
+  tone: number
+}
+
+export function accountIdentityOf(
+  snapshot: ProviderAccountsSnapshot,
+  provider: ProviderId,
+  accountId: AccountId | undefined,
+): AccountIdentity {
+  const accounts = accountsOf(snapshot, provider)
+  const place = accounts.findIndex((account) => account.id === (accountId ?? DEFAULT_ACCOUNT_ID))
+  return {
+    label: accountLabelOf(snapshot, provider, accountId),
+    plan: accounts[place]?.plan,
+    tone: place < 0 ? 0 : (place % ACCOUNT_TONES) + 1,
+  }
+}
+
 /**
  * The accounts snapshot, kept current while `enabled`: a view passes false
  * when no installed provider can have accounts, so nothing is asked.

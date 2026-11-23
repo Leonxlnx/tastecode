@@ -335,6 +335,7 @@
 }
 
 .model-selector__provider {
+  position: relative;
   display: grid;
   width: 30px;
   height: 30px;
@@ -362,6 +363,14 @@
   flex: none;
   width: 16px;
   height: 16px;
+}
+
+/* On the icon's corner, cut out of it so the two never blur together. */
+.model-selector__provider-account {
+  position: absolute;
+  inset-block-end: 4px;
+  inset-inline-end: 4px;
+  box-shadow: 0 0 0 1.5px var(--model-picker-bg);
 }
 
 .model-selector__models {
@@ -474,6 +483,7 @@
 .model-selector__group-title {
   display: flex;
   align-items: center;
+  gap: 6px;
   min-width: 0;
   overflow: hidden;
   margin: 0;
@@ -482,6 +492,36 @@
   font-size: var(--t-xs);
   font-weight: 450;
   white-space: nowrap;
+}
+
+.model-selector__group-title .account-badge {
+  flex: 0 1 auto;
+  max-width: 14ch;
+}
+
+.model-selector__group-plan {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+/* The rail's heading shares its line with the search and the rail already
+   names the provider, so the account takes the room; the badge keeps the plan
+   in its tooltip. */
+.model-selector__group-head:has(.account-badge) {
+  grid-template-columns: auto minmax(104px, 1fr);
+}
+
+.model-selector__group-head:has(.account-badge) .source-identity {
+  flex: none;
+}
+
+.model-selector__group-head .account-badge {
+  max-width: 12ch;
+}
+
+.model-selector__group-head:has(.account-badge) .source-identity__label,
+.model-selector__group-head .model-selector__group-plan {
+  display: none;
 }
 
 .model-selector__search {
@@ -537,6 +577,11 @@
   background: var(--model-picker-hover-bg);
   outline: var(--focus-ring);
   outline-offset: var(--focus-ring-inset);
+}
+
+/* The rows are spread apart for the check; a dot keeps the name beside it. */
+.model-selector__model > .account-dot + .model-selector__model-name {
+  margin-inline-end: auto;
 }
 
 .model-selector__model-name {
