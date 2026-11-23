@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import { OPENCODE_AUTH_TIMEOUT_MS, openCodeAccount, parseOpenCodeAuthList } from './auth.js'
+import {
+  OPENCODE_AUTH_TIMEOUT_MS,
+  openCodeAccount,
+  parseOpenCodeAuthJson,
+  parseOpenCodeAuthList,
+} from './auth.js'
 
 /** `opencode auth list` 1.18.13 on Windows through pipes, colour codes kept (2026-10-17). */
 const fixture = (name: string) =>
@@ -35,12 +40,75 @@ describe('parseOpenCodeAuthList', () => {
   })
 })
 
+describe('parseOpenCodeAuthJson', () => {
+  it('counts one credential per stored connection, environment keys apart', () => {
+    expect(
+      parseOpenCodeAuthJson(
+        JSON.stringify([
+          {
+            id: 'opencode',
+            connections: [
+              { type: 'credential', id: 'cred_1', method: 'oauth' },
+              { type: 'credential', id: 'cred_2', method: 'oauth' },
+            ],
+          },
+          { id: 'other', connections: [{ type: 'environment', id: 'env_1' }] },
+        ]),
+      ),
+    ).toEqual({ credentials: 2, environment: 1 })
+  })
+
+  it('accepts an integration with no connection at all', () => {
+    expect(parseOpenCodeAuthJson(JSON.stringify([{ id: 'idle' }]))).toEqual({
+      credentials: 0,
+      environment: 0,
+    })
+  })
+
+  it('cannot tell from text that is not that JSON', () => {
+    expect(parseOpenCodeAuthJson('')).toBeUndefined()
+    expect(parseOpenCodeAuthJson('Usage: opencode auth list\n')).toBeUndefined()
+    expect(parseOpenCodeAuthJson(JSON.stringify({ data: [] }))).toBeUndefined()
+  })
+})
+
 describe('openCodeAccount', () => {
   it('is signed in with one connected model provider', async () => {
     const run = answering(fixture(''))
     await expect(openCodeAccount(run)).resolves.toEqual({ signedIn: true })
+    expect(run).toHaveBeenCalledWith(
+      'opencode',
+      ['auth', 'list', '--format', 'json'],
+      OPENCODE_AUTH_TIMEOUT_MS,
+    )
     expect(run).toHaveBeenCalledWith('opencode', ['auth', 'list'], OPENCODE_AUTH_TIMEOUT_MS)
     expect(OPENCODE_AUTH_TIMEOUT_MS).toBe(60_000)
+  })
+
+  it('reads the JSON listing 2.4 prints', async () => {
+    // 2.4 replaced the "N credentials" line with one entry per integration, so
+    // the text reader found no count and the account check always failed.
+    const run = vi.fn(async (_command: string, args: string[]) =>
+      args.includes('--format')
+        ? {
+            code: 0,
+            stdout: JSON.stringify([
+              { id: 'opencode', connections: [{ type: 'credential', method: 'oauth' }] },
+            ]),
+          }
+        : { code: 0, stdout: 'opencode_console  opencode_console  stored\n' },
+    )
+    await expect(openCodeAccount(run)).resolves.toEqual({ signedIn: true })
+    // The plain listing is never asked: the JSON answered.
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('is signed out when 2.4 lists no connection', async () => {
+    const run = vi.fn(async (_command: string, args: string[]) => ({
+      code: 0,
+      stdout: args.includes('--format') ? JSON.stringify([]) : '',
+    }))
+    await expect(openCodeAccount(run)).resolves.toEqual({ signedIn: false })
   })
 
   it('is signed in with only a provider key in the environment', async () => {

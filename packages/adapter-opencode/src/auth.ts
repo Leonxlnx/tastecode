@@ -1,5 +1,6 @@
 import type { Account } from '@harness/contracts'
 import { runCli } from '@harness/proc/cli'
+import { z } from 'zod'
 
 /**
  * OpenCode has no account of its own: it is ready once it can reach at least
@@ -30,6 +31,37 @@ export type OpenCodeConnections = { credentials: number; environment: number }
 // oxlint-disable-next-line no-control-regex -- terminal colour codes are stripped on purpose
 const ANSI = /\u001b\[[0-?]*[ -/]*[@-~]/g
 
+/**
+ * `opencode auth list --format json`, captured from 2.4.1: one entry per
+ * integration, each listing the connections it holds. 1.x does not know the
+ * flag and prints its help instead, so the text reader below still runs there.
+ */
+const AUTH_JSON_ENTRY = z.object({
+  connections: z.array(z.object({ type: z.string() })).optional(),
+})
+
+/** The listing's counts from 2.4's JSON, or undefined when it is not that shape. */
+export function parseOpenCodeAuthJson(output: string): OpenCodeConnections | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(output)
+  } catch {
+    return undefined
+  }
+  const entries = z.array(AUTH_JSON_ENTRY).safeParse(parsed)
+  if (!entries.success) return undefined
+  let credentials = 0
+  let environment = 0
+  for (const entry of entries.data) {
+    for (const connection of entry.connections ?? []) {
+      // `environment` is a provider key set in the environment, not a stored one.
+      if (connection.type === 'environment') environment += 1
+      else credentials += 1
+    }
+  }
+  return { credentials, environment }
+}
+
 /** The listing's counts, or undefined when it does not look like the captured format. */
 export function parseOpenCodeAuthList(output: string): OpenCodeConnections | undefined {
   let credentials: number | undefined
@@ -49,6 +81,12 @@ export function parseOpenCodeAuthList(output: string): OpenCodeConnections | und
  * read rejects, so the last confirmed answer can stand.
  */
 export async function openCodeAccount(run: RunCli = runCli): Promise<Account> {
+  // 2.4 lists integrations as JSON; 1.x answers that flag with its help text,
+  // whose exit code is 0 and whose output is no JSON, so the plain listing runs.
+  const formatted = await run('opencode', ['auth', 'list', '--format', 'json'], OPENCODE_AUTH_TIMEOUT_MS)
+  const fromJson =
+    formatted.code === 0 ? parseOpenCodeAuthJson(formatted.stdout) : undefined
+  if (fromJson) return { signedIn: fromJson.credentials + fromJson.environment > 0 }
   const result = await run('opencode', ['auth', 'list'], OPENCODE_AUTH_TIMEOUT_MS)
   if (result.code !== 0) {
     throw new Error(`opencode auth list exited with code ${result.code ?? 'unknown'}`)
