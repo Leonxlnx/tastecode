@@ -3608,6 +3608,9 @@ export class Orchestrator {
           serializedEvents: snapshot.serializedEntries,
         }
       }
+      // A thread deleted meanwhile, for example under an older-page cursor, has no
+      // replay to build; saving it used to fail on the missing thread, and so does this.
+      if (!this.#store.thread(threadId)) throw new Error('Thread not found')
       const base = this.#store.replaySnapshotBase(threadId)
       const tail = this.#store.history(threadId, base?.seq ?? 0)
       // A thread that predates the history index gets it from this full read.
