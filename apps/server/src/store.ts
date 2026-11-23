@@ -1977,6 +1977,30 @@ export class Store {
   }
 
   /**
+   * The rows that keep one provider's helper sessions out of its chats. A refresh
+   * asks for them every time, and parsing every provider's rows for that grew
+   * with each imported chat.
+   */
+  internalProviderHistories(provider: ProviderId): Array<{
+    provider: ProviderId
+    threadId: string
+    session: ProviderHistorySession
+    loadedRevision: string | null
+  }> {
+    return sqliteRows<{ thread_id: string; metadata: string; loaded_revision: string | null }>(
+      this.#db.prepare(
+        `SELECT thread_id, metadata, loaded_revision FROM provider_history
+         WHERE provider = ? AND json_extract(metadata, '$.internal') = 1`,
+      ),
+      provider,
+    ).flatMap((row) => {
+      const session = JSON.parse(row.metadata) as ProviderHistorySession
+      if (session.internal !== true) return []
+      return [{ provider, threadId: row.thread_id, session, loadedRevision: row.loaded_revision }]
+    })
+  }
+
+  /**
    * Include temporary tasks so provider discovery cannot publish their internal prompts.
    * An imported chat that moved to another provider runs a session of its own
    * since, so it counts as native too.
