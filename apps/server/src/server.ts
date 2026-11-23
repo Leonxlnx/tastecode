@@ -66,6 +66,7 @@ import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envel
 import { createHistoryResponseProjector } from './history-response.js'
 import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
+import { ImportsBehindReads } from './imports-behind-reads.js'
 import { ChatImportService, openCodeChatReader } from './chat-import.js'
 import { createT3CodeReader } from './chat-import-t3.js'
 import { addProjectFolder, ProviderHistory } from './provider-history.js'
@@ -600,8 +601,14 @@ export function startServer(
     void orchestrator.recoverWorktrees().catch(() => undefined)
   }
 
-  /** Imports of outside changes running behind a read that did not wait for them, by chat. */
-  const importsBehindReads = new Map<string, Promise<void>>()
+  const importsBehindReads = new ImportsBehindReads({
+    load: loadProviderHistory,
+    changed: (threadId) => {
+      if (historyClosing) return
+      lifecycleScheduler.changed()
+      push.broadcast('providerHistory.changed', { threadIds: [threadId] })
+    },
+  })
 
   /** Import outside changes before a history read, without holding a native chat on the first scan. */
   async function loadProviderHistoryForRead(threadId: string): Promise<void> {
@@ -625,27 +632,10 @@ export function startServer(
       return
     }
     if (!threadId.startsWith('external:') || providerHistoryReady?.hasLoadedCopy(threadId)) {
-      importBehindRead(threadId)
+      importsBehindReads.start(threadId)
       return
     }
     await loadProviderHistory(threadId)
-  }
-
-  function importBehindRead(threadId: string): void {
-    if (importsBehindReads.has(threadId)) return
-    const importing: Promise<void> = loadProviderHistory(threadId)
-      .then((changed) => {
-        if (changed && !historyClosing) {
-          lifecycleScheduler.changed()
-          push.broadcast('providerHistory.changed', { threadIds: [threadId] })
-        }
-      })
-      // The chat's next read or turn retries the import.
-      .catch(() => undefined)
-      .finally(() => {
-        if (importsBehindReads.get(threadId) === importing) importsBehindReads.delete(threadId)
-      })
-    importsBehindReads.set(threadId, importing)
   }
 
   /** Outside turns being imported for any chat a request names land before it acts. */
@@ -653,11 +643,12 @@ export function startServer(
     if (!importsBehindReads.size || DISPLAY_READS.has(method)) return
     if (typeof params !== 'object' || params === null) return
     const named = params as Partial<Record<(typeof NAMED_THREAD_KEYS)[number], unknown>>
-    const importing = NAMED_THREAD_KEYS.flatMap((key) => {
-      const threadId = named[key]
-      return typeof threadId === 'string' ? (importsBehindReads.get(threadId) ?? []) : []
-    })
-    if (importing.length) await Promise.all(importing)
+    await importsBehindReads.settled(
+      NAMED_THREAD_KEYS.flatMap((key) => {
+        const threadId = named[key]
+        return typeof threadId === 'string' ? [threadId] : []
+      }),
+    )
   }
 
   /** Resolves whether the import changed the chat. */
