@@ -178,6 +178,40 @@ describe('OpenCode adapter', () => {
     }
   })
 
+  it('speaks v2 to opencode 2.4.0, whose v1 probe serves the web UI', async () => {
+    // 2.4.0 answers `/session/status` with the UI's HTML and dropped `/api/health`,
+    // so only `/api/model` proves the protocol. Reading the status code alone
+    // picked v1, whose client then parsed that HTML as a providers payload.
+    const mock = await serveOpenCodeV2(0, false, false, 0, true)
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      await expect(adapter.listModels()).resolves.toMatchObject([
+        { id: 'provider-1/model-1', displayName: 'Model One' },
+        { id: 'provider-1/model-2', displayName: 'Model Two' },
+      ])
+      // v1's client is never used: its session route answers nothing here.
+      expect(mock.requests.some((request) => request.url.startsWith('/config/providers'))).toBe(
+        true,
+      )
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('lists models from /api/provider and /api/model when /config/providers is the UI', async () => {
+    const mock = await serveOpenCodeV2(0, false, false, 0, true)
+    mock.serveUiForConfigProviders = true
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      await expect(adapter.listModels()).resolves.toMatchObject([
+        { id: 'provider-1/model-1', displayName: 'Model One' },
+        { id: 'provider-1/model-2', displayName: 'Model Two' },
+      ])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it.each(['v1', 'v2'] as const)(
     'fails the active turn when a %s SSE event exceeds the bound',
     async (protocol) => {
@@ -1542,6 +1576,8 @@ async function serveOpenCodeV2(
   holdFirstPermissionReply = false,
   refusePrompts = false,
   statusRefusalDelayMs = 0,
+  /** opencode 2.4.0: v1's probe answers with the web UI, and `/api/health` is gone. */
+  servesWebUiOnly = false,
 ): Promise<{
   baseUrl: string
   requests: RequestRecord[]
@@ -1549,11 +1585,14 @@ async function serveOpenCodeV2(
   endStreams(): void
   waitFor(url: string): Promise<RequestRecord>
   releaseHeldPermissionReply(): Promise<void>
+  /** Serve the web UI at `/config/providers`, as opencode 2.4.0 does. */
+  serveUiForConfigProviders: boolean
 }> {
   const requests: RequestRecord[] = []
   const streams = new Set<ServerResponse>()
   const waiters: { url: string; resolve: (request: RequestRecord) => void }[] = []
   let heldPermissionReply: ServerResponse | undefined
+  let serveUiForConfigProviders = false
   const session = {
     id: 'session-v2',
     title: 'TasteCode v2 session',
@@ -1586,11 +1625,25 @@ async function serveOpenCodeV2(
     if (request.url?.startsWith('/session/status')) {
       if (statusRefusalDelayMs)
         await new Promise((resolve) => setTimeout(resolve, statusRefusalDelayMs))
+      // 2.4.0 answers the web UI here, so the status code no longer says v1.
+      if (servesWebUiOnly) {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        return response.end('<!doctype html><html><head><title>OpenCode</title></head></html>')
+      }
       response.writeHead(404)
       return response.end()
     }
+    // 2.4.0 dropped the health check while keeping the rest of v2.
+    if (request.url === '/api/health' && servesWebUiOnly) {
+      response.writeHead(404, { 'content-type': 'application/json' })
+      return response.end(JSON.stringify({ _tag: 'NotFoundError' }))
+    }
     if (request.url === '/api/health') return json(response, { healthy: true })
     if (request.url?.startsWith('/config/providers')) {
+      if (serveUiForConfigProviders) {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        return response.end('<!doctype html><html><head><title>OpenCode</title></head></html>')
+      }
       return json(response, {
         providers: [
           {
@@ -1603,6 +1656,11 @@ async function serveOpenCodeV2(
           },
         ],
         default: { 'provider-1': 'model-2' },
+      })
+    }
+    if (request.url?.startsWith('/api/provider')) {
+      return json(response, {
+        data: [{ id: 'provider-1', name: 'Provider One' }],
       })
     }
     if (request.url?.startsWith('/api/model')) {
@@ -1696,6 +1754,12 @@ async function serveOpenCodeV2(
       heldPermissionReply.writeHead(204)
       heldPermissionReply.end()
       await finished
+    },
+    set serveUiForConfigProviders(value: boolean) {
+      serveUiForConfigProviders = value
+    },
+    get serveUiForConfigProviders() {
+      return serveUiForConfigProviders
     },
   }
 }
