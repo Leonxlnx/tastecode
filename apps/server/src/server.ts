@@ -108,6 +108,32 @@ const PROVIDER_READS: ReadonlySet<MethodName> = new Set<MethodName>([
  * carries. Every client hears `projects.changed` after one succeeds, so a chat
  * started on a phone shows up on the desktop and the other way round.
  */
+/**
+ * Reads that show what the store holds and act on nothing. A display read answers from a
+ * chat's stored transcript while outside turns are imported behind it; every other request
+ * that names a chat (its own, a Side chat's parent, a chat it continues) waits for that
+ * import first, so a new method waits unless it is added here.
+ */
+const DISPLAY_READS: ReadonlySet<MethodName> = new Set<MethodName>([
+  'commands.list',
+  'pullRequests.forCheckout',
+  'thread.changedSince',
+  'thread.checkpoints',
+  'thread.diff',
+  'thread.history',
+  'thread.queue',
+  'thread.settings',
+  'thread.subagents',
+  'thread.subagentTranscript',
+  'thread.unsavedWork',
+  'usage.summary',
+  'workspace.diff',
+  'workspace.listDirectory',
+  'workspace.readFile',
+  'workspace.searchFiles',
+])
+/** Params that name a chat a request acts on. */
+const NAMED_THREAD_KEYS = ['threadId', 'parentThreadId', 'continueFrom'] as const
 const LIST_CHANGES: ReadonlySet<MethodName> = new Set<MethodName>([
   'thread.start',
   'thread.rename',
@@ -574,8 +600,8 @@ export function startServer(
     void orchestrator.recoverWorktrees().catch(() => undefined)
   }
 
-  /** Chats whose outside changes are imported behind a read that did not wait for them. */
-  const importsBehindReads = new Set<string>()
+  /** Imports of outside changes running behind a read that did not wait for them, by chat. */
+  const importsBehindReads = new Map<string, Promise<void>>()
 
   /** Import outside changes before a history read, without holding a native chat on the first scan. */
   async function loadProviderHistoryForRead(threadId: string): Promise<void> {
@@ -583,11 +609,21 @@ export function startServer(
       importsAfterInitialScan.add(threadId)
       return
     }
-    // A chat whose transcript is already in the store opens from it. Reading a
-    // transcript again after it grew outside TasteCode took 13-21 s for a 234 MB
-    // one, all of it before the chat opened. The import runs behind the answer
-    // and announces the chat if it changed, so open clients reload it as they do
-    // for any outside change; a turn still waits for it.
+    await loadProviderHistory(threadId)
+  }
+
+  /**
+   * The history a chat shows. A chat whose transcript is already in the store opens from
+   * it: reading a transcript again after it grew outside TasteCode took 13-21 s for a
+   * 234 MB one, all of it before the chat opened. The import runs behind the answer and
+   * announces the chat if it changed, so open clients reload it as they do for any outside
+   * change. Every request that acts on the chat waits for it; see DISPLAY_READS.
+   */
+  async function openProviderHistory(threadId: string): Promise<void> {
+    if (!initialProviderHistorySettled && !threadId.startsWith('external:')) {
+      importsAfterInitialScan.add(threadId)
+      return
+    }
     if (!threadId.startsWith('external:') || providerHistoryReady?.hasLoadedCopy(threadId)) {
       importBehindRead(threadId)
       return
@@ -597,8 +633,7 @@ export function startServer(
 
   function importBehindRead(threadId: string): void {
     if (importsBehindReads.has(threadId)) return
-    importsBehindReads.add(threadId)
-    void loadProviderHistory(threadId)
+    const importing: Promise<void> = loadProviderHistory(threadId)
       .then((changed) => {
         if (changed && !historyClosing) {
           lifecycleScheduler.changed()
@@ -607,7 +642,22 @@ export function startServer(
       })
       // The chat's next read or turn retries the import.
       .catch(() => undefined)
-      .finally(() => importsBehindReads.delete(threadId))
+      .finally(() => {
+        if (importsBehindReads.get(threadId) === importing) importsBehindReads.delete(threadId)
+      })
+    importsBehindReads.set(threadId, importing)
+  }
+
+  /** Outside turns being imported for any chat a request names land before it acts. */
+  async function importsSettled(method: MethodName, params: unknown): Promise<void> {
+    if (!importsBehindReads.size || DISPLAY_READS.has(method)) return
+    if (typeof params !== 'object' || params === null) return
+    const named = params as Partial<Record<(typeof NAMED_THREAD_KEYS)[number], unknown>>
+    const importing = NAMED_THREAD_KEYS.flatMap((key) => {
+      const threadId = named[key]
+      return typeof threadId === 'string' ? (importsBehindReads.get(threadId) ?? []) : []
+    })
+    if (importing.length) await Promise.all(importing)
   }
 
   /** Resolves whether the import changed the chat. */
@@ -829,6 +879,7 @@ export function startServer(
     const createsSession = method === 'thread.start' || method === 'sideChat.start'
     if (createsSession) historySessionStarts += 1
     try {
+      await importsSettled(method, params)
       const result = await route(socket, method, params)
       if (LIST_CHANGES.has(method) || titleApplied(method, result)) announceListChange()
       if (socket.readyState === socket.OPEN) {
@@ -1566,7 +1617,7 @@ export function startServer(
       case 'thread.history': {
         const p = parseParams(method, params)
         historySchedule.activity()
-        await loadProviderHistoryForRead(p.threadId)
+        await openProviderHistory(p.threadId)
         if (p.page) {
           const history = await orchestrator.historyPage(p.threadId, p.page)
           const running = orchestrator.isTurnRunning(p.threadId)

@@ -1750,6 +1750,47 @@ describe('outside changes to a chat already in the store', () => {
       viewer.client.terminate()
     }
   })
+
+  it('holds every request that acts on the chat until the import, but no display read', async () => {
+    state.historyLoadedCopies.add(imported)
+    const viewer = await scanned()
+    const acting: Array<[string, Record<string, unknown>]> = [
+      ['thread.changeProvider', { threadId: imported, provider: 'codex' }],
+      ['thread.restore', { threadId: imported, checkpointSeq: 1 }],
+      ['thread.undoRestore', { threadId: imported, token: 'undo' }],
+      ['thread.steerQueuedTurn', { threadId: imported, queuedTurnId: 'held' }],
+      ['thread.rename', { threadId: imported, title: 'Renamed' }],
+      ['attachments.read', { threadId: imported, path: 'shot.png' }],
+      ['sideChat.start', { parentThreadId: imported }],
+      ['thread.start', { provider: 'codex', workspacePath: '/work', continueFrom: imported }],
+    ]
+    try {
+      for (const [index, [method, params]] of acting.entries()) {
+        let finishImport!: () => void
+        state.historyLoadGates.set(
+          imported,
+          new Promise<void>((resolve) => (finishImport = resolve)),
+        )
+        viewer.ask(`open-${index}`, 'thread.history', { threadId: imported, page: {} })
+        await vi.waitFor(() => expect(viewer.replied(`open-${index}`)).toBe(true))
+        viewer.ask(`act-${index}`, method, params)
+        viewer.ask(`queue-${index}`, 'thread.queue', { threadId: imported })
+        viewer.ask(`settings-${index}`, 'thread.settings', { threadId: imported })
+        await vi.waitFor(() =>
+          expect(viewer.replied(`queue-${index}`) && viewer.replied(`settings-${index}`)).toBe(
+            true,
+          ),
+        )
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        expect(viewer.replied(`act-${index}`), method).toBe(false)
+
+        finishImport()
+        await vi.waitFor(() => expect(viewer.replied(`act-${index}`), method).toBe(true))
+      }
+    } finally {
+      viewer.client.terminate()
+    }
+  })
 })
 
 describe('background startup work', () => {
