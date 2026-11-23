@@ -4885,6 +4885,32 @@ describe('several sessions at once', () => {
       return { ...context, thread, session, queuedId: queued.queuedTurn.id }
     }
 
+    it('can be sent one by one where the agent cannot steer, and say so to clients', async () => {
+      const context = harness()
+      const { sessions, orchestrator, sessionCapabilities, queueStates } = context
+      sessionCapabilities.push({ ...CAPABILITIES, steer: false })
+      const thread = await orchestrator.startThread('grok', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['t1', 't2']
+      await orchestrator.submitTurn(thread.id, 'running')
+      const queued = await orchestrator.submitTurn(thread.id, 'held')
+      if (!queued.queued) throw new Error('expected the prompt to queue')
+      expect(orchestrator.queue(thread.id).canSteer).toBe(false)
+
+      await orchestrator.interrupt(thread.id)
+      queueStates.length = 0
+      session.emit({ type: 'turn.completed', turnId: 't1', status: 'interrupted' })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+
+      expect(orchestrator.queue(thread.id).canSteer).toBe(true)
+      expect(queueStates.at(-1)).toMatchObject({ threadId: thread.id, canSteer: true })
+      await orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)
+      await vi.waitFor(() => expect(session.sent).toEqual(['running', 'held']))
+      // A turn runs again, which the agent cannot steer.
+      expect(orchestrator.queue(thread.id).canSteer).toBe(false)
+      await orchestrator.disposeAll()
+    })
+
     it('stay queued when the stopped turn ends', async () => {
       const { orchestrator, thread, session } = await stoppedWithQueue()
 

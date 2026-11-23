@@ -2046,10 +2046,16 @@ function ComposerComponent(props: {
                       type="button"
                       className="queue-row__steer"
                       onClick={() => props.onSteerQueuedTurn(queuedTurn.id)}
-                      title="Steer the running agent with this prompt"
+                      // With no turn running, a Stop held the queue: the prompt goes as a turn
+                      // of its own, and there is nothing to steer.
+                      title={
+                        props.running
+                          ? 'Steer the running agent with this prompt'
+                          : 'Send this prompt now'
+                      }
                     >
                       <CornerDownRight size={13} aria-hidden />
-                      <span>Steer</span>
+                      <span>{props.running ? 'Steer' : 'Send now'}</span>
                     </button>
                   ) : null}
                   <button

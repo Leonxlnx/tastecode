@@ -2995,7 +2995,7 @@ export class Orchestrator {
     const sentBeforeAStop =
       tracked?.threadId === threadId &&
       tracked.stopRequests !== (this.#stopRequests.get(threadId) ?? 0)
-    if (!sentBeforeAStop) this.#heldQueues.delete(threadId)
+    if (!sentBeforeAStop) this.#releaseHeldQueue(threadId)
     if (this.#changingProvider.has(threadId)) {
       throw new Error('This chat is moving to another provider. Send again once it has moved.')
     }
@@ -3119,8 +3119,27 @@ export class Orchestrator {
   }
 
   #canSteerQueue(threadId: string): boolean {
+    // A prompt a Stop held can be sent on its own, whatever the agent supports: as a turn
+    // of its own, the way steerQueuedTurn sends it.
+    if (this.#sendsHeldQueue(threadId)) return true
     const session = this.#threads.get(threadId)?.session
     return session?.capabilities.steer === true && session.steer !== undefined
+  }
+
+  #sendsHeldQueue(threadId: string): boolean {
+    return (
+      this.#heldQueues.has(threadId) &&
+      !this.#activeTurns.has(threadId) &&
+      !this.isTurnRunning(threadId)
+    )
+  }
+
+  /** Ends a Stop's hold on the queue, and tells clients what that does to its actions. */
+  #releaseHeldQueue(threadId: string): void {
+    if (!this.#heldQueues.has(threadId)) return
+    const couldSteer = this.#canSteerQueue(threadId)
+    this.#heldQueues.delete(threadId)
+    this.#notifySteerChange(threadId, couldSteer)
   }
 
   #notifySteerChange(threadId: string, previous: boolean): void {
@@ -3478,6 +3497,8 @@ export class Orchestrator {
       this.#recordUserSubmission(threadId, event.turn.id, matchedStart.submission)
     }
     if (event.type === 'turn.completed' && this.#hasQueuedTurns(threadId)) {
+      // A held queue does not drain; its prompts can now be sent on their own instead.
+      if (this.#sendsHeldQueue(threadId)) this.#notifySteerChange(threadId, false)
       void this.#drainQueue(threadId)
     }
     if (event.type === 'turn.completed' || event.type === 'thread.error') {
@@ -3795,7 +3816,7 @@ export class Orchestrator {
     }
     this.#inboxProjections.delete(threadId)
     this.#staleInboxProjectionThreads.delete(threadId)
-    this.#heldQueues.delete(threadId)
+    this.#releaseHeldQueue(threadId)
   }
 
   #addSidebarStatus(set: Set<string>, threadId: string): void {
@@ -4111,7 +4132,7 @@ export class Orchestrator {
     if (!this.#queueEntries(threadId).some((item) => item.id === queuedTurnId))
       throw new Error('queued prompt not found')
     if (this.#drainingQueues.has(threadId)) throw new Error('a queued prompt is already being sent')
-    this.#heldQueues.delete(threadId)
+    this.#releaseHeldQueue(threadId)
     // The agent is still ending the stopped turn: the picked prompt goes first once it has.
     const settling = this.#settlingStops.get(threadId)
     if (settling) {
@@ -4788,6 +4809,7 @@ export class Orchestrator {
           this.#resumeStops.set(threadId, (this.#resumeStops.get(threadId) ?? 0) + 1)
           // Nothing goes out on its own after a Stop, queued prompts a resume was for included.
           if (this.#hasQueuedTurns(threadId)) this.#heldQueues.add(threadId)
+          if (this.#sendsHeldQueue(threadId)) this.#notifySteerChange(threadId, false)
           // The prompt is cancelled now; the resume it waits on may take seconds to end.
           this.#deleteSidebarStatus(this.#resumingForPrompt, threadId)
           const cancels = this.#resumeCancels.get(threadId) ?? []
@@ -4942,6 +4964,7 @@ export class Orchestrator {
     ) {
       void this.#drainQueue(threadId, stop.sendFirst)
     } else {
+      if (this.#sendsHeldQueue(threadId)) this.#notifySteerChange(threadId, false)
       this.#pruneIdleThreadRuntimes()
     }
   }

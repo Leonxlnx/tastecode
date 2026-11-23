@@ -1531,6 +1531,22 @@ describe('Composer queue', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
+  it('offers to send a prompt a Stop held, instead of steering, when nothing runs', () => {
+    const onSteerQueuedTurn = vi.fn()
+    renderComposer(vi.fn(), {
+      running: false,
+      canSteerQueue: true,
+      queuedTurns: [{ id: 'held', text: 'Then fix the tests', attachments: [], createdAt: 1 }],
+      onSteerQueuedTurn,
+    })
+
+    expect(screen.queryByRole('button', { name: 'Steer' })).toBeNull()
+    const send = screen.getByRole('button', { name: 'Send now' })
+    expect(send.getAttribute('title')).toBe('Send this prompt now')
+    fireEvent.click(send)
+    expect(onSteerQueuedTurn).toHaveBeenCalledWith('held')
+  })
+
   it('offers drag reorder, steer, remove, and edit actions for queued prompts', async () => {
     const onDeleteQueuedTurn = vi.fn(async () => true)
     const onMoveQueuedTurn = vi.fn()
