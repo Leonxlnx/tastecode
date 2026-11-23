@@ -78,6 +78,33 @@ const WORKER_READ_BYTES = 16 * 1024 * 1024
 // A transcript that grew is read on from where it stopped only while these still match.
 const HEAD_BYTES = 4096
 const SEAM_BYTES = 256
+/**
+ * Row types a whole read of a transcript never uses: records() keeps every row with a type,
+ * conversation() looks rows up only by uuid, and the Agent SDK's getSessionMessages takes
+ * only user, assistant, progress, system and attachment rows with a uuid into its chains and
+ * counts queue-operation rows. These are Claude Code's own bookkeeping, measured on a 234 MB
+ * transcript (Claude Code 2.1.296); a type not listed here is taken to matter.
+ */
+const IGNORED_ROW_TYPES = new Set([
+  'agent-name',
+  'api-request',
+  'api-request-blob',
+  'api-request-shape',
+  'artifact-autoreact-ledger',
+  'artifact-comment-monitor',
+  'atis-latch',
+  'bridge-session',
+  'cost-state',
+  'file-history-delta',
+  'file-history-snapshot',
+  'frame-link',
+  'last-prompt',
+  'mode',
+  'pr-link',
+  'tools-used',
+])
+/** Keys that make any row count: a read looks it up, or a listing takes a name, folder or access level from it. */
+const CONSUMED_ROW_KEYS = ['uuid', 'customTitle', 'aiTitle', 'relocatedCwd', 'permissionMode']
 
 function timestamp(value: unknown): number | undefined {
   const at = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN
@@ -369,6 +396,21 @@ type Progress = {
   /** Fingerprints of the first bytes and of the bytes before `complete`. */
   head: string
   seam: string
+  /** Where the last complete line a read uses ends, before its line feed. */
+  used: number
+}
+
+/**
+ * Whether a whole read of the transcript leaves this line out: a line it cannot parse, one
+ * without a type, or a bookkeeping row that names nothing a read or listing uses. A carriage
+ * return inside the line would split it for the read, so such a line counts.
+ */
+function ignoredByRead(bytes: Buffer, row: SavedRecord | undefined): boolean {
+  const carriageReturn = bytes.indexOf(0x0d)
+  if (carriageReturn !== -1 && carriageReturn !== bytes.length - 1) return false
+  // parseLine leaves out what records() does: a line it cannot parse and one without a type.
+  if (!row) return true
+  return IGNORED_ROW_TYPES.has(String(row.type)) && CONSUMED_ROW_KEYS.every((key) => !(key in row))
 }
 
 async function fingerprint(handle: FileHandle, start: number, end: number): Promise<string> {
@@ -401,7 +443,7 @@ async function readTranscript(
   file: string,
   size: number,
   previous: Progress | undefined,
-): Promise<{ digest: Digest; progress: Progress }> {
+): Promise<{ digest: Digest; progress: Progress; revision: string }> {
   const handle = await open(file, 'r')
   try {
     const resume =
@@ -411,10 +453,12 @@ async function readTranscript(
     const from = resume?.complete ?? 0
     const digest: Digest = { ...(resume?.digest ?? { message: false }) }
     const complete = await completeEnd(handle, from, size)
+    let used = resume?.used ?? 0
     let headEnd = resume?.headEnd
     if (headEnd === undefined) {
       for await (const line of linesForward(handle, from, complete)) {
         const row = parseLine(line.bytes)
+        if (!ignoredByRead(line.bytes, row)) used = line.end
         if (row) observe(digest, row)
         if (digest.cwd !== undefined && digest.prompt !== undefined) {
           headEnd = line.end + 1
@@ -431,9 +475,16 @@ async function readTranscript(
       const later = new Map<number, SavedRecord | undefined>()
       let message = false
       let access = false
+      let usedFound = false
       for await (const line of linesBackward(handle, start, complete)) {
         if (message && !line.bytes.includes(PERMISSION_MODE_KEY)) continue
         const parsed = parseLine(line.bytes)
+        // The last line a read uses comes at the latest with the last visible message, so
+        // it is found among the lines parsed here.
+        if (!usedFound && !ignoredByRead(line.bytes, parsed)) {
+          usedFound = true
+          used = Math.max(used, line.end)
+        }
         const row = parsed && visible(parsed) ? parsed : undefined
         later.set(line.start, row)
         message ||= visibleMessage(row)
@@ -450,12 +501,24 @@ async function readTranscript(
       ...(headEnd === undefined ? {} : { headEnd }),
       head: await fingerprint(handle, 0, Math.min(HEAD_BYTES, complete)),
       seam: await fingerprint(handle, Math.max(0, complete - SEAM_BYTES), complete),
+      used,
     }
     if (complete < size) {
-      const row = parseLine(await readAt(handle, complete, size - complete))
+      const partial = await readAt(handle, complete, size - complete)
+      const row = parseLine(partial)
       if (row) observe(digest, row)
+      if (!ignoredByRead(partial, row)) used = size
     }
-    return { digest, progress }
+    // The revision covers what a read uses and nothing after it, so a transcript that only
+    // grew by rows a read ignores keeps its revision and is not read again. Its first and
+    // last bytes stand for the rest, as when a listing reads on from where it stopped.
+    const revision = [
+      6,
+      used,
+      (await fingerprint(handle, 0, Math.min(HEAD_BYTES, used))).slice(0, 16),
+      (await fingerprint(handle, Math.max(0, used - SEAM_BYTES), used)).slice(0, 16),
+    ].join(':')
+    return { digest, progress, revision }
   } finally {
     await handle.close()
   }
@@ -1113,7 +1176,9 @@ export function createClaudeHistorySource(
               if (stored === undefined) options?.remember?.(locator, key, cached.session ?? null)
             } else if (
               stored === null ||
-              (stored?.id === id && stored.locator === locator && stored.revision === revision)
+              (stored?.id === id &&
+                stored.locator === locator &&
+                (stored.revision === revision || stored.revision.startsWith('6:')))
             ) {
               // Listed by an earlier run; a transcript that grows later is read whole once.
               cached = {
@@ -1124,14 +1189,14 @@ export function createClaudeHistorySource(
               }
               cache.set(locator, cached)
             } else {
-              const { digest, progress } = await readTranscript(
-                locator,
-                info.size,
-                cached?.progress,
-              )
+              const {
+                digest,
+                progress,
+                revision: used,
+              } = await readTranscript(locator, info.size, cached?.progress)
               cached = {
                 key,
-                session: metadata(digest, id, locator, revision, info.mtimeMs, index ?? {}),
+                session: metadata(digest, id, locator, used, info.mtimeMs, index ?? {}),
                 progress,
                 mtimeMs: info.mtimeMs,
               }
