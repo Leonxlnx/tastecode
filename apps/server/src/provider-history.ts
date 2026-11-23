@@ -88,12 +88,6 @@ export class ProviderHistory {
     return entry !== undefined && !entry.session.internal
   }
 
-  /** Whether a revision of this chat's saved provider session was imported into the store. */
-  hasLoadedCopy(threadId: string): boolean {
-    const entry = this.#byThread.get(threadId)
-    return entry !== undefined && !entry.session.internal && entry.loadedRevision !== null
-  }
-
   /** A source that has no listing to offer because its scan failed. */
   listFailed(provider: ProviderId): boolean {
     return this.#listFailed.has(provider) && !this.#listed.has(provider)
