@@ -696,7 +696,7 @@
           </li>
         </ul>
 
-        <h3>Antigravity (agy, stream-json)</h3>
+        <h3>Antigravity (agy, ACP)</h3>
         <ul class="check">
           <li>
             <label
@@ -754,14 +754,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Conversation resume, interrupt, permission mapping
+                >ACP sessions: resume, live approvals, reasoning items, native images and managed MCP
                 <span class="d"
-                  >unreadable frames and throwing listeners are logged without ending the turn;
-                  Windows detection also finds agy in %LOCALAPPDATA%\agy\bin; a result that is not
-                  SUCCESS waits for agy's exit code, because agy 1.4.7 reports ERROR for the
-                  conversation's latest error step even when it lies in an earlier turn: exit 0
-                  completes the turn with agy's error text in the log only, any other exit (or no
-                  exit within 10 s) still shows Antigravity finished with status ERROR</span
+                  >runs agy acp over stdio JSON-RPC with session/load resume, live permission
+                  requests, model/thought_level/mode config options, native image blocks, direct
+                  HTTP MCP servers (including TasteCode's agent tools), and read-only /usage and
+                  /credits answers without disturbing the active ACP session; Windows detection also
+                  finds agy in %LOCALAPPDATA%\agy\bin</span
                 ></span
               ></label
             >
@@ -1350,7 +1349,7 @@
                 open task list and what git reports as changed; sized at half a character per token
                 of the model's context window as the engine reports it (OpenCode and Pi per model,
                 waited for at most two seconds) or declares it (6,000–96,000 characters, 64,000
-                without one) and within the command-line limit of Cursor and Antigravity (15,000
+                without one) and within the command-line limit of Cursor (15,000
                 characters on Windows, 40,000 on Linux). A chat with no conversation yet sends just
                 the request. The transcript keeps only the user's words. A first turn there that
                 ends stopped or failed before any answer, or whose session goes away, sends the
@@ -1663,8 +1662,8 @@
                 >Selected files, drag/drop, and immediate Ctrl/Command+V image, PDF, video, and
                 ordinary file attachments gated by declared source capability (pixels, image files
                 the agent opens, and per-model image input); Codex, Claude Code, Grok, OpenCode
-                (file parts) and Cursor (--image) receive images as pixels, Antigravity gets them as
-                files its viewer opens, and Pi has none yet; raster images and videos get
+                (file parts), Antigravity (ACP image blocks) and Cursor (--image) receive images as
+                pixels, and Pi has none yet; raster images and videos get
                 lightweight composer previews, sent image previews above their message, and an
                 app-native full-window viewer that opens without a reveal delay or photo size
                 animation; desktop image previews and browser images offer a native Copy Image
@@ -2545,12 +2544,14 @@
               ><input type="checkbox" /><span
                 >Start subagents on another provider
                 <span class="d"
-                  >a chat on Claude Code, Codex or OpenCode gets TasteCode's agent tools from a
-                  local MCP endpoint (127.0.0.1, a token per chat) and can start subagents on other
-                  providers and wait for them; a subagent starts like a Side chat, in the chat's
-                  checkout at its access level with the project's MCP servers, and only one level
-                  deep (Side chats and subagents get no agent tools); Grok chats do not get them; a
-                  subagent's events stay out of the chat's stream</span
+                  >a chat on any active provider (Claude Code, Codex, OpenCode, Antigravity, Grok,
+                  Cursor, Pi, or ACP) gets TasteCode's agent tools from a local MCP endpoint
+                  (127.0.0.1, a token per chat — direct HTTP, shared stdio-to-HTTP bridge for
+                  stdio-only ACP and Cursor --plugin-dir, or Pi's -e RPC extension) and can start
+                  subagents on other providers and wait for them; a subagent starts like a Side
+                  chat, in the chat's checkout at its access level with the project's MCP servers,
+                  and only one level deep (Side chats, ephemeral chats and subagents get no agent
+                  tools); a subagent's events stay out of the chat's stream</span
                 ></span
               ></label
             >
