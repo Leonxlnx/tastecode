@@ -79,13 +79,13 @@ describe('agent tools MCP endpoint', () => {
 
   it('negotiates a protocol version it knows and falls back to its newest', async () => {
     const { rpc } = await open()
-    for (const version of ['2025-06-18', '2025-03-26', '2024-11-05']) {
+    for (const version of ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']) {
       const { json } = await rpc('initialize', { protocolVersion: version, capabilities: {} })
       expect(json.result.protocolVersion).toBe(version)
       expect(json.result.capabilities).toEqual({ tools: { listChanged: false } })
     }
     const { json } = await rpc('initialize', { protocolVersion: '2099-01-01' })
-    expect(json.result.protocolVersion).toBe('2025-06-18')
+    expect(json.result.protocolVersion).toBe('2025-11-25')
   })
 
   it('answers ping and lists the four tools as JSON', async () => {

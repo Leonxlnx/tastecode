@@ -18,7 +18,7 @@ import { SUBAGENT_LIMITS } from './subagent-limits.js'
 /** The reserved server id, which a user's project server may not take. */
 export const AGENT_TOOLS_SERVER_ID = 'tastecode'
 
-const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const
+const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const
 const MAX_BODY_BYTES = 256 * 1024
 
 export type AgentToolsCaller = { threadId: string }

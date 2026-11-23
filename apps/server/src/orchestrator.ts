@@ -2302,9 +2302,10 @@ export class Orchestrator {
   ): Promise<Thread> {
     const mcp = this.#mcpRuntimeOptions(provider, workspacePath)
     // Awaited only when offered, so other starts keep their timing.
-    const agentTools = this.#offersAgentTools(provider)
-      ? await this.#agentToolsOptions(provider, undefined, mcp)
-      : { options: mcp, grant: undefined }
+    const agentTools =
+      !options.ephemeral && this.#offersAgentTools(provider)
+        ? await this.#agentToolsOptions(provider, undefined, mcp)
+        : { options: mcp, grant: undefined }
     try {
       const thread = await this.#launchThread(
         provider,
