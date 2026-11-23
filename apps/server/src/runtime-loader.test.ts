@@ -75,10 +75,18 @@ describe('provider runtime loading', () => {
   it('preserves which providers support restart resume', () => {
     adapters.providerRuntime.mockReturnValue(fakeRuntime())
 
-    for (const provider of ['codex', 'claude-code', 'grok', 'cursor', 'opencode', 'acp'] as const) {
+    for (const provider of [
+      'codex',
+      'claude-code',
+      'grok',
+      'cursor',
+      'opencode',
+      'antigravity',
+      'acp',
+    ] as const) {
       expect(providerRuntime(provider, () => {}).resume).toEqual(expect.any(Function))
     }
-    for (const provider of ['pi', 'antigravity'] as const) {
+    for (const provider of ['pi'] as const) {
       expect(providerRuntime(provider, () => {}).resume).toBeUndefined()
     }
   })

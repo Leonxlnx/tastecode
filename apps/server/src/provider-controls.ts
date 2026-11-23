@@ -17,6 +17,7 @@ import type {
   UsageReadIntent,
 } from '@harness/contracts'
 import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
+import { validateCursorMcpServer } from '@harness/adapter-cursor/mcp'
 import { withClaudeAccount } from '@harness/adapter-claude-code/account-home'
 import {
   CLAUDE_MCP_CAPABILITIES,
@@ -413,6 +414,8 @@ function claudeLaunch(runtime: string | undefined) {
 
 const defaultServices = {
   antigravity: {
+    // Antigravity sessions run through ACP.
+    validateMcpServer: validateAcpMcpServer,
     // agy answers its read-only commands itself and expands skills from
     // folders, so the list needs no process.
     listCommands: async (projectPath) => ({
@@ -479,6 +482,8 @@ const defaultServices = {
     signOut: async () => (await loadClaude()).signOutClaude(),
   },
   cursor: {
+    // Cursor's --plugin-dir can only add servers.
+    validateMcpServer: validateCursorMcpServer,
     // A print-mode turn expands the custom commands and skills it finds on
     // disk, so the list is read from the same folders without a process.
     listCommands: async (projectPath) => ({

@@ -15,8 +15,7 @@ export type ProviderControlCapabilities = Readonly<{
   /**
    * A chat on this provider gets TasteCode's agent tools, served as the MCP
    * server `tastecode`, and can start sub-agents on other providers
-   * (server-internal). It needs a managed MCP path that one more server does
-   * not change; Grok switches to its ACP mode for any server, so it has none.
+   * (server-internal).
    */
   agentTools: boolean
   /** The provider lists the skills it loads itself (server-internal). */
@@ -121,14 +120,18 @@ export const PROVIDER_CAPABILITIES = {
   acp: {
     ...unsupported,
     resume: true,
-    // TasteCode's project servers go to session/new, filtered by the agent's transports.
+    // TasteCode's project servers go to session/new; HTTP servers bridge over stdio when needed.
     managedMcp: true,
+    agentTools: true,
     nativeModels: true,
     account: true,
     signOut: true,
   },
   antigravity: {
     ...unsupported,
+    resume: true,
+    managedMcp: true,
+    agentTools: true,
     nativeModels: true,
     account: true,
     usageLimits: true,
@@ -190,6 +193,8 @@ export const PROVIDER_CAPABILITIES = {
   cursor: {
     ...unsupported,
     resume: true,
+    managedMcp: true,
+    agentTools: true,
     nativeModels: true,
     account: true,
     login: true,
@@ -204,6 +209,7 @@ export const PROVIDER_CAPABILITIES = {
     resume: true,
     managedMcp: true,
     mcpInventory: true,
+    agentTools: true,
     nativeSkills: true,
     nativeModels: true,
     // Headless sessions save a `generated_title` in their summary.
@@ -223,5 +229,5 @@ export const PROVIDER_CAPABILITIES = {
     nativeModels: true,
     account: true,
   },
-  pi: { ...unsupported, nativeModels: true },
+  pi: { ...unsupported, agentTools: true, nativeModels: true },
 } as const satisfies Readonly<Record<ProviderId, ProviderControlCapabilities>>

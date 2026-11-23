@@ -451,7 +451,7 @@ describe('declared provider controls', () => {
     expect(Object.keys(PROVIDER_CAPABILITIES).sort()).toEqual([...ProviderIdSchema.options].sort())
     expect(
       ProviderIdSchema.options.filter((provider) => PROVIDER_CAPABILITIES[provider].resume),
-    ).toEqual(['codex', 'claude-code', 'grok', 'cursor', 'opencode', 'acp', 'api'])
+    ).toEqual(['codex', 'claude-code', 'grok', 'cursor', 'opencode', 'antigravity', 'acp', 'api'])
     for (const provider of ProviderIdSchema.options) {
       const control = registry.forProvider(provider)
       const flags = control.capabilities
