@@ -982,6 +982,42 @@ supplied a rare section, such as the library's only stats section, to a third or
 
 ---
 
+## Local mobile simulators and agent device tools
+
+Mobile simulators (iOS Simulator via Xcode and Android Emulator via Android SDK) run in the
+right workspace panel as a `simulator` tool tab and are configured from **Settings › Simulator**.
+
+- **Opt-in on-demand toolchain & device management.** Nothing is downloaded or started until the
+  user opts in. Enabling simulator viewing installs pinned `expo-device-hub` into
+  `~/.tastecode/device-tools/` via atomic staging; opting into agent control installs pinned
+  `agent-device` alongside it. Both iOS Simulators and Android Emulators can be created and
+  removed from the Simulator panel and **Settings › Simulator**, and Android SDK Command-line
+  Tools (`cmdline-tools;latest`, verified against Google's official SHA-1 repository manifest and
+  extracted with a pure-Node cross-platform ZIP reader), `platform-tools`, `emulator`, and
+  host-architecture Android system images can be installed and uninstalled directly inside the app.
+- **Supervised loopback proxy.** The server supervises `expo-device-hub` on loopback and exposes
+  only an allowlisted subset of `/vendor/serve-sim/*` and `/vendor/serve-emu/*` routes under
+  `/api/device-hub/*`. Every request and WebSocket upgrade requires a short-lived cryptographic
+  ticket minted over the Origin-checked control WebSocket (`simulator.hubAccess`); the ticket is
+  stripped before forwarding upstream. iOS streams use WebCodecs AVCC H.264 with MJPEG fallback
+  (using a still-frame transform so the final frame paints reliably) and binary HID touch/key
+  WebSockets; Android uses SEMU H.264 + JSON input WebSockets.
+- **Typed device actions.** Appearance, text size, orientation, accessibility toggles, GPS
+  location, permissions, URL/app launch, and iOS test push notifications execute on the server
+  via typed `xcrun simctl` / `adb` RPCs (`simulator.detail`, `simulator.action`) rather than
+  exposing raw shell execution.
+- **Agent integration.** When **Allow agents to control simulators** is enabled, the server serves
+  a loopback Streamable HTTP MCP endpoint at `/mcp` (rejecting browser `Origin` headers, bound
+  with per-thread Bearer tokens) exposing `device_list`, `device_open`, `device_screenshot`, and
+  `device_close`. Calling `device_open` boots/attaches the simulator, pushes `simulator.opened`
+  so the UI automatically reveals the live Simulator tab, and returns a bound per-session
+  `agent-device` CLI launcher script (blocking host/daemon/connect subcommands) so agents can
+  inspect the accessibility tree, tap, type, and verify changes. The internal MCP server is
+  injected for every active provider declaring `managedMcp` or `agentTools` capability and stays
+  hidden from user MCP lists.
+
+---
+
 ## Layout
 
 ```
@@ -1065,3 +1101,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-11-06 | Kept the Browser's recently used pages in renderer storage, recorded only from tabs the user opened.                                                                                                                                                                                                      |
 | 2026-11-22 | Removed the server's Design workflow: the old marker gives an ordinary turn and saved runs stay unread. `packages/design-agent` stays for a later feature.                                                                                                                                                |
 | 2026-11-23 | Switched Antigravity to `agy acp` (direct HTTP MCP, resume, live approvals, images) and wired TasteCode's agent tools MCP to every active provider via native HTTP, a shared stdio-to-HTTP bridge (stdio-only ACP & Cursor `--plugin-dir`), or Pi's `-e` RPC extension, with credentials strictly in env. |
+| 2026-11-23 | Added local iOS/Android Simulator workspace tabs, Settings › Simulator, ticketed loopback stream proxy, typed `simctl`/`adb` controls, and per-thread `/mcp` agent device tools.                                                                                                                          |

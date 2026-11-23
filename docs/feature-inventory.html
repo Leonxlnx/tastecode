@@ -2462,8 +2462,8 @@
               ><input type="checkbox" /><span
                 >Resizable bottom and right tool panels
                 <span class="d"
-                  >compact 2-by-2-plus-one picker for Review, Terminal, Browser, Files, and
-                  Temporary chat that stacks into one column in a narrow right panel. Each panel has
+                  >compact picker for Review, Terminal, Browser, Files, Simulator, Temporary chat,
+                  and Agents that stacks into one column in a narrow right panel. Each panel has
                   independent tool tabs, a + menu, and an upper-right X; the right panel's X hides
                   the panel and keeps every tab, Browser page and running terminal for the next
                   open, while the bottom X still closes its tabs, and below 900 px the right panel
@@ -2519,6 +2519,26 @@
                   >its column goes at once, but the panel keeps its last open width while it fades
                   and slides out in 260 ms instead of vanishing with the column; its first open
                   slides in like every later one; reduced motion hides it at once</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Interactive iOS Simulator &amp; Android Emulator panel with opt-in agent control
+                <span class="d"
+                  >on-demand setup for pinned expo-device-hub and optional agent-device in the right
+                  workspace panel and Settings › Simulator; discovers, creates, boots, and removes
+                  both iOS Simulators and Android Emulators directly inside the app (including
+                  installing/removing Android SDK Command-line Tools and system images); streams
+                  interactive WebCodecs H.264 (AVCC with MJPEG fallback on iOS, SEMU on Android) and
+                  touch/keyboard input through a ticketed loopback proxy with floating top controls
+                  and an unclipped stage, hardware buttons, appearance, text size, orientation,
+                  screenshot capture, and a tools drawer backed by typed simctl/adb actions, plus
+                  per-thread loopback MCP tools (device_list, device_open, device_screenshot,
+                  device_close) and a bound agent-device CLI launcher that auto-opens the Simulator
+                  tab when an agent opens a device</span
                 ></span
               ></label
             >
