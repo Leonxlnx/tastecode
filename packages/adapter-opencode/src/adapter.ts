@@ -845,6 +845,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#pendingApprovals.clear()
     this.#replyingApprovals.clear()
     this.#pendingQuestions.clear()
+    // A new server has its own catalog; a cached read would outlive it.
+    this.#v2CatalogReads.clear()
     this.#processStop = stopped
     return stopped
   }
@@ -1064,15 +1066,30 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
    * list, and the provider's id names it when its display name is unknown.
    */
   /**
-   * `/api/model` answers with no row until OpenCode has finished loading its
-   * catalog, which happens after the server starts listening, and it grows in
-   * stages: a configured provider such as `commandcode` arrives only once its
-   * own package has been resolved, well after the bundled ones. Waiting for
-   * the first non-empty answer therefore returned a partial catalog, which
-   * looked like missing models rather than a list still filling in.
+   * The v2 catalog, read once per directory and shared by the model list and
+   * the variant details: both need the same rows, and polling it twice at once
+   * doubled the wait on a cold server.
+   */
+  #v2CatalogReads = new Map<string, Promise<z.infer<typeof OpenCodeV2ModelsSchema>>>()
+
+  #readV2ModelRowsOnce(
+    directory: string,
+    location: string,
+  ): Promise<z.infer<typeof OpenCodeV2ModelsSchema>> {
+    const existing = this.#v2CatalogReads.get(directory)
+    if (existing) return existing
+    const read = this.#readV2ModelRows(location)
+    this.#v2CatalogReads.set(directory, read)
+    return read
+  }
+
+  /**
+   * `/api/model` fills in stages: bundled providers answer almost at once,
+   * while a configured provider such as `commandcode` arrives only after its
+   * own package is resolved. Waiting for the first non-empty answer therefore
+   * returned a partial catalog, which looked like missing models.
    *
-   * So the read keeps polling until the row count stops changing, and only
-   * then answers.
+   * So the read keeps polling until the row count stops changing.
    */
   async #readV2ModelRows(location: string): Promise<z.infer<typeof OpenCodeV2ModelsSchema>> {
     const deadline = Date.now() + OPENCODE_CATALOG_SETTLE_TIMEOUT_MS
@@ -1100,7 +1117,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       // The catalog loads after the server starts listening, so a cold server
       // answers with no row at all. Retrying is what the older route did
       // internally by waiting for the same catalog.
-      this.#readV2ModelRows(location),
+      this.#readV2ModelRowsOnce(directory, location),
     ])
     const names = new Map(providers.data.map((provider) => [provider.id, provider.name]))
     const byProvider = new Map<string, Record<string, ConnectedModel>>()
@@ -1150,16 +1167,23 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       this.#v2RequestParsed(`/api/agent${location}`, {}, AgentEnvelopeSchema).catch(() => ({
         data: [],
       })),
-      this.#v2RequestParsed(`/api/model${location}`, {}, ModelEnvelopeSchema).catch(() => ({
-        data: [],
-      })),
+      // The same catalog `/api/model` serves for the model list, read here for
+      // the variants it carries. It fills in stages, so it needs the same wait;
+      // asked once it came back empty and every reasoning effort disappeared.
+      this.#readV2ModelRowsOnce(directory, location).catch(() => ({ data: [] })),
     ])
     const agentModel =
       agents.data.find((agent) => agent.id === 'build')?.model ??
       agents.data.find((agent) => agent.mode === 'primary')?.model
+    const rows = OpenCodeV2ModelsSchema.safeParse(catalog)
     return {
       defaultModel: agentModel ? `${agentModel.providerID}/${agentModel.id}` : undefined,
-      catalog: new Map(catalog.data.map((model) => [`${model.providerID}/${model.id}`, model])),
+      catalog: new Map(
+        (rows.success ? rows.data.data : []).map((model) => [
+          `${model.providerID}/${model.id}`,
+          { id: model.id, providerID: model.providerID, variants: model.variants },
+        ]),
+      ),
     }
   }
 

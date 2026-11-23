@@ -232,6 +232,24 @@ describe('OpenCode adapter', () => {
     }
   })
 
+  it('keeps reasoning efforts when the catalog arrives in stages', async () => {
+    // `/api/model` is read twice: once for the model list and once for the
+    // variants. The second read must see the settled catalog too, or every
+    // model loses its reasoning effort even though the list looks complete.
+    const mock = await serveOpenCodeV2(0, false, false, 0, true)
+    mock.serveUiForConfigProviders = true
+    mock.catalogStages = [[1, 1]]
+    mock.catalogVariants = { 'provider-1/staged-0-0': ['low', 'high', 'max'] }
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const models = await adapter.listModels()
+      const model = models.find((entry) => entry.id === 'provider-1/staged-0-0')
+      expect(model?.reasoningEfforts).toEqual(['default', 'low', 'high', 'max'])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it.each(['v1', 'v2'] as const)(
     'fails the active turn when a %s SSE event exceeds the bound',
     async (protocol) => {
@@ -1611,6 +1629,8 @@ async function serveOpenCodeV2(
   catalogStages: number[][]
   /** Extra providers `/api/provider` names, for staged catalogs. */
   extraProviders: { id: string; name: string }[]
+  /** Variants by `providerID/modelID` for staged rows, which carry none otherwise. */
+  catalogVariants: Record<string, string[]>
 }> {
   const requests: RequestRecord[] = []
   const streams = new Set<ServerResponse>()
@@ -1621,6 +1641,8 @@ async function serveOpenCodeV2(
   let catalogStages: number[][] = []
   /** Extra providers `/api/provider` names, for staged catalogs. */
   const extraProviders: { id: string; name: string }[] = []
+  /** Variants by `providerID/modelID` for staged rows, which carry none otherwise. */
+  let catalogVariants: Record<string, string[]> = {}
   const session = {
     id: 'session-v2',
     title: 'TasteCode v2 session',
@@ -1703,6 +1725,15 @@ async function serveOpenCodeV2(
               providerID: index === 0 ? 'provider-1' : 'provider-2',
               name: `Staged ${index}-${row}`,
               enabled: true,
+              ...(catalogVariants[
+                `${index === 0 ? 'provider-1' : 'provider-2'}/staged-${index}-${row}`
+              ]
+                ? {
+                    variants: catalogVariants[
+                      `${index === 0 ? 'provider-1' : 'provider-2'}/staged-${index}-${row}`
+                    ]!.map((id) => ({ id })),
+                  }
+                : {}),
             })),
           ).flat(),
         })
@@ -1809,6 +1840,9 @@ async function serveOpenCodeV2(
     },
     set extraProviders(value: { id: string; name: string }[]) {
       extraProviders.push(...value)
+    },
+    set catalogVariants(value: Record<string, string[]>) {
+      catalogVariants = { ...value }
     },
   }
 }
