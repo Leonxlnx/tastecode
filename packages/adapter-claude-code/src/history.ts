@@ -923,6 +923,9 @@ export function createClaudeHistorySource(
       mtimeMs: number
     }
   >()
+  // Each project's sessions index, parsed again only when its size or time changed: every
+  // listing, every 15 s while the app is used, read and parsed all of them.
+  const indexes = new Map<string, { key: string; entries: SavedRecord[] }>()
   const now = options.now ?? Date.now
   let lastFullListing = -Infinity
   const validLocator = (locator: string) => isClaudeSessionFile(projects, locator)
@@ -935,20 +938,30 @@ export function createClaudeHistorySource(
       const directories = await readdir(projects, { withFileTypes: true }).catch(() => [])
       const sessions = new Map<string, ProviderHistorySession>()
       const present = new Set<string>()
+      const folders = new Set<string>()
       const listedAt = now()
       const full = listedAt - lastFullListing >= FULL_LISTING_MS
       if (full) lastFullListing = listedAt
       for (const directory of directories) {
         if (!directory.isDirectory()) continue
         const project = path.join(projects, directory.name)
+        folders.add(project)
         const files = await readdir(project, { withFileTypes: true }).catch(() => [])
         let entries: SavedRecord[] = []
+        const indexFile = path.join(project, 'sessions-index.json')
         try {
-          const index = object(
-            JSON.parse(await readFile(path.join(project, 'sessions-index.json'), 'utf8')),
-          )
-          if (Array.isArray(index.entries)) entries = index.entries.map(object)
+          const info = await stat(indexFile)
+          const key = `${info.size}:${info.mtimeMs}`
+          const known = indexes.get(project)
+          // A rewrite that kept both is caught by the full listing every ten minutes.
+          if (!full && known?.key === key) entries = known.entries
+          else {
+            const index = object(JSON.parse(await readFile(indexFile, 'utf8')))
+            if (Array.isArray(index.entries)) entries = index.entries.map(object)
+            indexes.set(project, { key, entries })
+          }
         } catch {
+          indexes.delete(project)
           /* The index is optional and can be stale. Scan transcript files as well. */
         }
         const byId = new Map(entries.map((entry) => [string(entry.sessionId), entry]))
@@ -1037,6 +1050,7 @@ export function createClaudeHistorySource(
         }
       }
       for (const file of cache.keys()) if (!present.has(file)) cache.delete(file)
+      for (const project of indexes.keys()) if (!folders.has(project)) indexes.delete(project)
       return [...sessions.values()].sort(
         (a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id),
       )
@@ -1050,6 +1064,7 @@ export function createClaudeHistorySource(
     },
     dispose() {
       cache.clear()
+      indexes.clear()
       subagents.files.clear()
       subagents.agents.clear()
     },

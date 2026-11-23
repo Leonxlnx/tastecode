@@ -524,6 +524,39 @@ describe('Claude Code saved history', { timeout: 20_000 }, () => {
     expect((await restarted.list(options))[0]?.title).toBe('Second summary')
   })
 
+  it('parses a sessions index again when its size or time changed, and on every full listing', async () => {
+    const f = await fixture([row('u1', 'user', 'Prompt'), row('a1', 'assistant', 'Answer', 'u1')])
+    let clock = Date.now()
+    const source = createClaudeHistorySource({ configDir: f.configDir, now: () => clock })
+    const file = path.join(f.project, 'sessions-index.json')
+    const index = (summary: string) =>
+      writeFile(file, JSON.stringify({ entries: [{ sessionId: SESSION, summary }] }))
+    // Whole seconds, which every file system keeps exactly.
+    const mtime = new Date(AT)
+    await index('First summary')
+    await utimes(file, mtime, mtime)
+    expect((await source.list())[0]?.title).toBe('First summary')
+
+    // Same size, same time: the parsed index is kept until the next full listing.
+    await index('Other summary')
+    await utimes(file, mtime, mtime)
+    clock += 60_000
+    expect((await source.list())[0]?.title).toBe('First summary')
+    clock += 10 * 60_000
+    expect((await source.list())[0]?.title).toBe('Other summary')
+
+    const later = new Date(mtime.getTime() + 2000)
+    await index('Third summary')
+    await utimes(file, later, later)
+    clock += 60_000
+    expect((await source.list())[0]?.title).toBe('Third summary')
+    await index('A longer summary')
+    await utimes(file, later, later)
+    expect((await source.list())[0]?.title).toBe('A longer summary')
+    await rm(file)
+    expect((await source.list())[0]?.title).toBe('Prompt')
+  })
+
   it('reads rows longer than a chunk at the head, around a title and at the tail', async () => {
     const at = (second: number) => new Date(AT + second * 1000).toISOString()
     const moved = path.join(os.tmpdir(), 'claude-long-moved')
