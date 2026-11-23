@@ -1049,9 +1049,14 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
    * The same shape `/config/providers` gave, built from v2's own routes: the
    * providers a credential reaches, each with the models it can run. A model
    * OpenCode marks deprecated or disabled is left out, as the older route did.
+   *
+   * `/api/provider` lists only the providers a credential reaches, while
+   * `/api/model` also carries OpenCode's own free tier, which runs without
+   * one. A model row is therefore kept even when its provider is not on that
+   * list, and the provider's id names it when its display name is unknown.
    */
   async #readV2Providers(directory: string): Promise<ConnectedProviders> {
-    const location = `?directory=${encodeURIComponent(directory)}`
+    const location = `?location%5Bdirectory%5D=${encodeURIComponent(directory)}`
     const [providers, models] = await Promise.all([
       this.#v2RequestParsed(`/api/provider${location}`, {}, OpenCodeV2ProvidersSchema),
       this.#v2RequestParsed(`/api/model${location}`, {}, OpenCodeV2ModelsSchema),
@@ -1060,7 +1065,6 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     const byProvider = new Map<string, Record<string, ConnectedModel>>()
     for (const row of models.data) {
       if (row.status === 'deprecated' || row.enabled === false) continue
-      if (!names.has(row.providerID)) continue
       const runnable = byProvider.get(row.providerID) ?? {}
       byProvider.set(row.providerID, runnable)
       const input = row.capabilities?.input
