@@ -8587,6 +8587,45 @@ describe('new chats', () => {
       await waitFor(() => expect(composerValue()).toBe('Words without a project'))
     })
 
+    it('returns the prompt of a failed start without a project to its own draft', async () => {
+      const folder = {
+        path: '/home/me/.tastecode/threads/2026-11-01-amber-heron',
+        name: '2026-11-01-amber-heron',
+        pinned: false,
+        createdAt: 2,
+        chat: true as const,
+      }
+      const request = transport.request.getMockImplementation()!
+      let failStart: (error: Error) => void = () => undefined
+      transport.request.mockImplementation(async (method, params) => {
+        if (method === 'projects.createChatFolder') {
+          serverProjects = [...serverProjects, { ...folder, sessions: [] }]
+          return folder
+        }
+        if (method === 'thread.start') return new Promise((_, reject) => (failStart = reject))
+        return request(method, params)
+      })
+      render(<App />)
+      await screen.findByPlaceholderText('Do anything')
+      fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+      fireEvent.click(await screen.findByRole('menuitem', { name: /No project/ }))
+      await waitFor(() =>
+        expect(screen.getByRole('heading').textContent).toBe('What should we build?'),
+      )
+      submitTurn('Plan a weekend in Lisbon')
+      await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+
+      // A new chat in another project while this one starts.
+      act(() => sidebarProps().onNewSession('/work/other'))
+      await waitFor(() => expect(composerProps().projectPath).toBe('/work/other'))
+      await act(async () => failStart(new Error('Codex could not start')))
+      await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+      expect(composerValue()).toBe('')
+      fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+      fireEvent.click(await screen.findByRole('menuitem', { name: /No project/ }))
+      await waitFor(() => expect(composerValue()).toBe('Plan a weekend in Lisbon'))
+    })
+
     it('keeps a draft in its project when the project switch cannot be saved', async () => {
       const view = render(<App />)
       fireEvent.change(await screen.findByPlaceholderText('Do anything'), {

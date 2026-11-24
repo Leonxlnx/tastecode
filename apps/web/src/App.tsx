@@ -5104,8 +5104,17 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       // if it fails. Only a send that waited on that failed startup goes there.
       const restoreDraft = () =>
         restoreRejectedDraft(composerDraftKey(activeId), { text, attachments })
-      const restoreDraftAfterFailedStart = () => {
-        const slot = activePath ? newChatDraftSlot(activePath) : NEW_CHAT_DRAFT_KEY
+      const restoreDraftAfterFailedStart = (startPath?: string) => {
+        // A chat without a project went back to its own draft, unless its failed
+        // start is still the empty chat on screen.
+        const slot = activePath
+          ? newChatDraftSlot(activePath)
+          : !chatWithoutProject ||
+              (activeIdRef.current === undefined &&
+                startPath !== undefined &&
+                activePathRef.current === startPath)
+            ? NEW_CHAT_DRAFT_KEY
+            : newChatDraftSlot(NO_PROJECT_DRAFT_OWNER)
         restoreRejectedDraft(slot, { text, attachments })
         return slot
       }
@@ -5298,7 +5307,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
             publishThread(provisionalId, next)
           }
           releasePendingStart()
-          const slot = restoreDraftAfterFailedStart()
+          const slot = restoreDraftAfterFailedStart(startPath)
           // The words return to the new chat's composer, and with them the Creatify choice.
           // When another project is on screen by now, both wait for their own project.
           if (slot === NEW_CHAT_DRAFT_KEY) setThreadDesignMode(undefined, designMode)
@@ -5325,7 +5334,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         threadId = await pending.promise
         if (!threadId) {
           releasePendingStart()
-          restoreDraftAfterFailedStart()
+          restoreDraftAfterFailedStart(startPath)
           return
         }
         workspaceStartId = threadId
