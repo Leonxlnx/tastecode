@@ -113,7 +113,6 @@ import {
 } from './project-store.js'
 import {
   applyProjectOrder,
-  liftSession,
   moveRailSession,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
@@ -2730,7 +2729,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                 : {}),
             }
           })
-          return finished ? liftSession(updated, threadId) : updated
+          return finished ? promoteSession(updated, threadId) : updated
         })
         if (event.type === 'turn.completed' && threadController.isVisible(threadId)) {
           // Only here for the server's mark-as-read side effect — the live event
