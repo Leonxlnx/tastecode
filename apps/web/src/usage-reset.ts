@@ -1,4 +1,5 @@
-import { ProviderIdSchema, type ProviderLimit, type ResultOf } from '@harness/contracts'
+import type { ProviderLimit, ResultOf } from '@harness/contracts'
+import { ProviderIdSchema } from '@harness/contracts/ids'
 import { z } from 'zod'
 import { sameAccount } from './usage-summary-state.js'
 import type { Transport } from './transport.js'

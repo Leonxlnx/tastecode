@@ -1,12 +1,12 @@
-import {
-  DEFAULT_ACCOUNT_ID,
-  type AccountId,
-  type ParamsOf,
-  type ProviderId,
-  type ProviderLimitSource,
-  type ResultOf,
-  type UsageReadIntent,
+import type {
+  AccountId,
+  ParamsOf,
+  ProviderId,
+  ProviderLimitSource,
+  ResultOf,
+  UsageReadIntent,
 } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts/ids'
 import { UsageSummaryController, type UsageSummaryState } from './usage-summary-state.js'
 
 /** One provider account's limits. Absent `accountId` means the default account. */

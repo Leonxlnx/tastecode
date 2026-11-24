@@ -1,9 +1,5 @@
-import {
-  DEFAULT_ACCOUNT_ID,
-  type AccountId,
-  type DataOf,
-  type ProviderId,
-} from '@harness/contracts'
+import type { AccountId, DataOf, ProviderId } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts/ids'
 import type { Transport } from './transport.js'
 
 /**
