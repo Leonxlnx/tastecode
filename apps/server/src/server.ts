@@ -69,7 +69,11 @@ import { LifecycleScheduler } from './lifecycle-scheduler.js'
 import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
 import { createHistoryResponseProjector } from './history-response.js'
 import { InvalidHistoryCursorError } from './history-page.js'
-import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
+import {
+  SerializedResult,
+  createSerializedResultCache,
+  serializeSuccessResponse,
+} from './response-serializer.js'
 import { ChatImportService, openCodeChatReader } from './chat-import.js'
 import { createT3CodeReader } from './chat-import-t3.js'
 import { SimulatorService } from './simulator/service.js'
@@ -1645,6 +1649,13 @@ export function startServer(
           const running = orchestrator.isTurnRunning(p.threadId)
           const approval = store.threadApproval(p.threadId) ?? 'ask'
           if (p.page.before === undefined) orchestrator.markThreadRead(p.threadId)
+          if (history.serializedEvents !== undefined) {
+            // The page is the whole replay, whose JSON is already at hand; the
+            // fields keep the order of the object below.
+            return new SerializedResult(
+              `{"events":${history.serializedEvents},"running":${String(running)},"approval":${JSON.stringify(approval)}${history.reset ? ',"reset":true' : ''},"page":${JSON.stringify(history.page)}}`,
+            )
+          }
           return {
             events: history.events,
             running,

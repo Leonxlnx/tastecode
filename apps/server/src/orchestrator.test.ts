@@ -3180,6 +3180,136 @@ describe('history replay', () => {
       await orchestrator.disposeAll()
     })
 
+    describe('a newest page that is the whole replay', () => {
+      /** Imported history, a tool call compacted from its deltas, and a restored-away turn. */
+      function appendMixedHistory(store: Store, threadId: string): void {
+        store.mergeProviderHistory(threadId, 'revision', [
+          {
+            key: 'import-start',
+            event: {
+              type: 'turn.started',
+              turn: { id: 'import:old', threadId, status: 'running', createdAt: 0 },
+            },
+          },
+          {
+            key: 'import-tool',
+            event: {
+              type: 'item.completed',
+              item: {
+                id: 'import:tool',
+                turnId: 'import:old',
+                type: 'tool_call',
+                status: 'completed',
+                text: 'Read {"file_path":"README.md"}',
+                createdAt: 0,
+              },
+            },
+          },
+          {
+            key: 'import-end',
+            event: { type: 'turn.completed', turnId: 'import:old', status: 'completed' },
+          },
+        ])
+        appendTurn(store, threadId, 1)
+        const command = {
+          id: 'command',
+          turnId: 'tool-turn',
+          type: 'command' as const,
+          status: 'started' as const,
+          command: 'git status',
+          text: '',
+          createdAt: 2,
+        }
+        store.append(threadId, {
+          type: 'turn.started',
+          turn: { id: 'tool-turn', threadId, status: 'running', createdAt: 2 },
+        })
+        store.append(threadId, { type: 'item.started', item: command })
+        store.append(threadId, {
+          type: 'item.delta',
+          turnId: 'tool-turn',
+          itemId: 'command',
+          textDelta: 'On branch "dev" ✓\n',
+        })
+        store.append(threadId, {
+          type: 'item.completed',
+          item: { ...command, status: 'completed', text: 'On branch "dev" ✓\n', exitCode: 0 },
+        })
+        store.append(threadId, { type: 'turn.completed', turnId: 'tool-turn', status: 'completed' })
+        const kept = store.lastSeq(threadId)
+        appendTurn(store, threadId, 3)
+        store.saveRestoreUndo(threadId, kept, 'commit')
+      }
+
+      it('answers with the JSON of the replay it just compacted, identical to encoding the page', async () => {
+        const { orchestrator, store } = harness()
+        const thread = await orchestrator.startThread('codex', '/repo')
+        appendMixedHistory(store, thread.id)
+        const expected = readHistoryPage(
+          thread.id,
+          compactHistoryReplay(store.history(thread.id)),
+          {
+            turnLimit: 10,
+          },
+        )
+
+        const page = await orchestrator.historyPage(thread.id, { turnLimit: 10 })
+
+        expect(page.events).toEqual(expected.events)
+        expect(page.page).toEqual(expected.page)
+        expect(turnIds(page.events)).toEqual(['import:old', 'turn-1', 'tool-turn'])
+        expect(page.events.some(({ event }) => event.type === 'item.delta')).toBe(false)
+        // The text saved for the replay, reused for the page.
+        expect(page.serializedEvents).toBe(JSON.stringify(page.events))
+        await orchestrator.disposeAll()
+      })
+
+      it('answers after a restart with the saved replay row, identical to encoding the page', async () => {
+        const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-whole-page-'))
+        const database = path.join(directory, 'state.db')
+        try {
+          const first = new Store(database)
+          const opened = harness(undefined, first)
+          const thread = await opened.orchestrator.startThread('codex', '/repo')
+          appendMixedHistory(first, thread.id)
+          const before = await opened.orchestrator.historyPage(thread.id, { turnLimit: 10 })
+          await opened.orchestrator.disposeAll()
+          first.close()
+
+          const store = new Store(database)
+          const { orchestrator } = harness(undefined, store)
+          const history = vi.spyOn(store, 'history')
+          const page = await orchestrator.historyPage(thread.id, { turnLimit: 10 })
+          // Served from the saved replay, not rebuilt from the log.
+          expect(history).not.toHaveBeenCalled()
+          expect(page.events).toEqual(before.events)
+          expect(page.page).toEqual(before.page)
+          expect(page.serializedEvents).toBe(JSON.stringify(page.events))
+          await orchestrator.disposeAll()
+          store.close()
+        } finally {
+          rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+        }
+      })
+
+      it('encodes a page that leaves older turns out as before', async () => {
+        const { orchestrator, store } = harness()
+        const thread = await orchestrator.startThread('codex', '/repo')
+        appendMixedHistory(store, thread.id)
+
+        const page = await orchestrator.historyPage(thread.id, { turnLimit: 2 })
+        expect(turnIds(page.events)).toEqual(['turn-1', 'tool-turn'])
+        expect(page.serializedEvents).toBeUndefined()
+        const older = await orchestrator.historyPage(thread.id, {
+          before: page.page.olderCursor!,
+          turnLimit: 2,
+        })
+        expect(turnIds(older.events)).toEqual(['import:old'])
+        expect(older.serializedEvents).toBeUndefined()
+        await orchestrator.disposeAll()
+      })
+    })
+
     it('restarts after a truncation until newer events follow the kept cursor turn', async () => {
       const { orchestrator, store } = harness()
       const thread = await orchestrator.startThread('codex', '/repo')

@@ -209,6 +209,15 @@ export type SimulatorAgentBridge = {
 type HistoryEntry = { seq: number; event: DomainEvent }
 type HistoryRead = { events: HistoryEntry[]; serializedEvents?: string | undefined }
 
+/** The same entry objects in the same order, so their JSON is the same too. */
+function sameEntries(page: readonly HistoryEntry[], replay: readonly HistoryEntry[]): boolean {
+  if (page.length !== replay.length) return false
+  for (let index = 0; index < page.length; index += 1) {
+    if (page[index] !== replay[index]) return false
+  }
+  return true
+}
+
 /** How far back a continued chat's first prompt follows chats that continued one another. */
 const MAX_CONTINUED_CHATS = 8
 /**
@@ -3655,7 +3664,7 @@ export class Orchestrator {
   async historyPage(
     threadId: string,
     request: { before?: string | undefined; turnLimit?: number | undefined },
-  ): Promise<HistoryPage> {
+  ): Promise<HistoryPage & { serializedEvents?: string | undefined }> {
     const before =
       request.before === undefined ? undefined : decodeHistoryCursor(threadId, request.before)
     if (before) {
@@ -3678,8 +3687,8 @@ export class Orchestrator {
       const page = await this.#readNewestHistoryPage(threadId, request.turnLimit)
       if (page) return page
     }
-    const { events } = await this.#readHistory(threadId, 0)
-    return readHistoryPage(threadId, events, {
+    const { events, serializedEvents } = await this.#readHistory(threadId, 0)
+    const page = readHistoryPage(threadId, events, {
       before,
       turnLimit: request.turnLimit,
       // Truncation or a provider rewrite since the cursor was issued may have
@@ -3687,6 +3696,12 @@ export class Orchestrator {
       isStale: (cursor, snapshotSeq) =>
         cursor.seq > snapshotSeq || this.#store.providerHistoryChangedAfter(threadId, cursor.seq),
     })
+    // A chat with few turns fits its newest page whole. The replay's JSON, just
+    // encoded for saving or read from the saved row, is then the page's JSON:
+    // encoding megabytes again held the reply back by tens of milliseconds.
+    return serializedEvents !== undefined && sameEntries(page.events, events)
+      ? { ...page, serializedEvents }
+      : page
   }
 
   /**

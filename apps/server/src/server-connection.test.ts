@@ -1362,6 +1362,64 @@ describe('paged history requests', () => {
     expect(state.read).toEqual([])
   })
 
+  it('sends a whole-replay page from the JSON it already has, byte for byte as before', async () => {
+    async function raw(port: number, params: unknown): Promise<string> {
+      const client = new WebSocket(`ws://127.0.0.1:${port}`)
+      try {
+        await once(client, 'message')
+        const reply = once(client, 'message')
+        client.send(JSON.stringify({ id: 'history', method: 'thread.history', params }))
+        const [message] = await reply
+        return String(message)
+      } finally {
+        client.terminate()
+      }
+    }
+    const events = [
+      turn,
+      {
+        seq: 8,
+        event: {
+          type: 'item.completed',
+          item: {
+            id: 'tool',
+            turnId: 'turn',
+            type: 'command',
+            status: 'completed',
+            command: 'echo "ä✓"',
+            text: 'line\n\t"quoted" \\  ',
+            exitCode: 0,
+            createdAt: 2,
+          },
+        },
+      },
+    ]
+    const { port } = await listen()
+    for (const extra of [{}, { reset: true as const }]) {
+      const page = { olderCursor: 'older', snapshotSeq: 8 }
+      state.historyPage.mockResolvedValue({ events, page, ...extra })
+      const encoded = await raw(port, { threadId: 't', page: { turnLimit: 10 } })
+      state.historyPage.mockResolvedValue({
+        events,
+        page,
+        ...extra,
+        serializedEvents: JSON.stringify(events),
+      })
+      const stringify = vi.spyOn(JSON, 'stringify')
+      const reused = await raw(port, { threadId: 't', page: { turnLimit: 10 } })
+      // Nothing that holds the events is encoded again.
+      const encodings = stringify.mock.calls.filter(
+        ([value]) =>
+          value === events ||
+          (value as { events?: unknown } | undefined)?.events === events ||
+          (value as { result?: { events?: unknown } } | undefined)?.result?.events === events,
+      )
+      stringify.mockRestore()
+      expect(reused).toBe(encoded)
+      expect(encodings).toEqual([])
+    }
+  })
+
   it('answers a cursor it never issued as a bad request', async () => {
     state.historyPage.mockRejectedValue(new InvalidHistoryCursorError())
     const { port } = await listen()
