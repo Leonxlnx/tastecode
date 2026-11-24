@@ -146,6 +146,7 @@ export function sidebarRail(projects: Project[], heldSessionId?: string): Sideba
   const pinned: PinnedSession[] = []
   const archived: PinnedSession[] = []
   const chats: PinnedSession[] = []
+  const chatSources: Project[] = []
   const pinnedProjects: Project[] = []
   const unpinnedProjects: Project[] = []
   for (const source of projects) {
@@ -153,6 +154,7 @@ export function sidebarRail(projects: Project[], heldSessionId?: string): Sideba
     pinned.push(...projection.pinnedSessions)
     archived.push(...projection.archivedSessions)
     if (source.chat) {
+      chatSources.push(source)
       for (const session of projection.project.sessions) {
         chats.push({ projectPath: source.path, session })
       }
@@ -162,9 +164,34 @@ export function sidebarRail(projects: Project[], heldSessionId?: string): Sideba
   return {
     orderedProjects: [...pinnedProjects, ...unpinnedProjects],
     pinnedSessions: pinned,
-    chatSessions: groupChats(chats, heldSessionId),
+    chatSessions: groupedChats(chatSources, chats, heldSessionId),
     archivedSessions: archived.sort((a, b) => archivedAt(b.session) - archivedAt(a.session)),
   }
+}
+
+/**
+ * The last grouping of the chats without a project. A status change elsewhere
+ * leaves their projects as they were, and then their sort is not redone.
+ */
+type GroupedChats = { sources: Project[]; held: string | undefined; grouped: PinnedSession[] }
+let lastChats: GroupedChats = { sources: [], held: undefined, grouped: [] }
+
+function groupedChats(
+  sources: Project[],
+  chats: PinnedSession[],
+  heldSessionId: string | undefined,
+): PinnedSession[] {
+  const last = lastChats
+  if (
+    last.held === heldSessionId &&
+    last.sources.length === sources.length &&
+    last.sources.every((source, index) => source === sources[index])
+  ) {
+    return last.grouped
+  }
+  const grouped = groupChats(chats, heldSessionId)
+  lastChats = { sources, held: heldSessionId, grouped }
+  return grouped
 }
 
 function groupChats(chats: PinnedSession[], heldSessionId?: string): PinnedSession[] {
@@ -281,19 +308,30 @@ function inProjectTree(session: Session): boolean {
 
 const projectSidebarProjections = new WeakMap<
   Project,
-  { held: string | undefined; projection: ProjectSidebarProjection }
+  {
+    /** The held chat this projection was asked for, which a project need not contain. */
+    asked: string | undefined
+    held: string | undefined
+    projection: ProjectSidebarProjection
+  }
 >()
 
 function projectSidebarProjection(
   source: Project,
   heldSessionId?: string,
 ): ProjectSidebarProjection {
+  // A project's sessions never change in place, so whether it holds the chat is
+  // known for as long as the same chat is held: no scan of every project's chats.
+  const cached = projectSidebarProjections.get(source)
+  if (cached && cached.asked === heldSessionId) return cached.projection
   const held =
     heldSessionId !== undefined && source.sessions.some(({ id }) => id === heldSessionId)
       ? heldSessionId
       : undefined
-  const cached = projectSidebarProjections.get(source)
-  if (cached && cached.held === held) return cached.projection
+  if (cached && cached.held === held) {
+    cached.asked = heldSessionId
+    return cached.projection
+  }
 
   const pinnedSessions: PinnedSession[] = []
   const archivedSessions: PinnedSession[] = []
@@ -310,7 +348,7 @@ function projectSidebarProjection(
       ? source
       : { ...source, sessions: grouped }
   const projection = { project, pinnedSessions, archivedSessions }
-  projectSidebarProjections.set(source, { held, projection })
+  projectSidebarProjections.set(source, { asked: heldSessionId, held, projection })
   return projection
 }
 
