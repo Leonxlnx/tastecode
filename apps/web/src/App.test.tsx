@@ -16951,6 +16951,81 @@ describe('split view', () => {
     expect(document.querySelector('.stage__body')!.classList.contains('is-split')).toBe(true)
   })
 
+  describe('closing a pane keeps its chat as the one just left', () => {
+    // Over the whole budget for inactive chats: only the chat just left keeps it.
+    const huge = 'x'.repeat(MAX_INACTIVE_THREAD_CHARACTERS + 1)
+
+    async function openSplitAfterPinnedChat() {
+      useTwoChats([{ id: 'pinned-thread', title: 'Pinned chat', provider: 'codex', createdAt: 1 }])
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method !== 'thread.history') return request(method, params)
+        const { threadId, afterSeq } = methods['thread.history'].params.parse(params)
+        if (afterSeq !== undefined) return Promise.resolve({ events: [], running: false })
+        return Promise.resolve({
+          events: [
+            completedHistoryEvent(1, `${threadId}-big`, huge),
+            completedHistoryEvent(2, `${threadId}-small`, `${threadId} rows`),
+          ],
+          running: false,
+        })
+      })
+      render(<App />)
+      // Leaving the pinned chat for the left one keeps the pinned chat.
+      fireEvent.click(await waitFor(() => treeChatRow('Pinned chat')))
+      expect(await screen.findByText('pinned-thread rows')).toBeTruthy()
+      fireEvent.click(treeChatRow('Left chat'))
+      expect(await screen.findByText('left-thread rows')).toBeTruthy()
+      fireEvent.contextMenu(treeChatRow('Right chat'))
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Open beside' }))
+      await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+      expect(await screen.findByText('right-thread rows')).toBeTruthy()
+      expect(isFocused('Right chat')).toBe(true)
+    }
+
+    async function expectHeld(title: string, threadId: string) {
+      transport.request.mockClear()
+      fireEvent.click(treeChatRow(title))
+      // Shown from memory at once; only what happened since is asked for.
+      expect(screen.getByText(`${threadId} rows`)).toBeTruthy()
+      await waitFor(() => {
+        expect(transport.request).toHaveBeenCalledWith(
+          'thread.history',
+          expect.objectContaining({ threadId, afterSeq: 2 }),
+        )
+      })
+      expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
+        threadId,
+        page: NEWEST_PAGE,
+      })
+    }
+
+    it('when the focused pane is closed', async () => {
+      await openSplitAfterPinnedChat()
+      fireEvent.click(screen.getByRole('button', { name: 'Close Right chat pane' }))
+      await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(1))
+      expect(screen.getByTestId('thread').dataset.threadId).toBe('left-thread')
+      expect(screen.getByText('left-thread rows')).toBeTruthy()
+      await expectHeld('Right chat', 'right-thread')
+    })
+
+    it('when the other pane is closed', async () => {
+      await openSplitAfterPinnedChat()
+      fireEvent.click(screen.getByRole('button', { name: 'Close Left chat pane' }))
+      await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(1))
+      expect(screen.getByTestId('thread').dataset.threadId).toBe('right-thread')
+      expect(screen.getByText('right-thread rows')).toBeTruthy()
+      // A finished turn elsewhere prunes the cache before the user goes back.
+      emitThreadEvent('right-thread', {
+        type: 'turn.completed',
+        turnId: 'turn-1',
+        status: 'completed',
+      })
+      await expectHeld('Left chat', 'left-thread')
+    })
+  })
+
   it('opens a chat beside with Alt+click and keeps the open chat mounted', async () => {
     useTwoChats()
     render(<App />)

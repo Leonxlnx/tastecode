@@ -475,6 +475,33 @@ describe('ThreadController lifecycle owner', () => {
     expect(controller.previousId).toBe('durable')
     expect(controller.snapshot('durable')).toBe(big)
   })
+
+  it('keeps the chat of a closed column as the one just left', () => {
+    const controller = new ThreadController(new TestTransport())
+    const big = (text: string) =>
+      reduce(emptyThread, {
+        ...started,
+        item: { ...started.item, id: text, text: text.repeat(MAX_INACTIVE_THREAD_CHARACTERS + 1) },
+      })
+    const left = big('l')
+    controller.update('pinned', big('p'))
+    controller.setCursor('pinned', 1)
+    controller.update('left', left)
+    controller.setCursor('left', 1)
+    controller.activate('pinned')
+    controller.activate('left')
+    controller.focus(1)
+    controller.activate('right')
+    // Focusing a column only moves focus; the chat kept stays kept.
+    controller.focus(0)
+    expect(controller.previousId).toBe('pinned')
+    controller.focus(1)
+    controller.leave(0)
+    controller.prune(unprotected)
+    expect(controller.previousId).toBe('left')
+    expect(controller.snapshot('left')).toBe(left)
+    expect(controller.snapshot('pinned')).toBeUndefined()
+  })
 })
 
 describe('history gap recovery', () => {

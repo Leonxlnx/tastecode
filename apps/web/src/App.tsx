@@ -6784,17 +6784,35 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       reportError,
     ],
   )
-  const closeBesidePane = useCallback(() => {
-    if (!splitRef.current) return
-    threadController.show(otherSlot(focusedSlotRef.current), undefined)
-    setSplit(undefined)
-    setBesideQueue(undefined)
-  }, [threadController, setSplit])
-  const closeFocusedPane = useCallback(() => {
-    if (!splitRef.current) return
-    focusPane(otherSlot(focusedSlotRef.current))
-    closeBesidePane()
-  }, [focusPane, closeBesidePane])
+  /**
+   * `left` is true when the user closed the pane: its chat is then the one
+   * just left, kept for switching back. A pane closed because its chat or
+   * project went away records nothing.
+   */
+  const dropBesidePane = useCallback(
+    (left: boolean) => {
+      if (!splitRef.current) return
+      const slot = otherSlot(focusedSlotRef.current)
+      if (left) {
+        threadController.leave(slot)
+        // The active chat may not change, so nothing else prunes for this.
+        pruneThreadStateCache()
+      } else threadController.show(slot, undefined)
+      setSplit(undefined)
+      setBesideQueue(undefined)
+    },
+    [threadController, pruneThreadStateCache, setSplit],
+  )
+  const closeBesidePane = useCallback(() => dropBesidePane(true), [dropBesidePane])
+  const dropFocusedPane = useCallback(
+    (left: boolean) => {
+      if (!splitRef.current) return
+      focusPane(otherSlot(focusedSlotRef.current))
+      dropBesidePane(left)
+    },
+    [focusPane, dropBesidePane],
+  )
+  const closeFocusedPane = useCallback(() => dropFocusedPane(true), [dropFocusedPane])
   /** The stage body: a chat dragged from the sidebar is dropped on the panes in it. */
   const stageBody = useRef<HTMLDivElement>(null)
   const chatDrop = useChatDrop({
@@ -6823,12 +6841,12 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       if (!current) return false
       const beside = splitBesideId(current)
       if (beside !== undefined && ids.includes(beside)) {
-        closeBesidePane()
+        dropBesidePane(false)
         return false
       }
       const active = activeIdRef.current
       if (active === undefined || !ids.includes(active)) return false
-      closeFocusedPane()
+      dropFocusedPane(false)
       return true
     },
     project: (path) => {
@@ -6839,11 +6857,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           ? findSession(projectsRef.current, current.beside.id)?.project.path
           : current.beside.projectPath
       if (besidePath === path) {
-        closeBesidePane()
+        dropBesidePane(false)
         return false
       }
       if (activePathRef.current !== path) return false
-      closeFocusedPane()
+      dropFocusedPane(false)
       return true
     },
   }

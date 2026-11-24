@@ -155,6 +155,15 @@ export class ThreadController {
     if (this.#previousId === from) this.#previousId = to
     this.#syncVisible()
   }
+  /**
+   * The user closed a column. Its chat is now shown nowhere, so it is the
+   * one just left, unless the other column shows it too.
+   */
+  leave(slot: PaneSlot): void {
+    const id = this.#shown[slot]
+    if (id !== undefined && id !== this.#shown[slot === 0 ? 1 : 0]) this.#previousId = id
+    this.show(slot, undefined)
+  }
   /** Show `id` in a column and publish what is cached for it there. */
   show(slot: PaneSlot, id: string | undefined): void {
     this.#shown[slot] = id
