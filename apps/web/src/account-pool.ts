@@ -1,15 +1,15 @@
-import {
-  DEFAULT_ACCOUNT_ID,
-  type AccountId,
-  type PoolAccount,
-  type PoolWindow,
-  type PoolWindowTotal,
-  type ProviderAccount,
-  type ProviderId,
-  type ProviderLimit,
-  type ProviderLimitSource,
-  type ResultOf,
+import type {
+  AccountId,
+  PoolAccount,
+  PoolWindow,
+  PoolWindowTotal,
+  ProviderAccount,
+  ProviderId,
+  ProviderLimit,
+  ProviderLimitSource,
+  ResultOf,
 } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts/ids'
 import { accountAtLimit } from './continue-account.js'
 import type { UsageSummaryState } from './usage-summary-state.js'
 

@@ -1,12 +1,12 @@
-import {
-  DEFAULT_ACCOUNT_ID,
-  type AccountId,
-  type ParamsOf,
-  type ProviderId,
-  type ProviderLimitSource,
-  type ResultOf,
-  type UsageReadIntent,
+import type {
+  AccountId,
+  ParamsOf,
+  ProviderId,
+  ProviderLimitSource,
+  ResultOf,
+  UsageReadIntent,
 } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts/ids'
 import { errorMessage } from './boundary.js'
 
 type Summary = ResultOf<'usage.summary'>

@@ -1,12 +1,12 @@
 import { createContext, useEffect, useMemo, useSyncExternalStore } from 'react'
-import {
-  DEFAULT_ACCOUNT_ID,
-  type AccountId,
-  type ProviderAccount,
-  type ProviderAccountHome,
-  type ProviderId,
-  type ProviderStatus,
+import type {
+  AccountId,
+  ProviderAccount,
+  ProviderAccountHome,
+  ProviderId,
+  ProviderStatus,
 } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts/ids'
 import { errorMessage } from './boundary.js'
 import type { Transport } from './transport.js'
 

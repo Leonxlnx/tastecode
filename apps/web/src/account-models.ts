@@ -1,4 +1,5 @@
-import { DEFAULT_ACCOUNT_ID, type AccountId, type Model, type ProviderId } from '@harness/contracts'
+import type { AccountId, Model, ProviderId } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts/ids'
 import {
   choicesFor,
   isCustomModelChoice,

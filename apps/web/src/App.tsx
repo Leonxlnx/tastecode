@@ -31,7 +31,7 @@ import type {
   SidebarSettings,
   ThreadSettings,
 } from '@harness/contracts'
-import { DEFAULT_ACCOUNT_ID } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts/ids'
 import {
   isDesktop,
   isMacOS,

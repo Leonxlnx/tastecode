@@ -1,11 +1,5 @@
-import {
-  AccountIdSchema,
-  DEFAULT_ACCOUNT_ID,
-  ProviderIdSchema,
-  type AccountId,
-  type ApprovalMode,
-  type ProviderId,
-} from '@harness/contracts'
+import type { AccountId, ApprovalMode, ProviderId } from '@harness/contracts'
+import { AccountIdSchema, DEFAULT_ACCOUNT_ID, ProviderIdSchema } from '@harness/contracts/ids'
 import { isCustomModelChoice, type ModelChoice } from './model-catalog.js'
 
 /**

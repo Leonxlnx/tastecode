@@ -1,12 +1,12 @@
-import {
-  DEFAULT_ACCOUNT_ID,
-  type AccountId,
-  type Item,
-  type ProviderAccount,
-  type ProviderId,
-  type ProviderLimit,
-  type ResultOf,
+import type {
+  AccountId,
+  Item,
+  ProviderAccount,
+  ProviderId,
+  ProviderLimit,
+  ResultOf,
 } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts/ids'
 import { accountsOf, type ProviderAccountsSnapshot } from './provider-accounts-state.js'
 import { sameAccount, type UsageSummaryState } from './usage-summary-state.js'
 
