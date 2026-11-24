@@ -645,6 +645,29 @@ export const Thread = memo(function Thread(props: ThreadProps) {
         virtualizer.resizeItem(virtualizer.indexFromElement(row), sizes[index]!)
     })
   }, [virtualizer])
+  /**
+   * The rows' ref. The list answers each row that detaches by checking every
+   * row it still holds, so a commit that unmounted many rows checked them all
+   * once per row: a chat whose work disclosures hold 1,850 hidden rows spent
+   * seconds there on every open and scroll. Rows that left are swept once,
+   * after the commit that removed them; a row that mounts is measured at once.
+   */
+  const rowSweepQueued = useRef(false)
+  const rowRef = useCallback(
+    (node: Element | null) => {
+      if (node) {
+        virtualizer.measureElement(node)
+        return
+      }
+      if (rowSweepQueued.current) return
+      rowSweepQueued.current = true
+      queueMicrotask(() => {
+        rowSweepQueued.current = false
+        virtualizer.measureElement(null)
+      })
+    },
+    [virtualizer],
+  )
   // Mocked lists in tests have no container to size.
   const sizeRunway = (virtualizer as { containerRef?: (node: HTMLElement | null) => void })
     .containerRef
@@ -1448,7 +1471,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
                   <ThreadFrameRow
                     key={row.key}
                     index={row.index}
-                    measureElement={virtualizer.measureElement}
+                    measureElement={rowRef}
                     frameStore={props.frameStore}
                     items={thread.items}
                     presentation={presentation}
