@@ -16841,6 +16841,43 @@ describe('split view', () => {
     expect(document.querySelector('.stage__body')!.classList.contains('is-split')).toBe(true)
   })
 
+  it('sends from a refocused draft without a project into a folder of its own', async () => {
+    const folder = {
+      path: '/home/me/.tastecode/threads/2026-11-01-amber-heron',
+      name: '2026-11-01-amber-heron',
+      pinned: false,
+      createdAt: 2,
+      chat: true as const,
+    }
+    useTwoChats()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation(async (method, params) => {
+      if (method !== 'projects.createChatFolder') return request(method, params)
+      serverProjects = [...serverProjects, { ...folder, sessions: [] }]
+      return folder
+    })
+    render(<App />)
+    expect((await screen.findByRole('heading')).textContent).toContain('What should we build')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /No project/ }))
+    fireEvent.contextMenu(await waitFor(() => treeChatRow('Right chat')))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open beside' }))
+    await waitFor(() => expect(isFocused('Right chat')).toBe(true))
+    expect(composerProps().projectPath).toBe('/work/project')
+
+    fireEvent.pointerDown(pane('New chat'), { button: 0 })
+    await waitFor(() => expect(isFocused('New chat')).toBe(true))
+    await waitFor(() => expect(composerProps().projectPath).toBeUndefined())
+    const composer = within(pane('New chat')).getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Plan a weekend in Lisbon' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    expect(rpcCount('projects.createChatFolder')).toBe(1)
+    const start = transport.request.mock.calls.find(([method]) => method === 'thread.start')
+    expect(start?.[1]).toMatchObject({ workspacePath: folder.path })
+  })
+
   it('opens a chat beside with Alt+click and keeps the open chat mounted', async () => {
     useTwoChats()
     render(<App />)

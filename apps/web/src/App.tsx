@@ -6728,6 +6728,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       } else {
         activeIdRef.current = undefined
         if (target.projectPath) beginSession(target.projectPath)
+        // A draft without a project comes back as one, not in the other pane's project.
+        else if (frozen.composer.withoutProject) beginSession(undefined)
         else setActiveId(undefined)
       }
     },
