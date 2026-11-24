@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createChatFolder, isChatFolder } from './chat-folder.js'
+import { createChatFolder, isChatFolder, repositoryCandidates } from './chat-folder.js'
 
 const roots: string[] = []
 
@@ -51,5 +51,17 @@ describe('chat folders', () => {
     expect(isChatFolder(root, root)).toBe(false)
     expect(isChatFolder(root, path.join(root, 'a', 'b'))).toBe(false)
     expect(isChatFolder(root, path.join(path.sep, 'repo'))).toBe(false)
+  })
+})
+
+describe('repository candidates', () => {
+  it('leaves every folder made for a chat without a project out of repository discovery', () => {
+    const root = tempRoot()
+    const chats = Array.from({ length: 300 }, (_, index) =>
+      path.join(root, `2026-11-01-chat-${index}`),
+    )
+    const work = path.join(path.dirname(root), 'work', 'repo')
+    const nested = path.join(root, '2026-11-01-chat-0', 'inner')
+    expect(repositoryCandidates(root, [...chats, work, nested])).toEqual([work, nested])
   })
 })

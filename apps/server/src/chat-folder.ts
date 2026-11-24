@@ -124,3 +124,11 @@ export function createChatFolder(
 export function isChatFolder(root: string, projectPath: string): boolean {
   return path.dirname(projectPath) === root
 }
+
+/**
+ * The project paths that can be repositories: a folder made for a chat without
+ * a project is never one, and there can be hundreds of them.
+ */
+export function repositoryCandidates(root: string, paths: readonly string[]): string[] {
+  return paths.filter((projectPath) => !isChatFolder(root, projectPath))
+}

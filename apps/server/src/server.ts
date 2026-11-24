@@ -43,7 +43,7 @@ import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { browseFolders } from './project-browser.js'
-import { createChatFolder, isChatFolder } from './chat-folder.js'
+import { createChatFolder, isChatFolder, repositoryCandidates } from './chat-folder.js'
 import { chatFoldersRoot } from './product-paths.js'
 import {
   DEFAULT_PHONE_PORT,
@@ -963,7 +963,10 @@ export function startServer(
       case 'pullRequests.list': {
         const p = parseParams(method, params)
         return (await pullRequestService()).list(
-          store.projects().map((project) => project.path),
+          repositoryCandidates(
+            chatFolders,
+            store.projects().map((project) => project.path),
+          ),
           p.refresh ?? false,
         )
       }
@@ -986,7 +989,10 @@ export function startServer(
         return (await pullRequestService()).detail(
           p.repository,
           p.number,
-          store.projects().map((project) => project.path),
+          repositoryCandidates(
+            chatFolders,
+            store.projects().map((project) => project.path),
+          ),
           p.refresh ?? false,
         )
       }
