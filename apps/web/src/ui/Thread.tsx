@@ -96,6 +96,7 @@ import {
 } from './SubagentRow.js'
 import { FindBarSkeleton } from './SurfaceSkeletons.js'
 import { TurnRail, type VisibleRows } from './TurnRail.js'
+import { nextItemWithARow } from './next-row.js'
 import { replyPreview, rowAtOffset, turnRailEntries, type TurnRailEntry } from './turn-rail.js'
 import {
   activityGroupAt,
@@ -2090,15 +2091,17 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
         item.id.startsWith('design-not-applicable-'))) &&
     !(item.type === 'message' && item.role === 'user') &&
     !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
-  const nextShownItem = compactToNext
-    ? nextItemWithARow(
-        items,
-        liveItems,
-        activityLead && activityGroup ? activityGroup.lastIndex + 1 : index + 1,
-      )
-    : undefined
-  const workToNext =
-    (activityLead || isActivity(item)) && nextShownItem !== undefined && isActivity(nextShownItem)
+  // Only work rows close up to the work after them, so only they look past blank reasoning.
+  const workRow = activityLead || isActivity(item)
+  const nextShownItem =
+    compactToNext && workRow
+      ? nextItemWithARow(
+          items,
+          liveItems,
+          activityLead && activityGroup ? activityGroup.lastIndex + 1 : index + 1,
+        )
+      : undefined
+  const workToNext = workRow && nextShownItem !== undefined && isActivity(nextShownItem)
   const settling = settlingTurnId === item.turnId
   const railAnchor = showWorkingRail && live && presentation?.firstResponseIndex === index
   const activityComplete = presentation?.complete === true && !live && presentation.design !== true
@@ -2172,20 +2175,6 @@ function SteerPending() {
 }
 
 /** The next item that draws anything: reasoning with no text takes no row. */
-function nextItemWithARow(
-  items: readonly Item[],
-  liveItems: ReadonlyMap<number, LiveItemUpdate>,
-  from: number,
-): Item | undefined {
-  let index = from
-  let item = threadItemAt(items, liveItems, index)
-  while (item && isBlankReasoning(item)) {
-    index += 1
-    item = threadItemAt(items, liveItems, index)
-  }
-  return item
-}
-
 /** Roughly one paragraph, for rows whose height depends on their text. */
 const DEFAULT_ROW_ESTIMATE = 72
 /** A collapsed one-line work summary: its 30px line, 8px margin and the row gap. */
