@@ -5238,6 +5238,12 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         workspaceStartToken = holdWorkspaceStart(provisionalId, startPath)
         optimisticTurnId = provisional.activeTurn?.id
         threadController.update(provisionalId, provisional)
+        // The row names the account the chat starts on, as the started row does, so
+        // its model list is that account's from the first moment.
+        const rowAccount =
+          choice.agent || choice.connectionId
+            ? undefined
+            : namedNewChatAccount(providerAccountsRef.current, choice.provider)
         setProjects((current) =>
           current.map((project) =>
             project.path === startPath
@@ -5248,6 +5254,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                       id: provisionalId,
                       title: titleFrom(titlePrompt),
                       provider: choice.provider,
+                      ...(rowAccount && rowAccount !== DEFAULT_ACCOUNT_ID
+                        ? { accountId: rowAccount }
+                        : {}),
                       ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
                       ...(choice.agent
                         ? {
