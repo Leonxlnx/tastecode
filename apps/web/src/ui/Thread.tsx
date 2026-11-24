@@ -2057,15 +2057,17 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
         item.id.startsWith('design-not-applicable-'))) &&
     !(item.type === 'message' && item.role === 'user') &&
     !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
-  const nextShownItem = compactToNext
-    ? nextItemWithARow(
-        items,
-        liveItems,
-        activityLead && activityGroup ? activityGroup.lastIndex + 1 : index + 1,
-      )
-    : undefined
-  const workToNext =
-    (activityLead || isActivity(item)) && nextShownItem !== undefined && isActivity(nextShownItem)
+  // Only work rows close up to the work after them, so only they look past blank reasoning.
+  const workRow = activityLead || isActivity(item)
+  const nextShownItem =
+    compactToNext && workRow
+      ? nextItemWithARow(
+          items,
+          liveItems,
+          activityLead && activityGroup ? activityGroup.lastIndex + 1 : index + 1,
+        )
+      : undefined
+  const workToNext = workRow && nextShownItem !== undefined && isActivity(nextShownItem)
   const settling = settlingTurnId === item.turnId
   const railAnchor = showWorkingRail && live && presentation?.firstResponseIndex === index
   const activityComplete = presentation?.complete === true && !live && presentation.design !== true
