@@ -10,6 +10,7 @@ import {
   writeSync,
 } from 'node:fs'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import {
   AccountContextSettingsSchema,
   AccountRuntimeSettingSchema,
@@ -1060,6 +1061,10 @@ export class Store {
   #searchRevision = 0
   /** Keeps the streamed-event path from querying SQLite just to skip search indexing. */
   #ephemeralThreads = new Set<string>()
+  // Threads whose inbox and recovery state this Store rebuilt from their event log and has
+  // only folded appended events into since. Their next appending merge folds as well;
+  // any other thread, including one projected by an earlier run or another build, rebuilds.
+  #projectedThreads = new Set<string>()
   /** Sub-agent runs: what each chat started, and where its result stands. */
   readonly subagents: SubagentRunTable
   /**
@@ -2187,6 +2192,8 @@ export class Store {
     let changed = false
     // Whether a row of the thread's log stopped counting: its key is gone or its event changed.
     let deactivated = false
+    // Set once the thread's state was derived from its log again, kept only if that commits.
+    let rebuilt = false
     this.#transaction(() => {
       const keys = JSON.stringify(entries.map(({ key }) => key))
       const retired = this.#db
@@ -2255,12 +2262,14 @@ export class Store {
         // every earlier one, as a rebuild would. Only a row that stopped counting needs the
         // thread's state derived again; a rebuild over a long chat blocked the server for
         // seconds after every outside turn.
-        if (deactivated) {
+        if (deactivated || !this.#projectedThreads.has(threadId)) {
           this.#rebuildThreadInboxState(threadId)
           this.#rebuildThreadRecoveryState(threadId)
+          rebuilt = true
         }
       }
     })
+    if (rebuilt) this.#projectedThreads.add(threadId)
     return changed
   }
 
@@ -3021,6 +3030,7 @@ export class Store {
    * import it as a chat again, also when no scan had linked the chat to it yet.
    */
   deleteThread(id: string, options: { keepSessionOut?: boolean } = {}): void {
+    this.#projectedThreads.clear()
     const thread = this.thread(id)
     if (thread?.worktreePath) {
       throw new Error('discard the isolated session checkout before deleting it')
@@ -3639,6 +3649,13 @@ export class Store {
     const userSubmissionId = userSubmissionItemId(event)
     const turnDiffId = event.type === 'diff.updated' ? event.turnId : undefined
     const recovery = recoveryMutation(event)
+    // Only a thread a later merge would fold into pays for the check.
+    if (
+      (inboxEvent || recovery) &&
+      this.#projectedThreads.has(threadId) &&
+      !replayFolds(event, serializedEvent)
+    )
+      this.#projectedThreads.delete(threadId)
     // A lone SQLite insert is already atomic. Only open an explicit
     // transaction when the event and a derived index row must commit together.
     if (
@@ -3739,6 +3756,12 @@ export class Store {
       return seq
     }
     this.#indexHistory(seq, threadId, event)
+    if (
+      this.#projectedThreads.has(threadId) &&
+      (affectsInboxProjection(event) || recoveryMutation(event)) &&
+      !replayFolds(event, payload)
+    )
+      this.#projectedThreads.delete(threadId)
     if (!this.#ephemeralThreads.has(threadId)) this.#indexEvent(seq, threadId, at, event)
     if (event.type === 'usage.updated') this.#indexUsageEvent(seq, threadId, at, payload)
     if (affectsInboxProjection(event)) this.#indexInboxEvent(seq, threadId, event, payload)
@@ -4780,6 +4803,7 @@ export class Store {
    * two different stories.
    */
   #truncateAfter(threadId: string, seq: number): void {
+    this.#projectedThreads.delete(threadId)
     this.#deleteReplaySnapshot.run(threadId)
     this.#forgetReplaySnapshot(threadId)
     // Sequence numbers are never reused, so a client that saw a removed event
@@ -5015,6 +5039,7 @@ export class Store {
 
   /** Put back the exact event/checkpoint rows removed by the latest restore. */
   applyRestoreUndo(threadId: string, token: string): void {
+    this.#projectedThreads.delete(threadId)
     const row = sqliteRow<RestoreUndoRow>(
       this.#db.prepare(`SELECT * FROM restore_undos WHERE thread_id = ? AND token = ?`),
       threadId,
@@ -5661,6 +5686,16 @@ function toQueuedTurn(row: QueuedTurnRow): StoredQueuedTurn | undefined {
  * newer version wrote fails this schema, and the row becomes a tombstone —
  * still stored, skipped by every reader.
  */
+/**
+ * Whether replay, which reads an event back from its stored JSON, reads the event that was
+ * just folded into the inbox and recovery state: JSON turns NaN and infinities into null,
+ * which the schema then rejects, and replay skips the event.
+ */
+function replayFolds(event: DomainEvent, payload: string): boolean {
+  const parsed = parseDomainEvent(payload, 'projection check')
+  return parsed !== undefined && isDeepStrictEqual(parsed, JSON.parse(payload))
+}
+
 function parseDomainEvent(serialized: string, context: string): DomainEvent | undefined {
   let value: unknown
   try {
