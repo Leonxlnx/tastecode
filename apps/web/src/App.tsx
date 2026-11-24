@@ -6323,6 +6323,16 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     }
   }, [transport, undoRestore, activePath, loadHistory, refreshCheckpoints])
 
+  /**
+   * The chat on screen was a chat without a project and is gone: the empty
+   * composer that replaces it is a new such chat, which gets a folder of its
+   * own, never the deleted chat's folder and the files left in it.
+   */
+  const leaveChatFolder = useCallback(() => {
+    setChatWithoutProject(true)
+    setActivePath(undefined)
+  }, [])
+
   const deleteSession = useCallback(
     async (id: string) => {
       // Recorded before the reply: a list read before the delete can land
@@ -6341,16 +6351,18 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       // Thread ids are never reused, so a saved setup outlives its chat forever.
       removeSetting(`${MODEL_BY_THREAD_PREFIX}${id}`)
       removeSetting(`${CREATIFY_BY_THREAD_PREFIX}${id}`)
+      const ownFolder = findSession(projectsRef.current, id)?.project.chat === true
       setProjects((current) => removeSession(current, id))
       if (!splitRemovals.current.chats([id]) && activeIdRef.current === id) {
         activeIdRef.current = undefined
         setActiveId(undefined)
         setThread(emptyThread)
+        if (ownFolder) leaveChatFolder()
       }
       threadController.forgetDraft(id)
       refreshWorkspaceAfterCompletion(projectPath)
     },
-    [transport, clearWorkspaceThread, refreshWorkspaceAfterCompletion],
+    [transport, clearWorkspaceThread, refreshWorkspaceAfterCompletion, leaveChatFolder],
   )
 
   const commitChatDelete = useCallback(
@@ -6393,12 +6405,14 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           .finally(() => setStoppingRows((rows) => withoutStoppingRow(rows, id)))
       }
       if (!splitRemovals.current.chats([id]) && activeIdRef.current === id) {
+        const ownFolder = findSession(projectsRef.current, id)?.project.chat === true
         activeIdRef.current = undefined
         setActiveId(undefined)
         setThread(emptyThread)
+        if (ownFolder) leaveChatFolder()
       }
     },
-    [enqueueArchive, commitChatDelete, threadController, transport],
+    [enqueueArchive, commitChatDelete, threadController, transport, leaveChatFolder],
   )
 
   const undoArchive = useCallback(() => {
