@@ -96,6 +96,7 @@ import {
 } from './SubagentRow.js'
 import { FindBarSkeleton } from './SurfaceSkeletons.js'
 import { TurnRail, type VisibleRows } from './TurnRail.js'
+import { nextItemWithARow } from './next-row.js'
 import { replyPreview, rowAtOffset, turnRailEntries, type TurnRailEntry } from './turn-rail.js'
 import {
   activityGroupAt,
@@ -2138,20 +2139,6 @@ function SteerPending() {
 }
 
 /** The next item that draws anything: reasoning with no text takes no row. */
-function nextItemWithARow(
-  items: readonly Item[],
-  liveItems: ReadonlyMap<number, LiveItemUpdate>,
-  from: number,
-): Item | undefined {
-  let index = from
-  let item = threadItemAt(items, liveItems, index)
-  while (item && isBlankReasoning(item)) {
-    index += 1
-    item = threadItemAt(items, liveItems, index)
-  }
-  return item
-}
-
 /** Roughly one paragraph, for rows whose height depends on their text. */
 const DEFAULT_ROW_ESTIMATE = 72
 /** A collapsed one-line work summary: its 30px line, 8px margin and the row gap. */
