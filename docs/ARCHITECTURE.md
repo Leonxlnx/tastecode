@@ -820,10 +820,15 @@ The rules that solve it:
    workers keep a hot transcript, with 256 items or 256 KiB per worker and 512 items or 512 KiB
    in total. Older or larger workers retain only lifecycle and attention state. Their transcript
    reloads from the local event log when selected.
-9. **Completed inactive histories have a shared text budget.** The three-entry / 3,000-item LRU
-   also caps retained strings at 8 Mi characters (at most 16 MiB of UTF-16 payload). An oversized
-   completed transcript leaves the cache and reloads from the local event log when selected, so
-   one huge reply cannot consume idle memory.
+9. **Completed inactive histories have a shared text budget.** The 16-entry / 24,000-item LRU
+   also caps the counted strings (item ids, text, commands, paths, attachments) at 24 Mi
+   characters (up to 48 MiB of UTF-16 payload); nested payloads such as subagent summaries and
+   object overhead are not counted. An oversized completed transcript leaves the cache and
+   reloads from the local event log when selected. One exception sits outside these limits: the
+   finished chat the focused column showed last (the chat just left) is kept whole, whatever its
+   size, so switching back to it is instant. It stops being kept when another chat becomes the
+   one just left (the next switch or a closed pane), when it is deleted, or when a project list
+   from the server no longer contains it.
 
 ### Budgets — local release gates
 

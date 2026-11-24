@@ -53,6 +53,32 @@ describe('inactive thread history cache', () => {
     expect(idReads - readsBeforeRebuild).toBeGreaterThanOrEqual(cached.items.length)
   })
 
+  it('releases the item index of the chat just left but keeps its rows', () => {
+    let idReads = 0
+    const left = state('left', 100)
+    for (const item of left.items) {
+      const id = item.id
+      Object.defineProperty(item, 'id', {
+        enumerable: true,
+        get() {
+          idReads += 1
+          return id
+        },
+      })
+    }
+    const states = new Map<string, ThreadState>([['left', left]])
+
+    expect(threadItemById(left, 'left-item-99')).toBe(left.items[99])
+    pruneInactiveThreadStates(states, sequences(states), {
+      previousId: 'left',
+      maxInactiveCharacters: 0,
+    })
+    expect(states.get('left')).toBe(left)
+    const readsBeforeRebuild = idReads
+    expect(threadItemById(left, 'left-item-99')).toBe(left.items[99])
+    expect(idReads - readsBeforeRebuild).toBeGreaterThanOrEqual(left.items.length)
+  })
+
   it('bounds old histories while retaining active and live work', () => {
     const states = new Map<string, ThreadState>([
       ['old', state('old', 2_000)],

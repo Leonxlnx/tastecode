@@ -2,6 +2,8 @@ import { bench, describe } from 'vitest'
 import type { Item } from '@harness/contracts'
 import {
   completePendingQueueRead,
+  MAX_INACTIVE_THREAD_CHARACTERS,
+  MAX_INACTIVE_THREAD_STATES,
   pruneInactiveQueueMetadata,
   pruneInactiveThreadStates,
 } from './thread-state-cache.js'
@@ -27,13 +29,16 @@ function completedState(id: string, itemCount: number, text: string): ThreadStat
   return { ...emptyThread, items }
 }
 
-const normalHistoryEntries = Array.from({ length: 4 }, (_, index) => {
+// More 1,000-row chats than the cache keeps: the chat limit stops it first.
+const normalHistoryEntries = Array.from({ length: MAX_INACTIVE_THREAD_STATES + 4 }, (_, index) => {
   const id = `normal-${index}`
   return [id, completedState(id, 1_000, 'A normal completed assistant reply.')] as const
 })
+// Each one-row chat alone is over the character budget; they share one string.
+const oversizedText = 'x'.repeat(MAX_INACTIVE_THREAD_CHARACTERS + 1)
 const oversizedHistoryEntries = Array.from({ length: 6 }, (_, index) => {
   const id = `oversized-${index}`
-  return [id, completedState(id, 1, 'x'.repeat(16 * 1024 * 1024))] as const
+  return [id, completedState(id, 1, oversizedText)] as const
 })
 
 const protectedRows = new ThreadOwnedMap<{ threadId: string }>()
@@ -136,12 +141,15 @@ describe('sparse cache pruning with many protected operations', () => {
 
 describe('completed inactive transcript cache', () => {
   bench(
-    'counts only the retained 3,000-item LRU suffix',
+    'counts only the retained LRU suffix the chat limit leaves',
     () => {
       const states = new Map(normalHistoryEntries)
       const durable = new Map(normalHistoryEntries.map(([id], index) => [id, index + 1]))
       pruneInactiveThreadStates(states, durable)
-      if (states.size !== 3) throw new Error('invalid normal cache size')
+      if (states.size !== MAX_INACTIVE_THREAD_STATES || durable.size !== MAX_INACTIVE_THREAD_STATES)
+        throw new Error('invalid normal cache size')
+      if (!states.has('normal-4') || !durable.has(`normal-${MAX_INACTIVE_THREAD_STATES + 3}`))
+        throw new Error('kept the wrong normal histories')
     },
     OPTIONS,
   )
@@ -152,7 +160,7 @@ describe('completed inactive transcript cache', () => {
       const states = new Map(oversizedHistoryEntries)
       const durable = new Map(oversizedHistoryEntries.map(([id], index) => [id, index + 1]))
       pruneInactiveThreadStates(states, durable)
-      if (states.size !== 0) throw new Error('retained oversized history')
+      if (states.size !== 0 || durable.size !== 0) throw new Error('retained oversized history')
     },
     OPTIONS,
   )

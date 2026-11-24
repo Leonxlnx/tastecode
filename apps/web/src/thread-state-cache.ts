@@ -150,8 +150,9 @@ export function pruneInactiveThreadStates(
       runningCharacters += usage.characters
       continue
     }
-    if (id === options.previousId) continue
+    // The id-to-row index is rebuilt on demand, so even the kept chat drops it.
     releaseThreadItemIndex(state.items)
+    if (id === options.previousId) continue
     const entry = { id, state, itemCount: state.items.length, characters: 0 }
     candidates.push(entry)
     itemCount += entry.itemCount
