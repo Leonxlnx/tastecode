@@ -619,6 +619,17 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // Without it the first frame contains no rows at all, which reads as a
     // blank thread for one frame when switching sessions.
     initialRect: { width: 720, height: 800 },
+    // A chat opens at its end (FrameScrollFollower), so the first render lays
+    // out the rows there. From the top, a chat the renderer still held drew a
+    // screen of its oldest rows, Markdown and all, only for the open to scroll
+    // past them and draw the end in the next frame: a second full render.
+    // Read once, on the list's first position; an empty transcript starts at 0.
+    initialOffset: () => {
+      const list = virtualizerRef.current
+      if (!list) return 0
+      const viewport = (list.scrollRect ?? list.options.initialRect)?.height ?? 0
+      return Math.max(0, list.getTotalSize() - viewport)
+    },
     // Row positions and the runway height go to the DOM in the same callback
     // that measured a row. Through React, every wrapped line of a streamed
     // reply rendered the whole transcript again, and the runway took its new
