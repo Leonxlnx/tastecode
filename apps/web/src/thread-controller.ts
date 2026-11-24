@@ -6,7 +6,7 @@ import {
   emptyThread,
   prependCompleteHistory,
   prependOlderHistory,
-  reduce,
+  reduceSequenced,
   reduceEventLog,
   removeOptimisticMessage,
   type ThreadState,
@@ -540,9 +540,10 @@ export class ThreadController {
       else if (shouldDrainBackgroundDeltas(next)) this.flush(id, () => isProtected(id))
       return
     }
-    const next = reduce(
+    const next = reduceSequenced(
       this.flush(id, () => isProtected(id)),
       event,
+      seq,
     )
     this.update(id, next)
     // The flush can compact a background thread and drop its cursor on purpose;

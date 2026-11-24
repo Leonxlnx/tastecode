@@ -1236,6 +1236,30 @@ describe('composer error state', () => {
     expect(reduce(live, turn).error).toBeUndefined()
     expect(reduceEventLog(replay, [{ seq: 3, event: turn }]).error).toBeUndefined()
   })
+
+  it('keeps the id of a raw failure replayed against a shorter page', () => {
+    const failure: DomainEvent = { type: 'thread.error', threadId: 'th1', message: 'Disconnected' }
+    const entries = [
+      { seq: 1, event: { type: 'item.completed', item: item({ id: 'u1', role: 'user' }) } },
+      { seq: 2, event: { type: 'item.completed', item: item({ id: 'a1', status: 'completed' }) } },
+      { seq: 3, event: { type: 'item.completed', item: item({ id: 'u2', role: 'user' }) } },
+      { seq: 4, event: failure },
+    ] satisfies Array<{ seq: number; event: DomainEvent }>
+    const full = reduceEventLog(emptyThread, entries)
+    const page = reduceEventLog(emptyThread, entries.slice(2))
+    expect(full.items).toHaveLength(4)
+    expect(page.items).toHaveLength(2)
+    expect(page.error).toEqual(full.error)
+    expect(full.error?.message).toBe('Disconnected')
+  })
+
+  it('gives unsequenced failures at the same row count their own ids', () => {
+    const failure: DomainEvent = { type: 'thread.error', threadId: 'th1', message: 'Disconnected' }
+    const first = reduce(emptyThread, failure).error
+    const second = reduce(emptyThread, failure).error
+    expect(first?.id).toBeDefined()
+    expect(second?.id).not.toBe(first?.id)
+  })
 })
 
 describe('last sent prompt', () => {

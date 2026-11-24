@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DomainEvent, ResultOf } from '@harness/contracts'
 import { NEWEST_HISTORY_TURNS, OLDER_HISTORY_TURNS, ThreadController } from './thread-controller.js'
 import { TestTransport } from './test-transport.js'
-import { emptyThread, reduce, threadItems } from './thread-store.js'
+import { emptyThread, reduce, reduceEventLog, threadItems } from './thread-store.js'
 import { MAX_INACTIVE_THREAD_CHARACTERS, MAX_INACTIVE_THREAD_STATES } from './thread-state-cache.js'
 
 const started: DomainEvent = {
@@ -100,6 +100,41 @@ describe('ThreadController lifecycle owner', () => {
     expect(threadItems(controller.frames.getSnapshot())[0]?.text).toBe('x'.repeat(101))
     expect(controller.cursor('thread')).toBe(103)
     controller.suspend()
+  })
+
+  it('shows a failure retried at the same row count after a restore dropped later rows', () => {
+    const controller = new ThreadController(new TestTransport())
+    controller.activate('thread')
+    controller.setCursor('thread', 0)
+    const user: DomainEvent = {
+      type: 'item.completed',
+      item: { ...started.item, id: 'prompt', role: 'user', status: 'completed', text: 'go' },
+    }
+    const failure: DomainEvent = { type: 'thread.error', threadId: 'thread', message: 'Failed' }
+    controller.receive({ threadId: 'thread', event: user, seq: 1 }, unprotected)
+    const before = controller.snapshot('thread')!
+    controller.receive({ threadId: 'thread', event: failure, seq: 2 }, unprotected)
+    const dismissed = controller.snapshot('thread')!.error
+    controller.receive({ threadId: 'thread', event: user, seq: 3 }, unprotected)
+    // The restore drops the rows after the first prompt; the server never reuses their sequences.
+    controller.update('thread', before)
+    controller.setCursor('thread', 1)
+    controller.receive({ threadId: 'thread', event: failure, seq: 4 }, unprotected)
+    const retried = controller.snapshot('thread')!
+    expect(retried.items).toHaveLength(2)
+    expect(retried.error?.message).toBe('Failed')
+    expect(retried.error?.id).not.toBe(dismissed?.id)
+  })
+
+  it('names a live failure as its replay does', () => {
+    const controller = new ThreadController(new TestTransport())
+    controller.activate('thread')
+    controller.setCursor('thread', 0)
+    const failure: DomainEvent = { type: 'thread.error', threadId: 'thread', message: 'Failed' }
+    controller.receive({ threadId: 'thread', event: started, seq: 1 }, unprotected)
+    controller.receive({ threadId: 'thread', event: failure, seq: 2 }, unprotected)
+    const replayed = reduceEventLog(emptyThread, [{ seq: 2, event: failure }])
+    expect(controller.snapshot('thread')!.error).toEqual(replayed.error)
   })
 
   it('does not restore a removed task from a late reconnect queue reply', async () => {
