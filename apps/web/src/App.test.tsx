@@ -11599,6 +11599,28 @@ describe('new chats', () => {
       expect(screen.getByRole('heading').textContent).toBe('What should we build?')
     }
 
+    it('sends a second prompt into the chat the first one starts', async () => {
+      serverProjects = [
+        { path: '/work/project', name: 'TasteCode', pinned: false, createdAt: 0, sessions: [] },
+      ]
+      const answer = holdChatFolder()
+      await enterWithoutProject()
+
+      submitTurn('Plan a weekend in Lisbon')
+      await waitFor(() => expect(rpcCount('projects.createChatFolder')).toBe(1))
+      submitTurn('With a day in Sintra')
+      answer()
+
+      await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(2))
+      expect(rpcCount('projects.createChatFolder')).toBe(1)
+      expect(rpcCount('thread.start')).toBe(1)
+      const turns = transport.request.mock.calls.filter(([method]) => method === 'thread.sendTurn')
+      expect(turns.map(([, params]) => params)).toEqual([
+        expect.objectContaining({ threadId: 'thread-1', text: 'Plan a weekend in Lisbon' }),
+        expect.objectContaining({ threadId: 'thread-1', text: 'With a day in Sintra' }),
+      ])
+    })
+
     it('starts on the account named when the prompt was sent', async () => {
       const codex = serverProviders[0]!
       serverProviders = [
@@ -11665,6 +11687,34 @@ describe('new chats', () => {
       const start = transport.request.mock.calls.find(([method]) => method === 'thread.start')
       expect(start?.[1]).toMatchObject({ workspacePath: folder.path, model: 'gpt-6.1' })
       expect(start?.[1]).not.toHaveProperty('accountId')
+    })
+
+    it('leaves a chat opened meanwhile on screen and starts the new one beside it', async () => {
+      serverProjects = [
+        {
+          path: '/work/project',
+          name: 'TasteCode',
+          pinned: false,
+          createdAt: 0,
+          sessions: [{ id: 'chat-1', title: 'Webhook retries', provider: 'codex', createdAt: 1 }],
+        },
+      ]
+      const answer = holdChatFolder()
+      await enterWithoutProject()
+
+      submitTurn('Plan a weekend in Lisbon')
+      await waitFor(() => expect(rpcCount('projects.createChatFolder')).toBe(1))
+      fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+      await waitFor(() => expect(composerProps().threadId).toBe('chat-1'))
+      answer()
+
+      await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ workspacePath: folder.path }),
+      )
+      expect(composerProps().threadId).toBe('chat-1')
+      expect(composerProps().projectPath).toBe('/work/project')
     })
   })
 

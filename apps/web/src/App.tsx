@@ -979,6 +979,19 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       }
     | undefined
   >(undefined)
+  /** The chat without a project on screen; a new one is entered with a new identity. */
+  const projectlessDraft = useRef<object>({})
+  /**
+   * The first send of a chat without a project, while its folder is being made.
+   * `started` is the start it began, or nothing once it gave up before starting.
+   */
+  const chatFolderStart = useRef<
+    | {
+        draft: object
+        started: Promise<NonNullable<(typeof pendingSession)['current']> | undefined>
+      }
+    | undefined
+  >(undefined)
   const pendingInterruptThreadIds = useRef(new Set<string>())
   // Chats stopped while a prompt sent from this window was still on its way to
   // a turn. The server then rejects that prompt, which is the Stop, not an error.
@@ -4804,11 +4817,14 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       const projectRemoved = () =>
         removedProjectPaths.current.has(projectPath) ||
         (projectStartRevisions.current.get(projectPath) ?? 0) !== projectRevision
-      setNotice(undefined)
-      setActionError(undefined)
-      setUndoRestore(undefined)
-      setRollbackOpen(false)
-      setActivePath(projectPath)
+      // A chat started after its draft lost focus starts out of sight.
+      if (activeIdRef.current === provisionalId) {
+        setNotice(undefined)
+        setActionError(undefined)
+        setUndoRestore(undefined)
+        setRollbackOpen(false)
+        setActivePath(projectPath)
+      }
       try {
         // The shelf names the branch a new chat starts on. Only one other than
         // the checked-out branch needs the server to check and switch; asking
@@ -5022,6 +5038,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       }
       setNotice(undefined)
       setActionError(undefined)
+      projectlessDraft.current = {}
       setChatWithoutProject(withoutProject)
       setActivePath(withoutProject ? undefined : projectPath)
       activeIdRef.current = undefined
@@ -5184,9 +5201,46 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         !selectedModelChoice || selectedModelChoice.agent || selectedModelChoice.connectionId
           ? undefined
           : namedNewChatAccount(providerAccountsRef.current, selectedModelChoice.provider)
-      if (!threadId && !startPath && chatWithoutProject) {
+      // Kept on screen only while the draft it was sent from still is.
+      let adopt = true
+      let settleFolderStart:
+        ((start: NonNullable<(typeof pendingSession)['current']> | undefined) => void) | undefined
+      let joined: NonNullable<(typeof pendingSession)['current']> | undefined
+      const joining =
+        !threadId && !startPath && chatWithoutProject
+          ? chatFolderStart.current?.draft === projectlessDraft.current
+            ? chatFolderStart.current
+            : undefined
+          : undefined
+      if (joining) {
+        // Sent again before the folder arrived: the prompt follows the first into its chat.
+        joined = await joining.started
+        if (!joined) {
+          restoreDraft()
+          return
+        }
+        threadId = joined.id
+      } else if (!threadId && !startPath && chatWithoutProject) {
+        const draft = projectlessDraft.current
+        const folderStart = {
+          draft,
+          started: new Promise<NonNullable<(typeof pendingSession)['current']> | undefined>(
+            (resolve) => (settleFolderStart = resolve),
+          ),
+        }
+        chatFolderStart.current = folderStart
+        // Later sends from this draft join it until its chat has its real id.
+        void folderStart.started
+          .then((start) => start?.promise)
+          .finally(() => {
+            if (chatFolderStart.current === folderStart) chatFolderStart.current = undefined
+          })
         try {
           const folder = await transport.request('projects.createChatFolder', {})
+          adopt =
+            activeIdRef.current === undefined &&
+            activePathRef.current === undefined &&
+            projectlessDraft.current === draft
           setProjects((current) =>
             current.some((project) => project.path === folder.path)
               ? current
@@ -5201,9 +5255,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                   ...current,
                 ],
           )
-          setChatWithoutProject(false)
+          if (adopt) setChatWithoutProject(false)
           startPath = folder.path
         } catch (error) {
+          settleFolderStart?.(undefined)
           restoreDraft()
           reportError(error instanceof Error ? error.message : String(error))
           return
@@ -5211,6 +5266,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       }
       if (!threadId) {
         if (!startPath) {
+          settleFolderStart?.(undefined)
           restoreDraft()
           return
         }
@@ -5224,6 +5280,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         )
         const choice = selectedModelChoice
         if (!choice) {
+          settleFolderStart?.(undefined)
           restoreDraft()
           return
         }
@@ -5234,7 +5291,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
         })
         // The chat keeps Creatify; the next new chat starts without it.
-        setThreadDesignMode(undefined, false)
+        if (adopt) setThreadDesignMode(undefined, false)
         workspaceStartId = provisionalId
         workspaceStartToken = holdWorkspaceStart(provisionalId, startPath)
         optimisticTurnId = provisional.activeTurn?.id
@@ -5267,13 +5324,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
               : project,
           ),
         )
-        activeIdRef.current = provisionalId
-        setActiveThreadApproval(
-          approval === 'auto-review' && !autoReviewSupported ? 'full' : approval,
-        )
-        setActiveId(provisionalId)
-        setThread(provisional)
-        setThreadRevealRequest((request) => request + 1)
+        if (adopt) {
+          activeIdRef.current = provisionalId
+          setActiveThreadApproval(
+            approval === 'auto-review' && !autoReviewSupported ? 'full' : approval,
+          )
+          setActiveId(provisionalId)
+          setThread(provisional)
+          setThreadRevealRequest((request) => request + 1)
+        }
         const promise = createSession(
           startPath,
           provisionalId,
@@ -5283,6 +5342,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           startPath !== activePath,
         )
         pendingSession.current = { id: provisionalId, promise, title: titleFrom(titlePrompt) }
+        settleFolderStart?.(pendingSession.current)
         threadId = await promise
         interruptRequested = pendingInterruptThreadIds.current.delete(provisionalId)
         // The row has its real id now, or is gone. A Stop goes on below under that id.
@@ -5308,8 +5368,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         if (interruptRequested) setStoppingThreadId(threadId)
         optimisticAdded = true
         titledOnCreate = true
-      } else if (pendingSession.current?.id === threadId) {
-        const pending = pendingSession.current
+      } else if (joined || pendingSession.current?.id === threadId) {
+        const pending = joined ?? pendingSession.current!
         const targetId = pending.threadId ?? pending.id
         const provisional = appendUserMessage(
           threadController.snapshot(targetId) ?? emptyThread,
@@ -5837,6 +5897,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           ? !activePathRef.current && !activeIdRef.current
           : path === activePathRef.current
       if (unchanged) return
+      projectlessDraft.current = {}
       if (path) enterNewChatDraft(path)
       setActivePath(path)
       activeIdRef.current = undefined
