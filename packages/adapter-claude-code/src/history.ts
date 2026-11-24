@@ -3,7 +3,6 @@ import { createReadStream, type Stats } from 'node:fs'
 import { open, readdir, readFile, realpath, stat, type FileHandle } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { createInterface } from 'node:readline'
 import { Worker } from 'node:worker_threads'
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk'
 import type {
@@ -83,21 +82,38 @@ function timestamp(value: unknown): number | undefined {
   return Number.isFinite(at) ? at : undefined
 }
 
+/**
+ * Every row of a transcript, split into lines as readline splits them (at LF, CRLF and a lone
+ * CR) but on bytes: readline decoded the whole file into strings and ran a regular expression
+ * over them, which took longer than parsing the rows. A line feed never occurs inside a UTF-8
+ * sequence, so decoding each line on its own gives the same text.
+ */
 async function records(file: string): Promise<SavedRecord[]> {
   const rows: SavedRecord[] = []
-  const stream = createReadStream(file, { encoding: 'utf8' })
-  const lines = createInterface({ input: stream, crlfDelay: Infinity })
-  try {
-    for await (const line of lines) {
-      try {
-        const row = object(JSON.parse(line))
-        if (typeof row.type === 'string') rows.push(row)
-      } catch {
-        // Concurrent writes can leave the final record incomplete.
-      }
+  const add = (bytes: Buffer) => {
+    let text = bytes.toString('utf8')
+    if (text.endsWith('\r')) text = text.slice(0, -1)
+    for (const line of text.includes('\r') ? text.split('\r') : [text]) {
+      const row = parseRecord(line)
+      if (row) rows.push(row)
     }
+  }
+  const stream = createReadStream(file, { highWaterMark: SCAN_CHUNK_BYTES })
+  let pieces: Buffer[] = []
+  try {
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
+      let cursor = 0
+      for (let newline = chunk.indexOf(LINE_FEED); newline !== -1;) {
+        const piece = chunk.subarray(cursor, newline)
+        add(pieces.length ? Buffer.concat([...pieces, piece]) : piece)
+        pieces = []
+        cursor = newline + 1
+        newline = chunk.indexOf(LINE_FEED, cursor)
+      }
+      if (cursor < chunk.length) pieces.push(chunk.subarray(cursor))
+    }
+    if (pieces.length) add(Buffer.concat(pieces))
   } finally {
-    lines.close()
     stream.destroy()
   }
   return rows

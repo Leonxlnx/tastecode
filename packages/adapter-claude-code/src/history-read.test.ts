@@ -346,6 +346,18 @@ describe('reading a Claude Code transcript', () => {
     const lf = await read(rows, { tail: torn })
     const crlf = await read(rows, { lineEnd: '\r\n', tail: torn })
     expect(crlf).toEqual(lf)
+    // A lone CR ends a line as well, and a CR before CRLF leaves an empty line.
+    expect(await read(rows, { lineEnd: '\r', tail: torn })).toEqual(lf)
+    expect(await read(rows, { lineEnd: '\r\r\n', tail: torn })).toEqual(lf)
+    // Rows longer than a read chunk, split by multi-byte characters.
+    const long = [
+      row('long-u', 'user', `Prompt ${'ü€'.repeat(700_000)}`, null),
+      row('long-a', 'assistant', text(`Answer ${'𝄞'.repeat(600_000)}`), 'long-u'),
+    ]
+    const shown = (await read(long, { lineEnd: '\r\n' })).flatMap((event) =>
+      event.type === 'item.completed' && 'text' in event.item ? [event.item.text] : [],
+    )
+    expect(shown).toEqual([`Prompt ${'ü€'.repeat(700_000)}`, `Answer ${'𝄞'.repeat(600_000)}`])
     expect(lines(lf)).toMatchInlineSnapshot(`
       [
         "thread.started",
