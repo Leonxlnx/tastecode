@@ -180,3 +180,65 @@ describe('Thread opened with a transcript the renderer holds', () => {
     expect(top + rowHeight(items.length - 1)).toBeGreaterThan(scroller.scrollTop)
   })
 })
+
+describe('Thread opened at the end of a paged transcript', () => {
+  // Twelve exchanges of ordinary rows, but the first answer is 3,000 px tall and,
+  // being far above the end, is never mounted or measured on open.
+  const tallFirstAnswer = (index: number) => (index === 1 ? 3_000 : 72)
+
+  function open(items: Item[], loading: boolean) {
+    const store = new ThreadFrameStore({ ...emptyThread, items, olderCursor: 'older-1' })
+    const loadOlder = vi.fn((_threadId: string, _turnLimit?: number) => Promise.resolve())
+    const props = {
+      frameStore: store,
+      threadId: 'paged',
+      onDecide: () => undefined,
+      onAnswerUserInput: () => undefined,
+      onLoadOlderHistory: loadOlder,
+    }
+    const view = render(<Thread {...props} loading={loading} />)
+    return { view, loadOlder, props, scroller: scrollerOf(view.container) }
+  }
+
+  it('does not read older history just because an unmeasured early row looks short', async () => {
+    rowHeight = tallFirstAnswer
+    const items = heldTranscript(12)
+    const { view, loadOlder, props, scroller } = open(items, true)
+    runFrames()
+    // Out of loading: the passive fill looks at the edge now.
+    view.rerender(<Thread {...props} loading={false} />)
+    runFrames()
+    await act(async () => Promise.resolve())
+
+    expect(rendered.has(1)).toBe(false)
+    // On the estimates the reader is within the prefetch distance of the top.
+    expect(scroller.scrollTop).toBeLessThan(VIEWPORT * 1.5)
+    expect(loadOlder).not.toHaveBeenCalled()
+  })
+
+  it('reads older history when the first page leaves the viewport underfilled', async () => {
+    const items = heldTranscript(2)
+    const { loadOlder } = open(items, false)
+    runFrames()
+    await act(async () => Promise.resolve())
+    expect(loadOlder).toHaveBeenCalledTimes(1)
+    expect(loadOlder.mock.calls[0]![0]).toBe('paged')
+  })
+
+  it('reads older history once the reader scrolls up toward it', async () => {
+    rowHeight = tallFirstAnswer
+    const items = heldTranscript(12)
+    const { loadOlder, scroller } = open(items, false)
+    runFrames()
+    await act(async () => Promise.resolve())
+    expect(loadOlder).not.toHaveBeenCalled()
+
+    act(() => {
+      fireEvent.wheel(scroller, { deltaY: -400 })
+      scroller.scrollTop = Math.max(0, scroller.scrollTop - 400)
+      fireEvent.scroll(scroller)
+    })
+    await act(async () => Promise.resolve())
+    expect(loadOlder).toHaveBeenCalledTimes(1)
+  })
+})
