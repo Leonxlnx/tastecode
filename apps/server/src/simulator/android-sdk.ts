@@ -859,10 +859,11 @@ export async function createAndroidAvd(input: {
     throw new Error('Android SDK Command-line Tools are not installed. Install them first.')
   }
 
+  // Never --force: the suggested name repeats across Android versions, and an
+  // emulator of that name (made here or elsewhere) must not be replaced.
   const args = [
     'create',
     'avd',
-    '--force',
     '-n',
     name,
     '-k',
