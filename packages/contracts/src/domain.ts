@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { AccountIdSchema, DEFAULT_ACCOUNT_ID, ProviderIdSchema } from './ids.js'
 
 /**
  * The provider-agnostic model every adapter translates into.
@@ -8,18 +9,13 @@ import { z } from 'zod'
  * engine-specific may leak past an adapter.
  */
 
-export const ProviderIdSchema = z.enum([
-  'codex',
-  'claude-code',
-  'grok',
-  'cursor',
-  'opencode',
-  'antigravity',
-  'pi',
-  'acp',
-  'api',
-])
-export type ProviderId = z.infer<typeof ProviderIdSchema>
+export {
+  AccountIdSchema,
+  DEFAULT_ACCOUNT_ID,
+  ProviderIdSchema,
+  type AccountId,
+  type ProviderId,
+} from './ids.js'
 
 /**
  * Every distinct thing an agent produces inside a turn. The UI renders each of
@@ -178,18 +174,6 @@ export const TurnSchema = z.object({
   createdAt: z.number(),
 })
 export type Turn = z.infer<typeof TurnSchema>
-
-/** The account that uses the provider CLI's own config folder. Every provider has one. */
-export const DEFAULT_ACCOUNT_ID = 'default'
-
-/**
- * A provider account's identity, unique within its provider. Server-chosen;
- * `default` is reserved for the CLI's own config folder.
- */
-export const AccountIdSchema = z
-  .string()
-  .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'expected a lowercase account id')
-export type AccountId = z.infer<typeof AccountIdSchema>
 
 export const ThreadSchema = z
   .object({
