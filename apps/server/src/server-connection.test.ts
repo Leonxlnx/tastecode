@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket, type ServerOptions, type WebSocketServer } from 'ws'
 import { InvalidHistoryCursorError } from './history-page.js'
 import { PHONE_ACCESS_UNAVAILABLE } from './phone-access.js'
+import { chatFoldersRoot } from './product-paths.js'
 import { generateNoiseKeyPair, NoiseInitiator, type NoiseSession } from './phone-noise.js'
 import { startServer } from './server.js'
 
@@ -157,6 +158,15 @@ vi.mock('./store.js', () => ({
     }
     deleteThread(threadId: string, options?: { keepSessionOut?: boolean }) {
       state.handled.push(`store.deleteThread(${threadId}, ${JSON.stringify(options)})`)
+      state.threads.delete(threadId)
+    }
+    threads(projectPath: string) {
+      return [...state.threads.entries()]
+        .filter(([, thread]) => thread.projectPath === projectPath)
+        .map(([id, thread]) => ({ ...thread, id }))
+    }
+    removeProject(projectPath: string) {
+      state.handled.push(`store.removeProject(${projectPath})`)
     }
     close() {}
   },
@@ -196,6 +206,9 @@ vi.mock('./orchestrator.js', () => ({
     }
     forgetDeletedThread(threadId: string) {
       state.handled.push(`orchestrator.forgetDeletedThread(${threadId})`)
+    }
+    forgetProject(projectPath: string) {
+      state.handled.push(`orchestrator.forgetProject(${projectPath})`)
     }
     isTurnRunning() {
       return true
@@ -1922,6 +1935,26 @@ describe('chat deletes', () => {
       'orchestrator.close(t)',
       'store.deleteThread(t, {"keepSessionOut":true})',
       'orchestrator.forgetDeletedThread(t)',
+    ])
+  })
+
+  it("forgets a chat folder's project with its last chat, and keeps one still in use", async () => {
+    const folder = path.join(chatFoldersRoot(), '2026-11-01-amber-heron')
+    const shared = path.join(chatFoldersRoot(), '2026-11-01-quiet-otter')
+    state.threads.set('alone', { projectPath: folder, provider: 'codex' })
+    state.threads.set('first', { projectPath: shared, provider: 'codex' })
+    state.threads.set('second', { projectPath: shared, provider: 'codex' })
+    state.threads.set('ordinary', { projectPath: '/project', provider: 'codex' })
+    const { port } = await listen()
+    for (const threadId of ['alone', 'first', 'ordinary']) {
+      expect(await request(port, 'thread.delete', { threadId })).toEqual({
+        id: 'delete',
+        result: {},
+      })
+    }
+    expect(state.handled.filter((entry) => /forgetProject|removeProject/.test(entry))).toEqual([
+      `orchestrator.forgetProject(${folder})`,
+      `store.removeProject(${folder})`,
     ])
   })
 })

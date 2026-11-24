@@ -1624,8 +1624,19 @@ export function startServer(
         // Closing ends a running turn, so nothing the provider still writes can
         // land in the chat; its saved session is kept out of history imports.
         await orchestrator.close(p.threadId)
+        const deleted = store.thread(p.threadId)
         store.deleteThread(p.threadId, { keepSessionOut: true })
         orchestrator.forgetDeletedThread(p.threadId)
+        // A folder made for a chat without a project belongs to its chat: with
+        // the last one gone, its project record goes too. Its files stay on disk.
+        if (
+          deleted &&
+          isChatFolder(chatFolders, deleted.projectPath) &&
+          store.threads(deleted.projectPath).length === 0
+        ) {
+          orchestrator.forgetProject(deleted.projectPath)
+          store.removeProject(deleted.projectPath)
+        }
         lifecycleScheduler.changed()
         return {}
       }
