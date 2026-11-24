@@ -253,9 +253,18 @@ export function createOptimisticMessageId(): string {
   return localId(OPTIMISTIC_PREFIX)
 }
 
-function createThreadErrorItem(message: string): Item {
+/**
+ * The local id of one unsequenced failure arrival. Taken once, at receipt, so
+ * reducing the same buffered arrival again after a history read names the
+ * same failure and keeps its dismissal.
+ */
+export function createThreadErrorId(): string {
+  return localId('error:')
+}
+
+function createThreadErrorItem(message: string, id = createThreadErrorId()): Item {
   return {
-    id: localId('error:'),
+    id,
     turnId: '',
     type: 'error',
     status: 'completed',
@@ -267,8 +276,9 @@ function createThreadErrorItem(message: string): Item {
 /**
  * A raw failure is named by its stored sequence, which a replay of any page
  * repeats and the server never reuses, so a dismissal follows that failure and
- * no other. An unsequenced live failure takes its fresh row's id: never a row
- * count, which a restore that drops later rows hands to the next failure.
+ * no other. An unsequenced live failure takes its row's id, which is the id its
+ * receiver gave the arrival: never a row count, which a restore that drops
+ * later rows hands to the next failure.
  */
 function threadErrorId(seq: number | undefined, row: Item): string {
   return seq === undefined ? row.id : `thread-error:${seq}`
@@ -290,9 +300,10 @@ function reduceThreadError(
   state: ThreadState,
   message: string,
   seq: number | undefined,
+  errorId: string | undefined,
 ): ThreadState {
   const items = copyMaterializedItems(state)
-  const error = createThreadErrorItem(message)
+  const error = createThreadErrorItem(message, errorId)
   items.push(error)
   recordAppendedItem(items, error)
   return settleThreadError(
@@ -302,14 +313,18 @@ function reduceThreadError(
   )
 }
 
-/** `reduce` for a live event that may carry its stored sequence. */
+/**
+ * `reduce` for a live event that may carry its stored sequence, and for an
+ * unsequenced failure the local id its receiver gave it.
+ */
 export function reduceSequenced(
   state: ThreadState,
   event: DomainEvent,
   seq: number | undefined,
+  errorId?: string,
 ): ThreadState {
   return event.type === 'thread.error'
-    ? reduceThreadError(state, event.message, seq)
+    ? reduceThreadError(state, event.message, seq, seq === undefined ? errorId : undefined)
     : reduce(state, event)
 }
 
@@ -467,7 +482,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
     }
 
     case 'thread.error':
-      return reduceThreadError(state, event.message, undefined)
+      return reduceThreadError(state, event.message, undefined, undefined)
 
     default:
       return state
@@ -772,7 +787,12 @@ class ReplayItems {
  */
 export function reduceEventLog(
   state: ThreadState,
-  entries: ReadonlyArray<{ seq?: number | undefined; event: DomainEvent }>,
+  entries: ReadonlyArray<{
+    seq?: number | undefined
+    event: DomainEvent
+    /** The receiver's id for an unsequenced failure arrival. */
+    errorId?: string | undefined
+  }>,
   afterSeq?: number,
 ): ThreadState {
   let next = settleLiveItems(state)
@@ -888,7 +908,10 @@ export function reduceEventLog(
     }
     if (event.type === 'thread.error') {
       const items = mutableItems()
-      const error = createThreadErrorItem(event.message)
+      const error = createThreadErrorItem(
+        event.message,
+        entry.seq === undefined ? entry.errorId : undefined,
+      )
       items.append(error)
       next = settleThreadError(next, items.items, threadErrorId(entry.seq, error))
       ownsNext = true

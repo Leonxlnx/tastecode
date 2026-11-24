@@ -6,6 +6,7 @@ import {
   emptyThread,
   prependCompleteHistory,
   prependOlderHistory,
+  createThreadErrorId,
   reduceSequenced,
   reduceEventLog,
   removeOptimisticMessage,
@@ -48,7 +49,12 @@ export type PendingSubmission = RecoverableDraft & {
   optimisticTurn?: NonNullable<ThreadState['activeTurn']>
   precedingTurnId?: string
 }
-type BufferedEvent = { seq: number | undefined; event: DomainEvent }
+type BufferedEvent = {
+  seq: number | undefined
+  event: DomainEvent
+  /** The local id of an unsequenced failure, taken at receipt. */
+  errorId?: string | undefined
+}
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type HistoryBase = { state: ThreadState; sequence: number | undefined }
 /** `write` returns whether storage took the drafts. */
@@ -522,8 +528,12 @@ export class ThreadController {
     )
       return
     if (seq === undefined) this.#sequences.delete(id)
+    // An unsequenced failure is named once, here, so a history read that
+    // reduces this same arrival again keeps the reader's dismissal of it.
+    const errorId =
+      seq === undefined && event.type === 'thread.error' ? createThreadErrorId() : undefined
     const buffers = this.#histories.get(id)
-    if (buffers) for (const buffer of buffers) buffer.push({ seq, event })
+    if (buffers) for (const buffer of buffers) buffer.push({ seq, event, errorId })
     if (event.type === 'item.delta') {
       // The per-delta path: one comparison more than a single column needed.
       const visible = id === this.#activeId || id === this.#besideId
@@ -544,6 +554,7 @@ export class ThreadController {
       this.flush(id, () => isProtected(id)),
       event,
       seq,
+      errorId,
     )
     this.update(id, next)
     // The flush can compact a background thread and drop its cursor on purpose;

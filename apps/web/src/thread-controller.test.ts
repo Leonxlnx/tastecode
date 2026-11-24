@@ -137,6 +137,35 @@ describe('ThreadController lifecycle owner', () => {
     expect(controller.snapshot('thread')!.error).toEqual(replayed.error)
   })
 
+  it('keeps one unsequenced failure dismissed across a deferred history read', async () => {
+    let reply!: (value: ResultOf<'thread.history'>) => void
+    const controller = new ThreadController(
+      new TestTransport(
+        () =>
+          new Promise((resolve) => {
+            reply = resolve
+          }),
+      ),
+    )
+    controller.activate('thread')
+    const failure: DomainEvent = { type: 'thread.error', threadId: 'thread', message: 'Failed' }
+    const load = controller.loadHistory('thread')
+    controller.receive({ threadId: 'thread', event: failure }, unprotected)
+    const dismissed = controller.snapshot('thread')!.error
+    expect(dismissed?.message).toBe('Failed')
+    // The snapshot from before the failure arrives; the buffered arrival is reduced again.
+    reply(history('before'))
+    await load
+    const restored = controller.snapshot('thread')!
+    expect(restored.error?.id).toBe(dismissed?.id)
+    expect(restored.items.filter((item) => item.type === 'error')).toHaveLength(1)
+    // A second arrival with the same text is a new failure.
+    controller.receive({ threadId: 'thread', event: failure }, unprotected)
+    const second = controller.snapshot('thread')!.error
+    expect(second?.message).toBe('Failed')
+    expect(second?.id).not.toBe(dismissed?.id)
+  })
+
   it('does not restore a removed task from a late reconnect queue reply', async () => {
     let reply!: (value: ResultOf<'thread.queue'>) => void
     const transport = new TestTransport((method) =>
