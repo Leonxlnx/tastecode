@@ -11570,6 +11570,49 @@ describe('new chats', () => {
     ).not.toContain(true)
   })
 
+  it('gives the chat after a deleted chat without a project a folder of its own', async () => {
+    const old = {
+      path: '/home/me/.tastecode/threads/2026-10-30-quiet-otter',
+      name: '2026-10-30-quiet-otter',
+      pinned: false,
+      createdAt: 1,
+      chat: true as const,
+    }
+    const folder = {
+      path: '/home/me/.tastecode/threads/2026-11-01-amber-heron',
+      name: '2026-11-01-amber-heron',
+      pinned: false,
+      createdAt: 2,
+      chat: true as const,
+    }
+    serverProjects = [
+      { path: '/work/project', name: 'TasteCode', pinned: false, createdAt: 0, sessions: [] },
+      {
+        ...old,
+        sessions: [{ id: 'standalone', title: 'Lisbon trip', provider: 'codex', createdAt: 3 }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation(async (method, params) => {
+      if (method !== 'projects.createChatFolder') return request(method, params)
+      serverProjects = [...serverProjects, { ...folder, sessions: [] }]
+      return folder
+    })
+
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Lisbon trip')))
+    await waitFor(() => expect(composerProps().threadId).toBe('standalone'))
+    await chooseChatMenuItem('Lisbon trip', 'Delete chat')
+    await screen.findByText('Chat deleted')
+    await waitFor(() => expect(composerProps().threadId).toBeUndefined())
+
+    submitTurn('Plan the next trip')
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    expect(rpcCount('projects.createChatFolder')).toBe(1)
+    const start = transport.request.mock.calls.find(([method]) => method === 'thread.start')
+    expect(start?.[1]).toMatchObject({ workspacePath: folder.path })
+  })
+
   it('toggles an empty project without leaving the current new chat', async () => {
     serverProjects = [
       {
