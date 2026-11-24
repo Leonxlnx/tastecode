@@ -5778,6 +5778,118 @@ describe('new chats', () => {
     await waitFor(() => expect(offered()).toEqual(['work-plan-model', 'personal-plan-model']))
   })
 
+  it("picks a model only an open chat's own account offers", async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = [
+      {
+        id: 'chat-work',
+        title: 'Work chat',
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+        createdAt: 2,
+      },
+    ]
+    const model = (id: string): Model => ({
+      id,
+      displayName: id,
+      isDefault: id.endsWith('default'),
+      reasoningEfforts: ['low'],
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\TasteCode\accounts\codex\work-1a2b3c',
+              managed: true,
+              email: 'work@example.test',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'models.list') {
+        const { accountId } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models:
+            accountId === 'work-1a2b3c'
+              ? [model('work-default'), model('work-only')]
+              : [model('personal-default')],
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Work chat')))
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain('codex:work-only'),
+    )
+
+    act(() => composerProps().onModelChange('codex:work-only'))
+
+    await waitFor(() => expect(composerProps().modelId).toBe('codex:work-only'))
+  })
+
+  it('names the account a new chat starts on in its row while it starts', async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = []
+    const request = transport.request.getMockImplementation()!
+    let started: (value: { threadId: string }) => void = () => undefined
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\TasteCode\accounts\codex\work-1a2b3c',
+              managed: true,
+              email: 'work@example.test',
+            },
+          ],
+          active: { codex: 'work-1a2b3c' },
+        })
+      }
+      if (method === 'thread.start') {
+        return new Promise((resolve) => (started = resolve))
+      }
+      return request(method, params)
+    })
+    const row = () =>
+      sidebarProps()
+        .projects.flatMap((project) => project.sessions)
+        .find((session) => session.title === 'Ship the queue')
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+    fireEvent.change(composer, { target: { value: 'Ship the queue' } })
+    await waitFor(() => expect(sendButton.disabled).toBe(false))
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ accountId: 'work-1a2b3c' }),
+      ),
+    )
+
+    expect(row()?.accountId).toBe('work-1a2b3c')
+    await act(async () => started({ threadId: 'thread-1' }))
+  })
+
   it('snoozes a limited chat and resumes it at reset even after another chat is opened', async () => {
     const resetAt = Date.now() + 60_000
     serverProjects[0]!.sessions = [
