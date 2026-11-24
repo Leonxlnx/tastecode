@@ -1,9 +1,15 @@
 import type { ThreadState } from './thread-state.js'
 import { releaseThreadItemIndex } from './thread-store.js'
 
-export const MAX_INACTIVE_THREAD_STATES = 3
-export const MAX_INACTIVE_THREAD_ITEMS = 3_000
-export const MAX_INACTIVE_THREAD_CHARACTERS = 8 * 1024 * 1024
+/**
+ * Chats kept for an instant switch back are bounded by their text: three
+ * chats used to drop a big chat the moment two others were opened after it,
+ * and switching back then read and parsed its whole page again. The count and
+ * row limits only stop a pathological mix of many tiny chats.
+ */
+export const MAX_INACTIVE_THREAD_STATES = 16
+export const MAX_INACTIVE_THREAD_ITEMS = 24_000
+export const MAX_INACTIVE_THREAD_CHARACTERS = 24 * 1024 * 1024
 const MAX_SINGLE_BACKGROUND_RUNNING_ITEMS = 256
 const MAX_SINGLE_BACKGROUND_RUNNING_CHARACTERS = 256 * 1024
 const MAX_BACKGROUND_RUNNING_STATES = 8
@@ -85,6 +91,12 @@ export function pruneInactiveThreadStates(
   durableSequences: Map<string, number>,
   options: {
     activeId?: string | undefined
+    /**
+     * The chat shown before the active one. Its finished history stays whole,
+     * outside the budgets: going back to the chat just left is the most common
+     * switch, and its size was in memory a moment ago anyway.
+     */
+    previousId?: string | undefined
     protectedIds?: ReadonlySet<string> | undefined
     isProtected?: ((threadId: string) => boolean) | undefined
     isPartial?: ((threadId: string) => boolean) | undefined
@@ -138,6 +150,7 @@ export function pruneInactiveThreadStates(
       runningCharacters += usage.characters
       continue
     }
+    if (id === options.previousId) continue
     releaseThreadItemIndex(state.items)
     const entry = { id, state, itemCount: state.items.length, characters: 0 }
     candidates.push(entry)
@@ -184,10 +197,9 @@ export function pruneInactiveThreadStates(
     if (!evictCandidate()) break
   }
 
-  // Item and state limits leave at most three histories / 3,000 rows to scan.
-  // Count only that retained LRU suffix, so visiting 100 old long threads does
-  // not turn byte accounting into a second full-history walk. A held history
-  // is counted once (see inactiveThreadCharacters).
+  // Count only the retained LRU suffix the item and state limits leave, so
+  // visiting 100 old long threads does not turn byte accounting into a second
+  // full-history walk. A held history is counted once (see inactiveThreadCharacters).
   let characterCount = 0
   for (let index = candidateIndex; index < candidates.length; index += 1) {
     const candidate = candidates[index]!

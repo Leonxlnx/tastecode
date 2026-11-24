@@ -3,6 +3,7 @@ import type { DomainEvent, ResultOf } from '@harness/contracts'
 import { NEWEST_HISTORY_TURNS, OLDER_HISTORY_TURNS, ThreadController } from './thread-controller.js'
 import { TestTransport } from './test-transport.js'
 import { emptyThread, reduce, threadItems } from './thread-store.js'
+import { MAX_INACTIVE_THREAD_CHARACTERS, MAX_INACTIVE_THREAD_STATES } from './thread-state-cache.js'
 
 const started: DomainEvent = {
   type: 'item.started',
@@ -394,13 +395,50 @@ describe('ThreadController lifecycle owner', () => {
     const retained = Array.from({ length: 20 }, (_, index) =>
       controller.snapshot('thread-' + index),
     ).filter(Boolean)
-    expect(retained.length).toBeLessThanOrEqual(4)
+    expect(retained.length).toBeLessThanOrEqual(MAX_INACTIVE_THREAD_STATES + 1)
     const old = controller.beginRecovery()
     const next = controller.beginRecovery()
     expect(controller.isCurrentRecovery(old)).toBe(false)
     expect(controller.isCurrentRecovery(next)).toBe(true)
     controller.suspend()
     expect(controller.isCurrentRecovery(next)).toBe(false)
+  })
+
+  it('keeps the chat the column showed before the active one, whatever its size', () => {
+    const controller = new ThreadController(new TestTransport())
+    const left = reduce(emptyThread, {
+      ...started,
+      item: { ...started.item, text: 'x'.repeat(MAX_INACTIVE_THREAD_CHARACTERS + 1) },
+    })
+    controller.update('left', left)
+    controller.setCursor('left', 1)
+    controller.activate('left')
+    controller.activate('now')
+    controller.prune(unprotected)
+    expect(controller.snapshot('left')).toBe(left)
+    expect(controller.cursor('left')).toBe(1)
+
+    // A third chat makes the one just left the kept one; the big chat is over the budget.
+    controller.activate('third')
+    controller.prune(unprotected)
+    expect(controller.snapshot('left')).toBeUndefined()
+    expect(controller.cursor('left')).toBeUndefined()
+  })
+
+  it('stops keeping a chat it forgot as the one shown before', () => {
+    const controller = new ThreadController(new TestTransport())
+    const left = reduce(emptyThread, {
+      ...started,
+      item: { ...started.item, text: 'x'.repeat(MAX_INACTIVE_THREAD_CHARACTERS + 1) },
+    })
+    controller.activate('left')
+    controller.activate('now')
+    controller.forget('left')
+    // A later state under the same id (a chat opened again) is held like any other.
+    controller.update('left', left)
+    controller.setCursor('left', 1)
+    controller.prune(unprotected)
+    expect(controller.snapshot('left')).toBeUndefined()
   })
 })
 
@@ -485,13 +523,16 @@ describe('history gap recovery', () => {
 
   it('releases recovery bases when their cached threads are evicted or forgotten', () => {
     const controller = new ThreadController(new TestTransport())
-    for (let index = 0; index < 6; index++) {
+    const count = MAX_INACTIVE_THREAD_STATES + 3
+    for (let index = 0; index < count; index++) {
       controller.update(String(index), reduce(emptyThread, started))
       controller.setCursor(String(index), 1)
     }
     controller.markHistoriesForRecovery()
     controller.prune(unprotected)
-    expect([...controller.historyRecoveryIds()]).toEqual(['3', '4', '5'])
+    const kept = Array.from({ length: MAX_INACTIVE_THREAD_STATES }, (_, index) => String(index + 3))
+    expect([...controller.historyRecoveryIds()]).toEqual(kept)
+    for (const id of kept.slice(3)) controller.forget(id)
     controller.forget('3')
     controller.invalidateHistory('4')
     controller.discardSnapshot('5')

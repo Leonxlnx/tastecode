@@ -111,6 +111,8 @@ export class ThreadController {
   #activeId: string | undefined
   /** The other column's chat, streamed like the active one while it is shown. */
   #besideId: string | undefined
+  /** The chat the focused column showed before its current one; kept for switching back. */
+  #previousId: string | undefined
   #frame: number | undefined
   #recoveryRevision = 0
   #partialThreadIds = { has: (id: string) => !this.#sequences.has(id) }
@@ -133,6 +135,8 @@ export class ThreadController {
   }
   /** Show `id` in the focused column. */
   activate(id: string | undefined): void {
+    const left = this.#shown[this.#focused]
+    if (left !== undefined && left !== id) this.#previousId = left
     this.#shown[this.#focused] = id
     this.#activeId = id
   }
@@ -417,6 +421,7 @@ export class ThreadController {
       if (!this.isVisible(id)) this.flush(id, () => isProtected(id))
     const evicted = pruneInactiveThreadStates(this.#states, this.#sequences, {
       activeId: this.#activeId,
+      previousId: this.#previousId,
       protectedIds: this.#besideIds(),
       isProtected,
       isPartial: (id) => !this.#sequences.has(id),
@@ -447,6 +452,7 @@ export class ThreadController {
       this.#historyBases.set(id, { state: emptyThread, sequence: undefined })
   }
   forget(id: string): void {
+    if (this.#previousId === id) this.#previousId = undefined
     this.#states.delete(id)
     this.#sequences.delete(id)
     this.#submissions.delete(id)

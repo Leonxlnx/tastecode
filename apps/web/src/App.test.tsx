@@ -25,6 +25,7 @@ import { PROVIDER_RECHECK_INTERVAL_MS } from './provider-recheck.js'
 import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
+import { MAX_INACTIVE_THREAD_STATES } from './thread-state-cache.js'
 import { composerWireText } from './ui/composer-chips.js'
 
 const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
@@ -16162,13 +16163,15 @@ describe('reopening a session', () => {
   })
 
   it('reloads an evicted history after visiting more sessions than the inactive cache retains', async () => {
+    // The chat just left is always kept; every other one counts against the limits.
+    const visited = MAX_INACTIVE_THREAD_STATES + 3
     serverProjects = [
       {
         path: '/work/project',
         name: 'project',
         pinned: false,
         createdAt: 0,
-        sessions: Array.from({ length: 5 }, (_, index) => ({
+        sessions: Array.from({ length: visited }, (_, index) => ({
           id: `thread-${index + 1}`,
           title: `Thread ${index + 1}`,
           running: false,
@@ -16188,8 +16191,13 @@ describe('reopening a session', () => {
     })
 
     render(<App />)
-    for (let index = 1; index <= 5; index += 1) {
-      fireEvent.click(await screen.findByRole('button', { name: new RegExp(`^Thread ${index},`) }))
+    await screen.findByRole('button', { name: /^Thread 1,/ })
+    for (let index = 1; index <= visited; index += 1) {
+      const name = new RegExp(`^Thread ${index},`)
+      // A project lists its first 15 chats until asked for more.
+      if (!screen.queryByRole('button', { name }))
+        fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+      fireEvent.click(await screen.findByRole('button', { name }))
       expect(await screen.findByText(`History ${index}`)).toBeTruthy()
     }
 
@@ -16205,6 +16213,56 @@ describe('reopening a session', () => {
       'thread.history',
       expect.objectContaining({ threadId: 'thread-1', afterSeq: expect.any(Number) }),
     )
+  })
+
+  it('switches back to a chat left several chats ago from what it still holds', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: Array.from({ length: 5 }, (_, index) => ({
+          id: `thread-${index + 1}`,
+          title: `Thread ${index + 1}`,
+          running: false,
+        })),
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      const parsed = methods['thread.history'].params.parse(params)
+      const index = Number(parsed.threadId.slice('thread-'.length))
+      // Nothing new after the sequence the client holds.
+      if (parsed.afterSeq !== undefined) return Promise.resolve({ events: [], running: false })
+      return Promise.resolve({
+        events: [completedHistoryEvent(index, `${parsed.threadId}-item`, `History ${index}`)],
+        running: false,
+      })
+    })
+
+    render(<App />)
+    for (let index = 1; index <= 5; index += 1) {
+      fireEvent.click(await screen.findByRole('button', { name: new RegExp(`^Thread ${index},`) }))
+      expect(await screen.findByText(`History ${index}`)).toBeTruthy()
+    }
+
+    transport.request.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /^Thread 1,/ }))
+    // Shown from memory at once; only what happened since is asked for.
+    expect(screen.getByText('History 1')).toBeTruthy()
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'thread-1', afterSeq: expect.any(Number) }),
+      )
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
+      threadId: 'thread-1',
+      page: NEWEST_PAGE,
+    })
   })
 
   it('reloads an oversized background reply from durable history before completion', async () => {

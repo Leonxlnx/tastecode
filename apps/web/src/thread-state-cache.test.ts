@@ -370,12 +370,11 @@ describe('inactive thread history cache', () => {
     pruneInactiveThreadStates(states, durable, { activeId: 'active' })
 
     const inactive = [...states].filter(([id]) => id !== 'active').map(([, thread]) => thread)
-    expect(inactive).toHaveLength(MAX_INACTIVE_THREAD_STATES)
-    expect(inactive.reduce((total, thread) => total + thread.items.length, 0)).toBe(
-      MAX_INACTIVE_THREAD_ITEMS,
-    )
+    const kept = Math.min(MAX_INACTIVE_THREAD_STATES, MAX_INACTIVE_THREAD_ITEMS / 1_000)
+    expect(inactive).toHaveLength(kept)
+    expect(inactive.reduce((total, thread) => total + thread.items.length, 0)).toBe(kept * 1_000)
     expect([...states.values()].reduce((total, thread) => total + thread.items.length, 0)).toBe(
-      4_000,
+      (kept + 1) * 1_000,
     )
   })
 
@@ -420,7 +419,46 @@ describe('inactive thread history cache', () => {
   })
 
   it('keeps the default completed-history text budget bounded', () => {
-    expect(MAX_INACTIVE_THREAD_CHARACTERS).toBe(8 * 1024 * 1024)
+    expect(MAX_INACTIVE_THREAD_CHARACTERS).toBe(24 * 1024 * 1024)
+  })
+
+  it('keeps every chat that fits the text budget, not just the last three', () => {
+    const states = new Map<string, ThreadState>(
+      Array.from({ length: 8 }, (_, index) => [`chat-${index}`, state(`chat-${index}`, 500)]),
+    )
+    states.set('active', state('active', 500))
+    const durable = sequences(states)
+
+    expect(pruneInactiveThreadStates(states, durable, { activeId: 'active' })).toEqual([])
+    expect(states.size).toBe(9)
+    expect(durable.size).toBe(9)
+  })
+
+  it('keeps the chat shown before the active one whole, over the text budget', () => {
+    const large = (id: string) => {
+      const thread = state(id, 1)
+      thread.items[0] = { ...thread.items[0]!, text: 'x'.repeat(1_024) }
+      return thread
+    }
+    const states = new Map<string, ThreadState>([
+      ['older', large('older')],
+      ['previous', large('previous')],
+      ['active', state('active', 1)],
+    ])
+    const durable = sequences(states)
+    const budget = { maxInactiveCharacters: 100, activeId: 'active' }
+
+    expect(
+      pruneInactiveThreadStates(states, durable, { ...budget, previousId: 'previous' }),
+    ).toEqual(['older'])
+    expect([...states.keys()]).toEqual(['previous', 'active'])
+    expect(durable.has('previous')).toBe(true)
+
+    // Once another chat was shown in between, it is one more held chat under the budget.
+    expect(pruneInactiveThreadStates(states, durable, { ...budget, previousId: 'other' })).toEqual([
+      'previous',
+    ])
+    expect(durable.has('previous')).toBe(false)
   })
 
   it('counts a held history once, and again only when its state is replaced', () => {
