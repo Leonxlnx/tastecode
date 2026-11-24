@@ -264,16 +264,53 @@ function createThreadErrorItem(message: string): Item {
   }
 }
 
-function settleThreadError(state: ThreadState, items: Item[]): ThreadState {
+/**
+ * A raw failure is named by its stored sequence, which a replay of any page
+ * repeats and the server never reuses, so a dismissal follows that failure and
+ * no other. An unsequenced live failure takes its fresh row's id: never a row
+ * count, which a restore that drops later rows hands to the next failure.
+ */
+function threadErrorId(seq: number | undefined, row: Item): string {
+  return seq === undefined ? row.id : `thread-error:${seq}`
+}
+
+function settleThreadError(state: ThreadState, items: Item[], errorId: string): ThreadState {
   return {
     ...state,
-    error: { id: `thread-error:${items.length}`, message: items.at(-1)?.text ?? 'Chat failed' },
+    error: { id: errorId, message: items.at(-1)?.text ?? 'Chat failed' },
     running: false,
     activeTurn: undefined,
     approvals: [],
     userInputs: [],
     items,
   }
+}
+
+function reduceThreadError(
+  state: ThreadState,
+  message: string,
+  seq: number | undefined,
+): ThreadState {
+  const items = copyMaterializedItems(state)
+  const error = createThreadErrorItem(message)
+  items.push(error)
+  recordAppendedItem(items, error)
+  return settleThreadError(
+    { ...state, liveItems: EMPTY_LIVE_ITEMS },
+    items,
+    threadErrorId(seq, error),
+  )
+}
+
+/** `reduce` for a live event that may carry its stored sequence. */
+export function reduceSequenced(
+  state: ThreadState,
+  event: DomainEvent,
+  seq: number | undefined,
+): ThreadState {
+  return event.type === 'thread.error'
+    ? reduceThreadError(state, event.message, seq)
+    : reduce(state, event)
 }
 
 type TurnCompletedEvent = Extract<DomainEvent, { type: 'turn.completed' }>
@@ -429,13 +466,8 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       return { ...state, items, liveItems: EMPTY_LIVE_ITEMS }
     }
 
-    case 'thread.error': {
-      const items = copyMaterializedItems(state)
-      const error = createThreadErrorItem(event.message)
-      items.push(error)
-      recordAppendedItem(items, error)
-      return settleThreadError({ ...state, liveItems: EMPTY_LIVE_ITEMS }, items)
-    }
+    case 'thread.error':
+      return reduceThreadError(state, event.message, undefined)
 
     default:
       return state
@@ -856,8 +888,9 @@ export function reduceEventLog(
     }
     if (event.type === 'thread.error') {
       const items = mutableItems()
-      items.append(createThreadErrorItem(event.message))
-      next = settleThreadError(next, items.items)
+      const error = createThreadErrorItem(event.message)
+      items.append(error)
+      next = settleThreadError(next, items.items, threadErrorId(entry.seq, error))
       ownsNext = true
       continue
     }
