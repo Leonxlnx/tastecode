@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render } from '@testing-library/react'
 import type { Item } from '@harness/contracts'
 import { ThreadFrameStore } from '../thread-frame-store.js'
-import { emptyThread } from '../thread-store.js'
+import { emptyThread, reduceDeltas } from '../thread-store.js'
 
 const markdownRender = vi.hoisted(() => vi.fn())
 const virtualizerOptions = vi.hoisted(() => vi.fn())
@@ -458,6 +458,61 @@ describe('streamed thread renders', () => {
     expect(className(0)).not.toContain('is-work-to-next')
     // The last row of a turn has nothing to close up to.
     expect(className(5)).not.toContain('is-work-to-next')
+  })
+
+  it('closes a work row up to blank reasoning on its first streamed text', () => {
+    const items = [
+      message({ id: 'user-1', turnId: 'turn-2', role: 'user', text: 'Run the checks' }),
+      message({
+        id: 'thought-1',
+        turnId: 'turn-2',
+        type: 'reasoning',
+        role: undefined,
+        status: 'started',
+        text: 'Checking',
+      }),
+      message({
+        id: 'thought-2',
+        turnId: 'turn-2',
+        type: 'reasoning',
+        role: undefined,
+        status: 'started',
+        text: '',
+      }),
+      message({ id: 'answer-1', turnId: 'turn-2', status: 'started', text: 'Done' }),
+    ]
+    const frameStore = new ThreadFrameStore({
+      ...emptyThread,
+      items,
+      running: true,
+      activeTurn: { id: 'turn-2', startedAt: 0 },
+    })
+    const rendered = render(
+      <Thread
+        frameStore={frameStore}
+        checkpoints={[]}
+        onDecide={onDecide}
+        onAnswerUserInput={onAnswerUserInput}
+        onEditMessage={onEditMessage}
+        onRevertCheckpoint={onRevertCheckpoint}
+      />,
+    )
+    const className = (index: number) =>
+      rendered.container.querySelector(`[data-index="${index}"]`)?.className
+    const stream = (textDelta: string) =>
+      act(() =>
+        frameStore.publish(
+          reduceDeltas(frameStore.getSnapshot(), [
+            { type: 'item.delta', turnId: 'turn-2', itemId: 'thought-2', textDelta },
+          ]),
+        ),
+      )
+
+    expect(className(1)).not.toContain('is-work-to-next')
+    stream('Planning')
+    expect(className(1)).toContain('is-work-to-next')
+    stream(' the fix')
+    expect(className(1)).toContain('is-work-to-next')
   })
 
   it('crossfades working labels without remounting the rail', () => {

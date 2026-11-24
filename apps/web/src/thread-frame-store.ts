@@ -1,7 +1,13 @@
-import { changedLiveItemIndices, type ThreadState } from './thread-store.js'
+import type { Item } from '@harness/contracts'
+import { changedLiveItemIndices, threadItemAt, type ThreadState } from './thread-store.js'
+import { isBlankReasoning } from './ui/turns.js'
 
 type Listener = () => void
 type ItemRangeSubscription = { first: number; last: number; listener: Listener }
+
+function showsRow(item: Item | undefined): boolean {
+  return item !== undefined && !isBlankReasoning(item)
+}
 
 function hasStructuralChange(previous: ThreadState, next: ThreadState): boolean {
   return (
@@ -32,6 +38,7 @@ export class ThreadFrameStore {
   readonly #structureListeners = new Set<Listener>()
   readonly #itemListeners = new Map<number, Set<Listener>>()
   readonly #itemRangeListeners = new Set<ItemRangeSubscription>()
+  readonly #visibilityListeners = new Set<ItemRangeSubscription>()
   #snapshot: ThreadState
   #structureSnapshot: ThreadState
 
@@ -84,6 +91,36 @@ export class ThreadFrameStore {
     return () => this.#itemRangeListeners.delete(subscription)
   }
 
+  /**
+   * A row whose spacing depends on the rows after it, up to the next one that
+   * shows, subscribes that blank reasoning run here: it re-renders when a row in
+   * the run starts or stops showing, not on every delta of a row that already shows.
+   */
+  subscribeRowVisibility(first: number, last: number, listener: Listener): () => void {
+    const subscription = { first, last, listener }
+    this.#visibilityListeners.add(subscription)
+    return () => this.#visibilityListeners.delete(subscription)
+  }
+
+  #collectVisibilityListeners(
+    index: number,
+    previous: ThreadState,
+    next: ThreadState,
+    listeners: Set<Listener>,
+  ): void {
+    let flipped: boolean | undefined
+    for (const subscription of this.#visibilityListeners) {
+      if (index < subscription.first || index > subscription.last) continue
+      if (flipped === undefined) {
+        const before = threadItemAt(previous.items, previous.liveItems, index)
+        const after = threadItemAt(next.items, next.liveItems, index)
+        flipped = showsRow(before) !== showsRow(after)
+        if (!flipped) return
+      }
+      listeners.add(subscription.listener)
+    }
+  }
+
   #collectItemListeners(index: number, listeners: Set<Listener>): void {
     for (const listener of this.#itemListeners.get(index) ?? []) listeners.add(listener)
     for (const subscription of this.#itemRangeListeners) {
@@ -103,6 +140,7 @@ export class ThreadFrameStore {
     const changedIndices = structural
       ? undefined
       : changedLiveItemIndices(previous.liveItems, snapshot.liveItems)
+    const visibility = this.#visibilityListeners.size > 0
     if (previous.liveItems === snapshot.liveItems) {
       // Structural events often keep the live text overlay unchanged.
     } else if (changedIndices && this.#itemRangeListeners.size === 0) {
@@ -110,30 +148,50 @@ export class ThreadFrameStore {
         for (const listener of this.#itemListeners.get(index) ?? []) {
           changedItemListeners.add(listener)
         }
+        if (visibility) {
+          this.#collectVisibilityListeners(index, previous, snapshot, changedItemListeners)
+        }
       }
     } else if (changedIndices) {
-      for (const index of changedIndices) this.#collectItemListeners(index, changedItemListeners)
+      for (const index of changedIndices) {
+        this.#collectItemListeners(index, changedItemListeners)
+        if (visibility) {
+          this.#collectVisibilityListeners(index, previous, snapshot, changedItemListeners)
+        }
+      }
     } else if (this.#itemRangeListeners.size === 0) {
       for (const [index, update] of previous.liveItems) {
         if (snapshot.liveItems.get(index) === update) continue
         for (const listener of this.#itemListeners.get(index) ?? []) {
           changedItemListeners.add(listener)
         }
+        if (visibility) {
+          this.#collectVisibilityListeners(index, previous, snapshot, changedItemListeners)
+        }
       }
       for (const [index, update] of snapshot.liveItems) {
         if (previous.liveItems.get(index) === update) continue
         for (const listener of this.#itemListeners.get(index) ?? []) {
           changedItemListeners.add(listener)
         }
+        if (visibility) {
+          this.#collectVisibilityListeners(index, previous, snapshot, changedItemListeners)
+        }
       }
     } else {
       for (const [index, update] of previous.liveItems) {
         if (snapshot.liveItems.get(index) === update) continue
         this.#collectItemListeners(index, changedItemListeners)
+        if (visibility) {
+          this.#collectVisibilityListeners(index, previous, snapshot, changedItemListeners)
+        }
       }
       for (const [index, update] of snapshot.liveItems) {
         if (previous.liveItems.get(index) === update) continue
         this.#collectItemListeners(index, changedItemListeners)
+        if (visibility) {
+          this.#collectVisibilityListeners(index, previous, snapshot, changedItemListeners)
+        }
       }
     }
 

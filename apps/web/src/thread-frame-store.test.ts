@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { emptyThread } from './thread-store.js'
+import { emptyThread, reduceDeltas } from './thread-store.js'
 import { ThreadFrameStore } from './thread-frame-store.js'
 
 describe('ThreadFrameStore', () => {
@@ -76,6 +76,45 @@ describe('ThreadFrameStore', () => {
     expect(store.getStructureSnapshot()).toBe(completed)
     expect(firstRowListener).toHaveBeenCalledTimes(2)
     expect(structureListener).toHaveBeenCalledTimes(1)
+  })
+
+  it('tells a blank reasoning run its first shown row, and not later text in it', () => {
+    const row = (id: string, type: 'reasoning' | 'message', text: string) => ({
+      id,
+      turnId: 'turn-1',
+      type,
+      status: 'started' as const,
+      text,
+      createdAt: 1,
+    })
+    const items = [
+      row('A', 'reasoning', 'Checking'),
+      row('B', 'reasoning', ''),
+      row('C', 'message', ''),
+    ]
+    const store = new ThreadFrameStore({
+      ...emptyThread,
+      items,
+      running: true,
+      activeTurn: { id: 'turn-1', startedAt: 0 },
+    })
+    const predecessor = vi.fn()
+    store.subscribeRowVisibility(1, 1, predecessor)
+    const stream = (itemId: string, textDelta: string) =>
+      store.publish(
+        reduceDeltas(store.getSnapshot(), [
+          { type: 'item.delta', turnId: 'turn-1', itemId, textDelta },
+        ]),
+      )
+
+    stream('B', ' ')
+    expect(predecessor).not.toHaveBeenCalled()
+    stream('B', 'Planning')
+    expect(predecessor).toHaveBeenCalledTimes(1)
+    stream('B', ' more')
+    stream('A', ' again')
+    stream('C', 'Done')
+    expect(predecessor).toHaveBeenCalledTimes(1)
   })
 
   it('routes several changed rows through one contiguous range subscription', () => {

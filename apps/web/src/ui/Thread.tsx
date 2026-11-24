@@ -96,7 +96,7 @@ import {
 } from './SubagentRow.js'
 import { FindBarSkeleton } from './SurfaceSkeletons.js'
 import { TurnRail, type VisibleRows } from './TurnRail.js'
-import { nextItemWithARow } from './next-row.js'
+import { blankReasoningRunEnd, nextItemWithARow } from './next-row.js'
 import { replyPreview, rowAtOffset, turnRailEntries, type TurnRailEntry } from './turn-rail.js'
 import {
   activityGroupAt,
@@ -2014,6 +2014,17 @@ function useFrameLiveItemRange(
   return frameStore.getSnapshot().liveItems
 }
 
+/** Re-render when a row in `first`..`last` starts or stops showing; nothing for an empty range. */
+function useFrameRowVisibility(frameStore: ThreadFrameStore, first: number, last: number): void {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      first > last ? () => {} : frameStore.subscribeRowVisibility(first, last, listener),
+    [first, frameStore, last],
+  )
+  const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
+  useSyncExternalStore(subscribe, getVersion, getVersion)
+}
+
 const ThreadFrameRow = memo(function ThreadFrameRow({
   index,
   measureElement,
@@ -2058,6 +2069,18 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   const lastSubscribedIndex = activityGroup?.lastIndex ?? index
   const liveItems = useFrameLiveItemRange(frameStore, firstSubscribedIndex, lastSubscribedIndex)
   const item = threadItemAt(items, liveItems, index)
+  // A work row closes up to the next row that shows, so it also re-renders when
+  // a blank reasoning row before that one starts showing.
+  const leadsActivity =
+    item !== undefined &&
+    activityGroup?.firstIndex === index &&
+    isCompactedActivity(item, index, presentation, activityGroup)
+  const blankRunFrom = leadsActivity && activityGroup ? activityGroup.lastIndex + 1 : index + 1
+  const blankRunEnd =
+    item !== undefined && (leadsActivity || isActivity(item))
+      ? blankReasoningRunEnd(items, blankRunFrom)
+      : blankRunFrom
+  useFrameRowVisibility(frameStore, blankRunFrom, blankRunEnd - 1)
   if (!item) return null
 
   const live = running && activeTurnId === item.turnId
