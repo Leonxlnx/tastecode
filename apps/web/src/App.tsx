@@ -4793,6 +4793,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       provisionalId: string,
       title: string,
       titlePrompt: string,
+      /** The account named when the prompt was sent; a later switch does not move it. */
+      namedAccount: AccountId | undefined,
       /** The project is a folder just made for a chat without one: no git, no branch. */
       chatFolder = false,
     ): Promise<string | undefined> => {
@@ -4823,13 +4825,6 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         if (projectRemoved())
           throw new Error('The project was removed before the chat could start.')
         let sessionApproval = approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
-        // A chat that names no account starts on the server's recommended one,
-        // else its active one. The account this app shows for new chats is
-        // named, so the user's pick, or the recommendation shown, is what runs.
-        const namedAccount =
-          choice.agent || choice.connectionId
-            ? undefined
-            : namedNewChatAccount(providerAccountsRef.current, choice.provider)
         const { threadId } = await transport.request('thread.start', {
           provider: choice.provider,
           ...(namedAccount ? { accountId: namedAccount } : {}),
@@ -5181,6 +5176,14 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       let titledOnCreate = false
       let interruptRequested = false
       let startPath = activePath
+      // A chat that names no account starts on the server's recommended one,
+      // else its active one. The account this app shows for new chats is
+      // named, so the user's pick, or the recommendation shown, is what runs:
+      // the one shown at the send, even when the chat waits for its folder.
+      const namedAccount =
+        !selectedModelChoice || selectedModelChoice.agent || selectedModelChoice.connectionId
+          ? undefined
+          : namedNewChatAccount(providerAccountsRef.current, selectedModelChoice.provider)
       if (!threadId && !startPath && chatWithoutProject) {
         try {
           const folder = await transport.request('projects.createChatFolder', {})
@@ -5276,6 +5279,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           provisionalId,
           titleFrom(titlePrompt),
           titlePrompt,
+          namedAccount,
           startPath !== activePath,
         )
         pendingSession.current = { id: provisionalId, promise, title: titleFrom(titlePrompt) }

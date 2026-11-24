@@ -11570,6 +11570,104 @@ describe('new chats', () => {
     ).not.toContain(true)
   })
 
+  describe('a chat without a project while its folder is being made', () => {
+    const folder = {
+      path: '/home/me/.tastecode/threads/2026-11-01-amber-heron',
+      name: '2026-11-01-amber-heron',
+      pinned: false,
+      createdAt: 2,
+      chat: true as const,
+    }
+    /** Holds projects.createChatFolder until the test lets it answer. */
+    function holdChatFolder(): () => void {
+      const request = transport.request.getMockImplementation()!
+      let answer: () => void = () => undefined
+      const made = new Promise<void>((resolve) => (answer = resolve))
+      transport.request.mockImplementation(async (method, params) => {
+        if (method !== 'projects.createChatFolder') return request(method, params)
+        await made
+        serverProjects = [...serverProjects, { ...folder, sessions: [] }]
+        return folder
+      })
+      return () => act(() => answer())
+    }
+    async function enterWithoutProject() {
+      render(<App />)
+      expect((await screen.findByRole('heading')).textContent).toContain('What should we build')
+      fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: /No project/ }))
+      expect(screen.getByRole('heading').textContent).toBe('What should we build?')
+    }
+
+    it('starts on the account named when the prompt was sent', async () => {
+      const codex = serverProviders[0]!
+      serverProviders = [
+        { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+      ]
+      serverProjects = [
+        { path: '/work/project', name: 'TasteCode', pinned: false, createdAt: 0, sessions: [] },
+      ]
+      const listed = (id: string): Model => ({
+        id,
+        displayName: id,
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      })
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method === 'accounts.list') {
+          return Promise.resolve({
+            accounts: [
+              { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+              {
+                id: 'team-9z8y7x',
+                provider: 'codex',
+                label: 'Team',
+                home: 'C:\\TasteCode\\accounts\\codex\\team-9z8y7x',
+                managed: true,
+                email: 'team@example.test',
+              },
+            ],
+            active: {},
+          })
+        }
+        if (method === 'models.list') {
+          const { accountId } = methods['models.list'].params.parse(params)
+          return Promise.resolve({
+            models: [listed(accountId === 'team-9z8y7x' ? 'gpt-6.1-team' : 'gpt-6.1')],
+          })
+        }
+        return request(method, params)
+      })
+      const answer = holdChatFolder()
+      await enterWithoutProject()
+      await waitFor(() =>
+        expect(composerProps().models.map((choice) => choice.key)).toEqual([
+          'codex:gpt-6.1',
+          'codex@team-9z8y7x:gpt-6.1-team',
+        ]),
+      )
+
+      submitTurn('Plan a weekend in Lisbon')
+      await waitFor(() => expect(rpcCount('projects.createChatFolder')).toBe(1))
+      // Team becomes the account for new chats while the folder is being made.
+      act(() => composerProps().onModelChange('codex@team-9z8y7x:gpt-6.1-team'))
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('accounts.setActive', {
+          provider: 'codex',
+          accountId: 'team-9z8y7x',
+        }),
+      )
+      answer()
+
+      await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+      const start = transport.request.mock.calls.find(([method]) => method === 'thread.start')
+      expect(start?.[1]).toMatchObject({ workspacePath: folder.path, model: 'gpt-6.1' })
+      expect(start?.[1]).not.toHaveProperty('accountId')
+    })
+  })
+
   it('toggles an empty project without leaving the current new chat', async () => {
     serverProjects = [
       {
