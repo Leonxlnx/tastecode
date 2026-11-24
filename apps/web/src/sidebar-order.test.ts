@@ -462,4 +462,36 @@ describe('sidebar rail cost', () => {
     expect(reads() - afterFirst).toBe(0)
     expect(second.orderedProjects).toEqual(first.orderedProjects)
   })
+
+  it('keeps the grouped chats without a project while their folders are unchanged', () => {
+    let reads = 0
+    const folders = Array.from({ length: 300 }, (_, index) => {
+      const folder: Project = { ...project(`/threads/${index}`, [`chat-${index}`]), chat: true }
+      const session = folder.sessions[0]!
+      Object.defineProperty(session, 'createdAt', {
+        enumerable: true,
+        get: () => {
+          reads += 1
+          return index
+        },
+      })
+      return folder
+    })
+    const work = project('/work', ['a', 'b'])
+    const first = sidebarRail([work, ...folders])
+    expect(first.chatSessions.map(({ session }) => session.id).slice(0, 2)).toEqual([
+      'chat-299',
+      'chat-298',
+    ])
+    const afterFirst = reads
+    // A status change in an ordinary project.
+    const changed = { ...work, sessions: [{ ...work.sessions[0]!, status: 'working' as const }] }
+    const second = sidebarRail([changed, ...folders])
+    expect(reads - afterFirst).toBe(0)
+    expect(second.chatSessions).toBe(first.chatSessions)
+    // A new chat without a project is grouped with the rest.
+    const added: Project = { ...project('/threads/new', ['chat-new']), chat: true }
+    added.sessions[0] = { ...added.sessions[0]!, createdAt: 1_000 }
+    expect(sidebarRail([changed, added, ...folders]).chatSessions[0]!.session.id).toBe('chat-new')
+  })
 })
