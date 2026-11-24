@@ -2554,14 +2554,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  :is(.composer__design-beam, .composer__design-button-beam)::before,
-  :is(.composer__design-beam, .composer__design-button-beam)::after,
-  :is(.composer__design-beam, .composer__design-button-beam) [data-beam-bloom] {
-    animation: none !important;
-  }
-}
-
 /* ---------- menus ---------- */
 
 .menuwrap {

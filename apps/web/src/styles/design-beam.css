@@ -92,6 +92,19 @@
     composer-design-beam-fade-out 0.5s ease forwards;
 }
 
+/* The spin lives on the host and every layer inherits its angle, so reduced
+   motion has to drop it here. The beam stays, at rest; the opacity fades
+   remain, because the idle phase waits for the fade-out to end. */
+@media (prefers-reduced-motion: reduce) {
+  :is(.composer__design-beam, .composer__design-button-beam)[data-active] {
+    animation: composer-design-beam-fade-in 0.6s ease forwards;
+  }
+
+  :is(.composer__design-beam, .composer__design-button-beam)[data-fading] {
+    animation: composer-design-beam-fade-out 0.5s ease forwards;
+  }
+}
+
 :is(.composer__design-beam, .composer__design-button-beam):is([data-active], [data-fading])::after {
   position: absolute;
   z-index: 2;
