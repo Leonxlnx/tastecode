@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HarnessBridge } from './preload.js'
 
-const { exposeInMainWorld, getPathForFile, invoke, send, sendSync, serverListens } = vi.hoisted(
+const { exposeInMainWorld, getPathForFile, invoke, on, send, sendSync, serverListens } = vi.hoisted(
   () => {
     let serverListens!: () => void
     const listening = new Promise<void>((resolve) => {
@@ -11,8 +11,13 @@ const { exposeInMainWorld, getPathForFile, invoke, send, sendSync, serverListens
       exposeInMainWorld: vi.fn(),
       getPathForFile: vi.fn(),
       invoke: vi.fn((channel: string) =>
-        channel === 'harness:ownServerListening' ? listening : undefined,
+        channel === 'harness:ownServerListening'
+          ? listening
+          : channel === 'harness:getAccessibilitySupport'
+            ? Promise.resolve(false)
+            : undefined,
       ),
+      on: vi.fn(),
       send: vi.fn(),
       sendSync: vi.fn((channel: string) =>
         channel === 'harness:ownServerToken' ? 'dGhpcy1pcy1hLXRva2VuLWZvci10ZXN0cw' : undefined,
@@ -23,7 +28,7 @@ const { exposeInMainWorld, getPathForFile, invoke, send, sendSync, serverListens
 )
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld },
-  ipcRenderer: { invoke, send, sendSync, on: vi.fn(), removeListener: vi.fn() },
+  ipcRenderer: { invoke, send, sendSync, on, removeListener: vi.fn() },
   webUtils: { getPathForFile },
 }))
 
@@ -37,9 +42,33 @@ describe('preload own-server token', () => {
   })
 })
 
+const listeningCalls = () =>
+  invoke.mock.calls.filter(([channel]) => channel === 'harness:ownServerListening')
+
+describe('preload accessibility support', () => {
+  it('takes the answer from main at load, then follows its changes', async () => {
+    const changed = on.mock.calls.find(
+      ([channel]) => channel === 'harness:accessibilitySupportChanged',
+    )?.[1] as (event: unknown, enabled: unknown) => void
+    const seen: boolean[] = []
+    const off = api.onAccessibilitySupportChange((enabled) => seen.push(enabled))
+
+    expect(invoke).toHaveBeenCalledWith('harness:getAccessibilitySupport')
+    await vi.waitFor(() => expect(api.accessibilitySupportEnabled()).toBe(false))
+    changed({}, true)
+    changed({}, 'yes')
+    expect(api.accessibilitySupportEnabled()).toBe(true)
+    off()
+    changed({}, false)
+
+    expect(seen).toEqual([true])
+    expect(api.accessibilitySupportEnabled()).toBe(false)
+  })
+})
+
 describe('preload own-server listening', () => {
   it('asks main once, at load, and settles for the page only when main answers', async () => {
-    expect(invoke).toHaveBeenCalledExactlyOnceWith('harness:ownServerListening')
+    expect(listeningCalls()).toHaveLength(1)
     let settled = false
     const listening = api.ownServerListening!().then(() => {
       settled = true
@@ -49,7 +78,7 @@ describe('preload own-server listening', () => {
     serverListens()
     await listening
     expect(settled).toBe(true)
-    expect(invoke).toHaveBeenCalledOnce()
+    expect(listeningCalls()).toHaveLength(1)
   })
 })
 

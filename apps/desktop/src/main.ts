@@ -1128,6 +1128,20 @@ function applyZoom(window: BrowserWindow, action: ZoomAction): void {
   window.webContents.send('harness:zoomChanged', factor)
 }
 
+// Terminals mirror their rows into the DOM only while a screen reader can use
+// them; the OS tells Chromium when assistive technology comes and goes.
+ipcMain.handle('harness:getAccessibilitySupport', (event): boolean => {
+  requireOwnRenderer(event.sender)
+  return app.accessibilitySupportEnabled
+})
+
+app.on('accessibility-support-changed', (_event, enabled: boolean) => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed() || !isOwnRenderer(window.webContents)) continue
+    window.webContents.send('harness:accessibilitySupportChanged', enabled)
+  }
+})
+
 async function openDiagnosticsDirectory(): Promise<boolean> {
   if (!diagnostics) return false
   await mkdir(diagnostics.directory, { recursive: true, mode: 0o700 })

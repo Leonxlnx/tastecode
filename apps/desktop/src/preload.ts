@@ -35,6 +35,23 @@ const ownServerListening: Promise<void> | undefined = isOwnServerToken(ownServer
     )
   : undefined
 
+// Screen-reader support: assumed on until the main process answers (a wrong
+// "on" only costs time, a wrong "off" hides terminal text), then kept current.
+let accessibilitySupport = true
+const accessibilityListeners = new Set<(enabled: boolean) => void>()
+function setAccessibilitySupport(enabled: unknown): void {
+  if (typeof enabled !== 'boolean' || enabled === accessibilitySupport) return
+  accessibilitySupport = enabled
+  for (const listener of accessibilityListeners) listener(enabled)
+}
+ipcRenderer.on('harness:accessibilitySupportChanged', (_event, enabled: unknown) =>
+  setAccessibilitySupport(enabled),
+)
+void Promise.resolve(ipcRenderer.invoke('harness:getAccessibilitySupport')).then(
+  setAccessibilitySupport,
+  () => undefined,
+)
+
 /**
  * The entire native surface exposed to the renderer.
  *
@@ -163,6 +180,12 @@ const api = {
     }
     ipcRenderer.on('harness:zoomChanged', handler)
     return () => ipcRenderer.removeListener('harness:zoomChanged', handler)
+  },
+  /** Whether the OS reports assistive technology; true until the main process has answered. */
+  accessibilitySupportEnabled: (): boolean => accessibilitySupport,
+  onAccessibilitySupportChange: (listener: (enabled: boolean) => void): (() => void) => {
+    accessibilityListeners.add(listener)
+    return () => accessibilityListeners.delete(listener)
   },
   ...(startupBenchmarkEnabled
     ? {
