@@ -186,7 +186,8 @@ export function pruneInactiveThreadStates(
 
   // Item and state limits leave at most three histories / 3,000 rows to scan.
   // Count only that retained LRU suffix, so visiting 100 old long threads does
-  // not turn byte accounting into a second full-history walk.
+  // not turn byte accounting into a second full-history walk. A held history
+  // is counted once (see inactiveThreadCharacters).
   let characterCount = 0
   for (let index = candidateIndex; index < candidates.length; index += 1) {
     const candidate = candidates[index]!
@@ -250,12 +251,23 @@ function runningTranscriptUsage(state: ThreadState): RunningTranscriptUsage {
   return { itemCount: state.items.length, characters }
 }
 
+/**
+ * Thread states are replaced, never changed, so a held history's count stays
+ * true for as long as that state is held. Pruning runs on every switch and
+ * after background item events; with many held chats, walking all of their
+ * rows each time would put a full-history walk on that path.
+ */
+const inactiveCharacterCounts = new WeakMap<ThreadState, number>()
+
 function inactiveThreadCharacters(state: ThreadState): number {
+  const known = inactiveCharacterCounts.get(state)
+  if (known !== undefined) return known
   let characters = threadMetadataCharacters(state)
   for (let index = 0; index < state.items.length; index += 1) {
     const item = state.liveItems.get(index)?.item ?? state.items[index]
     if (item) characters += itemCharacters(item)
   }
+  inactiveCharacterCounts.set(state, characters)
   return characters
 }
 

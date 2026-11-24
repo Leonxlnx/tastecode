@@ -422,6 +422,36 @@ describe('inactive thread history cache', () => {
   it('keeps the default completed-history text budget bounded', () => {
     expect(MAX_INACTIVE_THREAD_CHARACTERS).toBe(8 * 1024 * 1024)
   })
+
+  it('counts a held history once, and again only when its state is replaced', () => {
+    let textReads = 0
+    const counted = (id: string, text: string) => {
+      const thread = state(id, 50)
+      thread.items.forEach((item, index) => {
+        Object.defineProperty(item, 'text', {
+          enumerable: true,
+          get() {
+            textReads += 1
+            return index === 0 ? text : 'x'
+          },
+        })
+      })
+      return thread
+    }
+    const states = new Map<string, ThreadState>([['held', counted('held', 'x')]])
+    const durable = sequences(states)
+    const budget = { maxInactiveCharacters: 5_000 }
+
+    pruneInactiveThreadStates(states, durable, budget)
+    expect(textReads).toBeGreaterThanOrEqual(50)
+    textReads = 0
+    pruneInactiveThreadStates(states, durable, budget)
+    expect(textReads).toBe(0)
+
+    // A replaced state is a new count: its larger text now exceeds the budget.
+    states.set('held', counted('held', 'x'.repeat(6_000)))
+    expect(pruneInactiveThreadStates(states, durable, budget)).toEqual(['held'])
+  })
 })
 
 describe('inactive thread queue cache', () => {
