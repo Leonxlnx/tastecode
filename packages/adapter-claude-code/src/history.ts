@@ -71,8 +71,7 @@ const LINE_CHUNK_BYTES = 64 * 1024
 const SCAN_CHUNK_BYTES = 1024 * 1024
 const STAT_BATCH = 32
 // Reading a transcript resolves compaction and branches over all of its rows, synchronously
-// and once more for every compaction: 13-21 s for a 234 MB one in the app, during which every
-// other request waited. From this size it runs in a worker thread: starting one costs about
+// (and once took 13-21 s for a 234 MB one in the app, during which every other request waited). From this size it runs in a worker thread: starting one costs about
 // 0.35 s, which a read on the event loop of a transcript this large costs as well.
 const WORKER_READ_BYTES = 16 * 1024 * 1024
 // A transcript that grew is read on from where it stopped only while these still match.
@@ -484,6 +483,154 @@ function sdkRecord(row: SavedRecord): SavedRecord & { type: string } {
   }
 }
 
+function isCompactBoundary(row: SavedRecord): boolean {
+  return row.type === 'system' && row.subtype === 'compact_boundary'
+}
+
+// The row types the SDK builds its message graph from; it reads the others for delivery state.
+const GRAPH_TYPES = new Set(['user', 'assistant', 'progress', 'system', 'attachment'])
+// How often a cut that a shared identifier invalidates is moved back to before it.
+const CUT_ATTEMPTS = 8
+
+/**
+ * Every string through which the SDK's read (getSessionMessages over a session store, Agent
+ * SDK 0.3.296) relates one row to another, except `parentUuid`: ids of rows, API messages,
+ * tool calls, queued-command deliveries and compaction-kept rows. It compares rows by these
+ * and by file order only. Taking any other string as well only makes `rowsFrom` cut less.
+ */
+function references(row: SavedRecord): string[] {
+  const found: string[] = []
+  const add = (value: unknown) => {
+    if (typeof value === 'string') found.push(value)
+  }
+  add(row.uuid)
+  add(row.sourceToolAssistantUUID)
+  add(row.deliveryId)
+  add(row.commandUuid)
+  const attachment = object(row.attachment)
+  add(attachment.delivery_id)
+  add(attachment.source_uuid)
+  const message = object(row.message)
+  add(message.id)
+  if (Array.isArray(message.content))
+    for (const block of message.content) {
+      add(object(block).id)
+      add(object(block).tool_use_id)
+    }
+  const compaction = object(row.compactMetadata)
+  const kept = object(compaction.preservedMessages)
+  const segment = object(compaction.preservedSegment)
+  add(kept.anchorUuid)
+  if (Array.isArray(kept.uuids)) kept.uuids.forEach(add)
+  add(segment.anchorUuid)
+  add(segment.headUuid)
+  add(segment.tailUuid)
+  return found
+}
+
+/**
+ * Where the SDK can start reading main-chain rows [0, end) and still return what it returns
+ * for all of them: one pass over the rows that each compaction's read shares, so a
+ * transcript compacted k times hands the SDK its rows about once instead of about k/2 times.
+ *
+ * A read over rows [cut, end) returns the same messages as one over [0, end) when no row
+ * before `cut` can take part in it. The SDK relates rows only through the strings
+ * `references` lists and parent links, so that holds when (1) no such string of a row from
+ * `cut` on occurs before `cut`, (2) every parent link from `cut` on into the rows before it
+ * is one the SDK replaces, because a compaction from `cut` on keeps that row and relinks it,
+ * and (3) a user or assistant row from `cut` on is a leaf there, so the SDK's search for the
+ * newest leaf ends among those rows and never reaches an earlier one. Then every walk, leaf,
+ * sibling, queued command and delivery count the SDK derives for rows from `cut` on is the
+ * same, and nothing it returns comes from before `cut`. A cut is tried right before the last
+ * compaction and the rows it keeps, moved back before any row that breaks (1) or (2) a few
+ * times, and otherwise the read gets every row.
+ */
+function cutter(main: SavedRecord[]): (end: number) => number {
+  const boundaries: number[] = []
+  // The first row each identifier or parent link occurs in, and where each row id is.
+  const first = new Map<string, number>()
+  const at = new Map<string, number>()
+  main.forEach((row, index) => {
+    if (isCompactBoundary(row)) boundaries.push(index)
+    for (const id of references(row)) if (!first.has(id)) first.set(id, index)
+    if (typeof row.parentUuid === 'string' && !first.has(row.parentUuid))
+      first.set(row.parentUuid, index)
+    if (typeof row.uuid === 'string' && !at.has(row.uuid)) at.set(row.uuid, index)
+  })
+  const before = (id: string, cut: number) => (first.get(id) ?? cut) < cut
+  /** The first row before `cut` a row from it on depends on, or -1 when none does. */
+  const blocker = (cut: number, end: number): number => {
+    const graph = new Map<string, SavedRecord>()
+    for (let index = cut; index < end; index++) {
+      const row = main[index]!
+      if (typeof row.uuid === 'string' && GRAPH_TYPES.has(String(row.type)))
+        graph.set(row.uuid, row)
+    }
+    const relinked = new Set<string>()
+    const targets = new Set<string>()
+    for (let index = cut; index < end; index++) {
+      const row = main[index]!
+      // The SDK relinks for the compactions in its graph: the last row of each id.
+      if (!isCompactBoundary(row) || graph.get(String(row.uuid)) !== row) continue
+      for (const id of references(row)) targets.add(id)
+      // As the SDK relinks: kept messages when all are present, else the kept segment's head.
+      const { preservedMessages, preservedSegment } = object(sdkRecord(row).compactMetadata)
+      const kept = object(preservedMessages)
+      if (preservedMessages) {
+        const ids = kept.uuids as string[]
+        if (ids.length && ids.every((id) => graph.has(id))) for (const id of ids) relinked.add(id)
+      } else if (preservedSegment) {
+        const head = String(object(preservedSegment).headUuid)
+        if (graph.has(head)) relinked.add(head)
+      }
+    }
+    let earliest = -1
+    const note = (id: string) => {
+      const index = first.get(id)!
+      if (earliest === -1 || index < earliest) earliest = index
+    }
+    const parents = new Set<string>()
+    for (let index = cut; index < end; index++) {
+      const row = main[index]!
+      for (const id of references(row)) if (before(id, cut)) note(id)
+      const parent = row.parentUuid
+      if (typeof parent !== 'string') continue
+      parents.add(parent)
+      if (before(parent, cut) && !(typeof row.uuid === 'string' && relinked.has(row.uuid)))
+        note(parent)
+    }
+    if (earliest !== -1) return earliest
+    for (let index = end - 1; index >= cut; index--) {
+      const row = main[index]!
+      if (
+        (row.type === 'user' || row.type === 'assistant') &&
+        typeof row.uuid === 'string' &&
+        graph.get(row.uuid) === row &&
+        !parents.has(row.uuid) &&
+        !targets.has(row.uuid)
+      )
+        return -1
+    }
+    return 0
+  }
+  return (end) => {
+    let last = -1
+    for (const index of boundaries) if (index < end) last = index
+    if (last === -1) return 0
+    let cut = last
+    for (const id of references(main[last]!)) {
+      const index = at.get(id)
+      if (index !== undefined && index < cut) cut = index
+    }
+    for (let attempt = 0; attempt < CUT_ATTEMPTS && cut > 0; attempt++) {
+      const earlier = blocker(cut, end)
+      if (earlier === -1) return cut
+      cut = earlier
+    }
+    return 0
+  }
+}
+
 /** The SDK owns native branch selection and parallel tool-result sibling recovery. */
 async function conversation(
   rows: SavedRecord[],
@@ -494,14 +641,25 @@ async function conversation(
       typeof row.uuid === 'string' ? [[row.uuid, { row, index }] as const] : [],
     ),
   )
+  // The rows the SDK reads, and how many of them come before each row.
+  const main: SavedRecord[] = []
+  const mainBefore = new Int32Array(rows.length + 1)
+  rows.forEach((row, index) => {
+    if (!row.isSidechain && !row.teamName) main.push(row)
+    mainBefore[index + 1] = main.length
+  })
+  const cut = cutter(main)
   const seen = new Set<string>()
   const result: SavedRecord[] = []
-  const collect = async (prefix: SavedRecord[]): Promise<void> => {
+  /** What the SDK returns for rows [0, count), read from where nothing before matters. */
+  const collect = async (count: number): Promise<void> => {
+    const stop = mainBefore[count]!
+    const from = cut(stop)
     const messages = await getSessionMessages(session.id, {
       dir: session.workspacePath,
       includeSystemMessages: true,
       sessionStore: {
-        load: async () => prefix.filter((row) => !row.isSidechain && !row.teamName).map(sdkRecord),
+        load: async () => main.slice(from, stop).map(sdkRecord),
         append: async () => {
           throw new Error('Claude history is read-only')
         },
@@ -518,12 +676,12 @@ async function conversation(
         // Recover the earlier visible chain, without replaying discarded branches.
         const parent = byId.get(string(row.logicalParentUuid) ?? '')
         const end = parent?.index ?? entry.index - 1
-        if (end >= 0 && end < entry.index) await collect(rows.slice(0, end + 1))
+        if (end >= 0 && end < entry.index) await collect(end + 1)
       }
       if (visible(row) && !row.isCompactSummary) result.push(row)
     }
   }
-  await collect(rows)
+  await collect(rows.length)
   return result
 }
 

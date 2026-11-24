@@ -1,9 +1,38 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { DomainEvent, ProviderHistorySession } from '@harness/contracts'
 import { transcriptEvents } from './history.js'
+
+// Counts the rows each read hands the Agent SDK, through its own session store.
+const loaded = vi.hoisted(() => ({ calls: 0, rows: 0 }))
+vi.mock('@anthropic-ai/claude-agent-sdk', async (actual) => {
+  const sdk = await actual<typeof import('@anthropic-ai/claude-agent-sdk')>()
+  return {
+    ...sdk,
+    getSessionMessages: (
+      id: string,
+      options: Parameters<typeof sdk.getSessionMessages>[1] & {
+        sessionStore: { load: (key: unknown) => Promise<unknown[]> }
+      },
+    ) => {
+      loaded.calls++
+      const store = options.sessionStore
+      return sdk.getSessionMessages(id, {
+        ...options,
+        sessionStore: {
+          ...store,
+          load: async (key: unknown) => {
+            const rows = await store.load(key)
+            loaded.rows += rows.length
+            return rows
+          },
+        },
+      } as Parameters<typeof sdk.getSessionMessages>[1])
+    },
+  }
+})
 
 const SESSION = '33333333-3333-4333-8333-333333333333'
 const AT = Date.parse('2026-11-20T10:00:00.000Z')
@@ -375,5 +404,28 @@ describe('reading a Claude Code transcript', () => {
         "end completed at 13000",
       ]
     `)
+  })
+
+  it('hands the SDK each compacted segment once instead of every row before it', async () => {
+    clock = 0
+    const rows: unknown[] = [...exchange('s0', null)]
+    let last = 's0-a'
+    for (let segment = 1; segment <= 8; segment++) {
+      rows.push(...compaction(`c${segment}`, last, [last]))
+      let parent = `c${segment}-summary`
+      for (let turn = 0; turn < 10; turn++) {
+        rows.push(...exchange(`s${segment}-${turn}`, parent))
+        parent = `s${segment}-${turn}-a`
+      }
+      last = parent
+    }
+    loaded.calls = 0
+    loaded.rows = 0
+    const events = await read(rows)
+    expect(loaded.calls).toBe(9)
+    // Each segment and the rows its compaction kept; every row before each compaction, as
+    // the SDK used to be handed, is 810.
+    expect(loaded.rows).toBeLessThan(rows.length + 3 * 8)
+    expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(81)
   })
 })
