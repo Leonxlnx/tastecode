@@ -53,6 +53,32 @@ describe('inactive thread history cache', () => {
     expect(idReads - readsBeforeRebuild).toBeGreaterThanOrEqual(cached.items.length)
   })
 
+  it('releases the item index of the chat just left but keeps its rows', () => {
+    let idReads = 0
+    const left = state('left', 100)
+    for (const item of left.items) {
+      const id = item.id
+      Object.defineProperty(item, 'id', {
+        enumerable: true,
+        get() {
+          idReads += 1
+          return id
+        },
+      })
+    }
+    const states = new Map<string, ThreadState>([['left', left]])
+
+    expect(threadItemById(left, 'left-item-99')).toBe(left.items[99])
+    pruneInactiveThreadStates(states, sequences(states), {
+      previousId: 'left',
+      maxInactiveCharacters: 0,
+    })
+    expect(states.get('left')).toBe(left)
+    const readsBeforeRebuild = idReads
+    expect(threadItemById(left, 'left-item-99')).toBe(left.items[99])
+    expect(idReads - readsBeforeRebuild).toBeGreaterThanOrEqual(left.items.length)
+  })
+
   it('bounds old histories while retaining active and live work', () => {
     const states = new Map<string, ThreadState>([
       ['old', state('old', 2_000)],
@@ -370,12 +396,11 @@ describe('inactive thread history cache', () => {
     pruneInactiveThreadStates(states, durable, { activeId: 'active' })
 
     const inactive = [...states].filter(([id]) => id !== 'active').map(([, thread]) => thread)
-    expect(inactive).toHaveLength(MAX_INACTIVE_THREAD_STATES)
-    expect(inactive.reduce((total, thread) => total + thread.items.length, 0)).toBe(
-      MAX_INACTIVE_THREAD_ITEMS,
-    )
+    const kept = Math.min(MAX_INACTIVE_THREAD_STATES, MAX_INACTIVE_THREAD_ITEMS / 1_000)
+    expect(inactive).toHaveLength(kept)
+    expect(inactive.reduce((total, thread) => total + thread.items.length, 0)).toBe(kept * 1_000)
     expect([...states.values()].reduce((total, thread) => total + thread.items.length, 0)).toBe(
-      4_000,
+      (kept + 1) * 1_000,
     )
   })
 
@@ -420,7 +445,76 @@ describe('inactive thread history cache', () => {
   })
 
   it('keeps the default completed-history text budget bounded', () => {
-    expect(MAX_INACTIVE_THREAD_CHARACTERS).toBe(8 * 1024 * 1024)
+    expect(MAX_INACTIVE_THREAD_CHARACTERS).toBe(24 * 1024 * 1024)
+  })
+
+  it('keeps every chat that fits the text budget, not just the last three', () => {
+    const states = new Map<string, ThreadState>(
+      Array.from({ length: 8 }, (_, index) => [`chat-${index}`, state(`chat-${index}`, 500)]),
+    )
+    states.set('active', state('active', 500))
+    const durable = sequences(states)
+
+    expect(pruneInactiveThreadStates(states, durable, { activeId: 'active' })).toEqual([])
+    expect(states.size).toBe(9)
+    expect(durable.size).toBe(9)
+  })
+
+  it('keeps the chat shown before the active one whole, over the text budget', () => {
+    const large = (id: string) => {
+      const thread = state(id, 1)
+      thread.items[0] = { ...thread.items[0]!, text: 'x'.repeat(1_024) }
+      return thread
+    }
+    const states = new Map<string, ThreadState>([
+      ['older', large('older')],
+      ['previous', large('previous')],
+      ['active', state('active', 1)],
+    ])
+    const durable = sequences(states)
+    const budget = { maxInactiveCharacters: 100, activeId: 'active' }
+
+    expect(
+      pruneInactiveThreadStates(states, durable, { ...budget, previousId: 'previous' }),
+    ).toEqual(['older'])
+    expect([...states.keys()]).toEqual(['previous', 'active'])
+    expect(durable.has('previous')).toBe(true)
+
+    // Once another chat was shown in between, it is one more held chat under the budget.
+    expect(pruneInactiveThreadStates(states, durable, { ...budget, previousId: 'other' })).toEqual([
+      'previous',
+    ])
+    expect(durable.has('previous')).toBe(false)
+  })
+
+  it('counts a held history once, and again only when its state is replaced', () => {
+    let textReads = 0
+    const counted = (id: string, text: string) => {
+      const thread = state(id, 50)
+      thread.items.forEach((item, index) => {
+        Object.defineProperty(item, 'text', {
+          enumerable: true,
+          get() {
+            textReads += 1
+            return index === 0 ? text : 'x'
+          },
+        })
+      })
+      return thread
+    }
+    const states = new Map<string, ThreadState>([['held', counted('held', 'x')]])
+    const durable = sequences(states)
+    const budget = { maxInactiveCharacters: 5_000 }
+
+    pruneInactiveThreadStates(states, durable, budget)
+    expect(textReads).toBeGreaterThanOrEqual(50)
+    textReads = 0
+    pruneInactiveThreadStates(states, durable, budget)
+    expect(textReads).toBe(0)
+
+    // A replaced state is a new count: its larger text now exceeds the budget.
+    states.set('held', counted('held', 'x'.repeat(6_000)))
+    expect(pruneInactiveThreadStates(states, durable, budget)).toEqual(['held'])
   })
 })
 

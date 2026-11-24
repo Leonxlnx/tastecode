@@ -111,6 +111,8 @@ export class ThreadController {
   #activeId: string | undefined
   /** The other column's chat, streamed like the active one while it is shown. */
   #besideId: string | undefined
+  /** The chat the focused column showed before its current one; kept for switching back. */
+  #previousId: string | undefined
   #frame: number | undefined
   #recoveryRevision = 0
   #partialThreadIds = { has: (id: string) => !this.#sequences.has(id) }
@@ -133,8 +135,34 @@ export class ThreadController {
   }
   /** Show `id` in the focused column. */
   activate(id: string | undefined): void {
+    const left = this.#shown[this.#focused]
+    if (left !== undefined && left !== id) this.#previousId = left
     this.#shown[this.#focused] = id
     this.#activeId = id
+  }
+  /** The chat kept for switching back, whatever its size. */
+  get previousId(): string | undefined {
+    return this.#previousId
+  }
+  /**
+   * A new chat got its server id: the same chat under its lasting name. Where
+   * it is shown, or kept as the chat just left, the new id takes its place;
+   * nobody left anything, so the chat kept for switching back stays kept.
+   */
+  replaceId(from: string, to: string): void {
+    if (this.#shown[0] === from) this.#shown[0] = to
+    if (this.#shown[1] === from) this.#shown[1] = to
+    if (this.#previousId === from) this.#previousId = to
+    this.#syncVisible()
+  }
+  /**
+   * The user closed a column. Its chat is now shown nowhere, so it is the
+   * one just left, unless the other column shows it too.
+   */
+  leave(slot: PaneSlot): void {
+    const id = this.#shown[slot]
+    if (id !== undefined && id !== this.#shown[slot === 0 ? 1 : 0]) this.#previousId = id
+    this.show(slot, undefined)
   }
   /** Show `id` in a column and publish what is cached for it there. */
   show(slot: PaneSlot, id: string | undefined): void {
@@ -417,6 +445,7 @@ export class ThreadController {
       if (!this.isVisible(id)) this.flush(id, () => isProtected(id))
     const evicted = pruneInactiveThreadStates(this.#states, this.#sequences, {
       activeId: this.#activeId,
+      previousId: this.#previousId,
       protectedIds: this.#besideIds(),
       isProtected,
       isPartial: (id) => !this.#sequences.has(id),
@@ -447,6 +476,7 @@ export class ThreadController {
       this.#historyBases.set(id, { state: emptyThread, sequence: undefined })
   }
   forget(id: string): void {
+    if (this.#previousId === id) this.#previousId = undefined
     this.#states.delete(id)
     this.#sequences.delete(id)
     this.#submissions.delete(id)

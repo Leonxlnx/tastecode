@@ -24,7 +24,8 @@ import { resetInstalls } from './provider-install.js'
 import { PROVIDER_RECHECK_INTERVAL_MS } from './provider-recheck.js'
 import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
-import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
+import { NEWEST_HISTORY_TURNS, ThreadController } from './thread-controller.js'
+import { MAX_INACTIVE_THREAD_CHARACTERS, MAX_INACTIVE_THREAD_STATES } from './thread-state-cache.js'
 import { composerWireText } from './ui/composer-chips.js'
 
 const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
@@ -16317,13 +16318,15 @@ describe('reopening a session', () => {
   })
 
   it('reloads an evicted history after visiting more sessions than the inactive cache retains', async () => {
+    // The chat just left is always kept; every other one counts against the limits.
+    const visited = MAX_INACTIVE_THREAD_STATES + 3
     serverProjects = [
       {
         path: '/work/project',
         name: 'project',
         pinned: false,
         createdAt: 0,
-        sessions: Array.from({ length: 5 }, (_, index) => ({
+        sessions: Array.from({ length: visited }, (_, index) => ({
           id: `thread-${index + 1}`,
           title: `Thread ${index + 1}`,
           running: false,
@@ -16343,8 +16346,13 @@ describe('reopening a session', () => {
     })
 
     render(<App />)
-    for (let index = 1; index <= 5; index += 1) {
-      fireEvent.click(await screen.findByRole('button', { name: new RegExp(`^Thread ${index},`) }))
+    await screen.findByRole('button', { name: /^Thread 1,/ })
+    for (let index = 1; index <= visited; index += 1) {
+      const name = new RegExp(`^Thread ${index},`)
+      // A project lists its first 15 chats until asked for more.
+      if (!screen.queryByRole('button', { name }))
+        fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+      fireEvent.click(await screen.findByRole('button', { name }))
       expect(await screen.findByText(`History ${index}`)).toBeTruthy()
     }
 
@@ -16360,6 +16368,219 @@ describe('reopening a session', () => {
       'thread.history',
       expect.objectContaining({ threadId: 'thread-1', afterSeq: expect.any(Number) }),
     )
+  })
+
+  it('switches back to a chat left several chats ago from what it still holds', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: Array.from({ length: 5 }, (_, index) => ({
+          id: `thread-${index + 1}`,
+          title: `Thread ${index + 1}`,
+          running: false,
+        })),
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      const parsed = methods['thread.history'].params.parse(params)
+      const index = Number(parsed.threadId.slice('thread-'.length))
+      // Nothing new after the sequence the client holds.
+      if (parsed.afterSeq !== undefined) return Promise.resolve({ events: [], running: false })
+      return Promise.resolve({
+        events: [completedHistoryEvent(index, `${parsed.threadId}-item`, `History ${index}`)],
+        running: false,
+      })
+    })
+
+    render(<App />)
+    for (let index = 1; index <= 5; index += 1) {
+      fireEvent.click(await screen.findByRole('button', { name: new RegExp(`^Thread ${index},`) }))
+      expect(await screen.findByText(`History ${index}`)).toBeTruthy()
+    }
+
+    transport.request.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /^Thread 1,/ }))
+    // Shown from memory at once; only what happened since is asked for.
+    expect(screen.getByText('History 1')).toBeTruthy()
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'thread-1', afterSeq: expect.any(Number) }),
+      )
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
+      threadId: 'thread-1',
+      page: NEWEST_PAGE,
+    })
+  })
+
+  it('still holds the chat left for a new chat once the new chat gets its server id', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-a', title: 'Thread A', running: false }],
+      },
+    ]
+    // Over the whole budget for inactive chats: only the chat just left keeps it.
+    const huge = 'x'.repeat(MAX_INACTIVE_THREAD_CHARACTERS + 1)
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      const parsed = methods['thread.history'].params.parse(params)
+      if (parsed.threadId !== 'thread-a' || parsed.afterSeq !== undefined)
+        return Promise.resolve({ events: [], running: false })
+      return Promise.resolve({
+        events: [
+          completedHistoryEvent(1, 'a-big', huge),
+          completedHistoryEvent(2, 'a', 'History A'),
+        ],
+        running: false,
+      })
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Thread A,/ }))
+    expect(await screen.findByText('History A')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    act(() => composerProps().onSend('First prompt', []))
+    await waitFor(() => expect(sidebarProps().activeSessionId).toBe('thread-1'))
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+
+    transport.request.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /^Thread A,/ }))
+    // Shown from memory at once; only what happened since is asked for.
+    expect(screen.getByText('History A')).toBeTruthy()
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'thread-a', afterSeq: 2 }),
+      )
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
+      threadId: 'thread-a',
+      page: NEWEST_PAGE,
+    })
+  })
+
+  describe('a kept chat that went away', () => {
+    function useProjects() {
+      serverProjects = [
+        {
+          path: '/work/project',
+          name: 'project',
+          pinned: false,
+          createdAt: 0,
+          sessions: [{ id: 'thread-a', title: 'Thread A', running: false }],
+        },
+        {
+          path: '/work/other',
+          name: 'other',
+          pinned: false,
+          createdAt: 1,
+          sessions: [{ id: 'thread-b', title: 'Thread B', running: false }],
+        },
+      ]
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method !== 'thread.history') return request(method, params)
+        const { threadId, afterSeq } = methods['thread.history'].params.parse(params)
+        if (afterSeq !== undefined) return Promise.resolve({ events: [], running: false })
+        return Promise.resolve({
+          events: [completedHistoryEvent(1, `${threadId}-item`, `History ${threadId}`)],
+          running: false,
+        })
+      })
+      return request
+    }
+    /** The App's controller: the receiver of its first activate call. */
+    function controllerSpy() {
+      const activate = vi.spyOn(ThreadController.prototype, 'activate')
+      return () => activate.mock.contexts[0] as ThreadController
+    }
+    function removeProjectOnServer(path: string) {
+      serverProjects = serverProjects.filter((project) => project.path !== path)
+    }
+
+    it('is no longer held once another window deleted it', async () => {
+      useProjects()
+      // Both chats in the one expanded project.
+      serverProjects = [
+        {
+          ...serverProjects[0]!,
+          sessions: [...serverProjects[0]!.sessions, ...serverProjects[1]!.sessions],
+        },
+      ]
+      const controller = controllerSpy()
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Thread A,/ }))
+      expect(await screen.findByText('History thread-a')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: /^Thread B,/ }))
+      expect(await screen.findByText('History thread-b')).toBeTruthy()
+      expect(controller().previousId).toBe('thread-a')
+      expect(controller().snapshot('thread-a')).toBeDefined()
+
+      serverProjects = serverProjects.map((project) => ({
+        ...project,
+        sessions: project.sessions.filter((session) => session.id !== 'thread-a'),
+      }))
+      act(() => transport.listeners.get('projects.changed')?.({}))
+      await waitFor(() => expect(controller().snapshot('thread-a')).toBeUndefined())
+      expect(controller().cursor('thread-a')).toBeUndefined()
+      expect(controller().previousId).toBeUndefined()
+      expect(screen.getByText('History thread-b')).toBeTruthy()
+    })
+
+    it('is no longer held once its project was removed', async () => {
+      const request = useProjects()
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method !== 'projects.remove') return request(method, params)
+        removeProjectOnServer('/work/project')
+        return Promise.resolve({})
+      })
+      useProjects()
+      const controller = controllerSpy()
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Thread A,/ }))
+      expect(await screen.findByText('History thread-a')).toBeTruthy()
+      act(() => sidebarProps().onRemoveProject('/work/project'))
+      expect(controller().previousId).toBe('thread-a')
+      await waitFor(() => expect(controller().snapshot('thread-a')).toBeUndefined())
+      expect(controller().cursor('thread-a')).toBeUndefined()
+      expect(controller().previousId).toBeUndefined()
+    })
+
+    it('stays held when removing its project failed', async () => {
+      const request = useProjects()
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'projects.remove'
+          ? Promise.reject(new Error('removal refused'))
+          : request(method, params),
+      )
+      useProjects()
+      const controller = controllerSpy()
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Thread A,/ }))
+      expect(await screen.findByText('History thread-a')).toBeTruthy()
+      const lists = rpcCount('projects.list')
+      act(() => sidebarProps().onRemoveProject('/work/project'))
+      await waitFor(() => expect(rpcCount('projects.list')).toBe(lists + 1))
+      await act(async () => Promise.resolve())
+      expect(await screen.findByRole('button', { name: /^Thread A,/ })).toBeTruthy()
+      expect(controller().previousId).toBe('thread-a')
+      expect(controller().snapshot('thread-a')).toBeDefined()
+      expect(controller().cursor('thread-a')).toBe(1)
+    })
   })
 
   it('reloads an oversized background reply from durable history before completion', async () => {
@@ -16994,6 +17215,81 @@ describe('split view', () => {
     expect(within(pane('Left chat')).getByRole('button', { name: 'Close Left chat pane' }))
     expect(within(pane('Right chat')).getByRole('button', { name: 'Close Right chat pane' }))
     expect(document.querySelector('.stage__body')!.classList.contains('is-split')).toBe(true)
+  })
+
+  describe('closing a pane keeps its chat as the one just left', () => {
+    // Over the whole budget for inactive chats: only the chat just left keeps it.
+    const huge = 'x'.repeat(MAX_INACTIVE_THREAD_CHARACTERS + 1)
+
+    async function openSplitAfterPinnedChat() {
+      useTwoChats([{ id: 'pinned-thread', title: 'Pinned chat', provider: 'codex', createdAt: 1 }])
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method !== 'thread.history') return request(method, params)
+        const { threadId, afterSeq } = methods['thread.history'].params.parse(params)
+        if (afterSeq !== undefined) return Promise.resolve({ events: [], running: false })
+        return Promise.resolve({
+          events: [
+            completedHistoryEvent(1, `${threadId}-big`, huge),
+            completedHistoryEvent(2, `${threadId}-small`, `${threadId} rows`),
+          ],
+          running: false,
+        })
+      })
+      render(<App />)
+      // Leaving the pinned chat for the left one keeps the pinned chat.
+      fireEvent.click(await waitFor(() => treeChatRow('Pinned chat')))
+      expect(await screen.findByText('pinned-thread rows')).toBeTruthy()
+      fireEvent.click(treeChatRow('Left chat'))
+      expect(await screen.findByText('left-thread rows')).toBeTruthy()
+      fireEvent.contextMenu(treeChatRow('Right chat'))
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Open beside' }))
+      await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+      expect(await screen.findByText('right-thread rows')).toBeTruthy()
+      expect(isFocused('Right chat')).toBe(true)
+    }
+
+    async function expectHeld(title: string, threadId: string) {
+      transport.request.mockClear()
+      fireEvent.click(treeChatRow(title))
+      // Shown from memory at once; only what happened since is asked for.
+      expect(screen.getByText(`${threadId} rows`)).toBeTruthy()
+      await waitFor(() => {
+        expect(transport.request).toHaveBeenCalledWith(
+          'thread.history',
+          expect.objectContaining({ threadId, afterSeq: 2 }),
+        )
+      })
+      expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
+        threadId,
+        page: NEWEST_PAGE,
+      })
+    }
+
+    it('when the focused pane is closed', async () => {
+      await openSplitAfterPinnedChat()
+      fireEvent.click(screen.getByRole('button', { name: 'Close Right chat pane' }))
+      await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(1))
+      expect(screen.getByTestId('thread').dataset.threadId).toBe('left-thread')
+      expect(screen.getByText('left-thread rows')).toBeTruthy()
+      await expectHeld('Right chat', 'right-thread')
+    })
+
+    it('when the other pane is closed', async () => {
+      await openSplitAfterPinnedChat()
+      fireEvent.click(screen.getByRole('button', { name: 'Close Left chat pane' }))
+      await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(1))
+      expect(screen.getByTestId('thread').dataset.threadId).toBe('right-thread')
+      expect(screen.getByText('right-thread rows')).toBeTruthy()
+      // A finished turn elsewhere prunes the cache before the user goes back.
+      emitThreadEvent('right-thread', {
+        type: 'turn.completed',
+        turnId: 'turn-1',
+        status: 'completed',
+      })
+      await expectHeld('Left chat', 'left-thread')
+    })
   })
 
   it('opens a chat beside with Alt+click and keeps the open chat mounted', async () => {

@@ -3820,12 +3820,36 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const savedSetupsShared = useRef(false)
   // Chats this window deleted; a list read before the delete must not bring one back.
   const deletedThreadIds = useRef(new Set<string>())
+  /** Chat ids the newest projects.list answer listed, and how many lists were asked for. */
+  const listedThreadIds = useRef<ReadonlySet<string>>(new Set())
+  const projectListRequests = useRef(0)
   const refreshProjects = useCallback(async () => {
     if (!startupMilestones.current.projectsRequested) {
       startupMilestones.current.projectsRequested = true
       reportStartupMilestone('projects-requested')
     }
+    const listRequest = ++projectListRequests.current
     const result = await transport.request('projects.list', {})
+    if (listRequest === projectListRequests.current) {
+      // The chat kept for switching back is held whatever its size. Once the
+      // server stops listing it (deleted in another window, or its project
+      // removed), it is gone: stop holding it. Only the newest answer counts,
+      // and only for a chat an earlier answer listed, so a chat started after
+      // this request went out is not taken for a deleted one.
+      const listed = new Set(
+        result.projects.flatMap((project) => project.sessions.map((session) => session.id)),
+      )
+      const kept = threadController.previousId
+      if (
+        kept !== undefined &&
+        listedThreadIds.current.has(kept) &&
+        !listed.has(kept) &&
+        !threadController.isVisible(kept) &&
+        !isThreadCacheProtected(kept)
+      )
+        threadController.forget(kept)
+      listedThreadIds.current = listed
+    }
     const list = withoutDeletedSessions(result.projects, deletedThreadIds.current).filter(
       (project) => !removedProjectPaths.current.has(project.path),
     )
@@ -3861,7 +3885,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       (current) => current ?? (chatWithoutProjectRef.current ? undefined : firstProjectPath),
     )
     return list
-  }, [transport])
+  }, [transport, threadController, isThreadCacheProtected])
 
   const refreshCheckpoints = useCallback(
     async (threadId: string) => {
@@ -4929,6 +4953,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           ),
         )
         threadController.moveDraft(provisionalId, threadId)
+        // Not a switch: the chat shown, or kept as the one just left, is renamed.
+        threadController.replaceId(provisionalId, threadId)
         if (activeIdRef.current === provisionalId) {
           if (threadController.draftOwner === provisionalId) threadController.draftOwner = threadId
           if (composerDraftKeyRef.current === provisionalId) composerDraftKeyRef.current = threadId
@@ -6807,17 +6833,35 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       reportError,
     ],
   )
-  const closeBesidePane = useCallback(() => {
-    if (!splitRef.current) return
-    threadController.show(otherSlot(focusedSlotRef.current), undefined)
-    setSplit(undefined)
-    setBesideQueue(undefined)
-  }, [threadController, setSplit])
-  const closeFocusedPane = useCallback(() => {
-    if (!splitRef.current) return
-    focusPane(otherSlot(focusedSlotRef.current))
-    closeBesidePane()
-  }, [focusPane, closeBesidePane])
+  /**
+   * `left` is true when the user closed the pane: its chat is then the one
+   * just left, kept for switching back. A pane closed because its chat or
+   * project went away records nothing.
+   */
+  const dropBesidePane = useCallback(
+    (left: boolean) => {
+      if (!splitRef.current) return
+      const slot = otherSlot(focusedSlotRef.current)
+      if (left) {
+        threadController.leave(slot)
+        // The active chat may not change, so nothing else prunes for this.
+        pruneThreadStateCache()
+      } else threadController.show(slot, undefined)
+      setSplit(undefined)
+      setBesideQueue(undefined)
+    },
+    [threadController, pruneThreadStateCache, setSplit],
+  )
+  const closeBesidePane = useCallback(() => dropBesidePane(true), [dropBesidePane])
+  const dropFocusedPane = useCallback(
+    (left: boolean) => {
+      if (!splitRef.current) return
+      focusPane(otherSlot(focusedSlotRef.current))
+      dropBesidePane(left)
+    },
+    [focusPane, dropBesidePane],
+  )
+  const closeFocusedPane = useCallback(() => dropFocusedPane(true), [dropFocusedPane])
   /** The stage body: a chat dragged from the sidebar is dropped on the panes in it. */
   const stageBody = useRef<HTMLDivElement>(null)
   const chatDrop = useChatDrop({
@@ -6846,12 +6890,12 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       if (!current) return false
       const beside = splitBesideId(current)
       if (beside !== undefined && ids.includes(beside)) {
-        closeBesidePane()
+        dropBesidePane(false)
         return false
       }
       const active = activeIdRef.current
       if (active === undefined || !ids.includes(active)) return false
-      closeFocusedPane()
+      dropFocusedPane(false)
       return true
     },
     project: (path) => {
@@ -6862,11 +6906,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           ? findSession(projectsRef.current, current.beside.id)?.project.path
           : current.beside.projectPath
       if (besidePath === path) {
-        closeBesidePane()
+        dropBesidePane(false)
         return false
       }
       if (activePathRef.current !== path) return false
-      closeFocusedPane()
+      dropFocusedPane(false)
       return true
     },
   }
