@@ -4675,6 +4675,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     (id: string) => {
       const selected =
         models.find((model) => model.key === id) ??
+        // An open chat on another account offers that account's own list.
+        selectableModels.find((model) => model.key === id) ??
         otherAccountChoices.find((choice) => choice.key === id)
       if (!selected) return
       pendingThreadModelSave.current = activeIdRef.current
@@ -4701,7 +4703,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       }
       commitModelChoice(selected)
     },
-    [models, otherAccountChoices, commitModelChoice, providerAccountsStore],
+    [models, selectableModels, otherAccountChoices, commitModelChoice, providerAccountsStore],
   )
 
   const changeEffort = useCallback((value: string | undefined) => {
