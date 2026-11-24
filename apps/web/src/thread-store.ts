@@ -131,6 +131,38 @@ export function changedLiveItemIndices(
   return transition?.previous === previous ? transition.indices : undefined
 }
 
+/**
+ * Live rows that may differ between an older and a newer live snapshot of the
+ * same structural items, without materializing a large overlay: follows the
+ * recorded reducer transitions back to `previous`, or lists a small plain map.
+ * Undefined when neither is possible; the caller then reads the rows it needs.
+ */
+export function liveItemChangesSince(
+  previous: ReadonlyMap<number, LiveItemUpdate>,
+  next: ReadonlyMap<number, LiveItemUpdate>,
+  maxSteps = 64,
+): readonly number[] | undefined {
+  if (previous === next) return []
+  const changed: number[] = []
+  let current = next
+  for (let step = 0; step < maxSteps; step += 1) {
+    const transition = liveItemTransitions.get(current)
+    if (!transition) break
+    for (const index of transition.indices) changed.push(index)
+    if (transition.previous === previous) return changed
+    current = transition.previous
+  }
+  if (!isSmallLiveMap(previous) || !isSmallLiveMap(next)) return undefined
+  // Every entry of either small map: a superset of the changes.
+  const indices = [...next.keys()]
+  for (const index of previous.keys()) if (!next.has(index)) indices.push(index)
+  return indices
+}
+
+function isSmallLiveMap(map: ReadonlyMap<number, LiveItemUpdate>): boolean {
+  return !(map instanceof LiveItemOverlay) && map.size < LIVE_ITEM_OVERLAY_MIN_SIZE
+}
+
 export function threadItemAt(
   items: readonly Item[],
   liveItems: ReadonlyMap<number, LiveItemUpdate>,
