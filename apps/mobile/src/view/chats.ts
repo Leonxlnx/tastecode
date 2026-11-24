@@ -88,12 +88,15 @@ export function chatsView(state: ProjectsState, sources: readonly Source[] = [])
   return {
     status: state.status,
     error: state.error ?? null,
-    projects: state.projects.map((project) => ({
-      path: project.path,
-      name: project.name,
-      pinned: project.pinned,
-      chats: project.sessions.filter((session) => !isArchived(session)).length,
-    })),
+    // A chat's own folder is not a project to start in; its chat stays in the list above.
+    projects: state.projects
+      .filter((project) => !project.chat)
+      .map((project) => ({
+        path: project.path,
+        name: project.name,
+        pinned: project.pinned,
+        chats: project.sessions.filter((session) => !isArchived(session)).length,
+      })),
     chats,
   }
 }

@@ -64,8 +64,12 @@ export class NewChat {
     )
   }
 
+  /**
+   * A chat without a project owns its dated folder: a new chat never starts
+   * there, as the default or as the folder of the chat it was opened from.
+   */
   #project() {
-    const list = projects.state.get().projects
+    const list = projects.state.get().projects.filter((entry) => !entry.chat)
     return list.find((entry) => entry.path === this.#draft.projectPath) ?? list[0]
   }
 
