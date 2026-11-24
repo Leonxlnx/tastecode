@@ -8561,6 +8561,32 @@ describe('new chats', () => {
       await waitFor(() => expect(composerValue()).toBe('Words for other'))
     })
 
+    it('keeps a project draft out of a chat without a project, and its own draft too', async () => {
+      render(<App />)
+      const composer = await screen.findByPlaceholderText('Do anything')
+      fireEvent.change(composer, { target: { value: 'Words for project' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Creatify' }))
+      expect(creatifyPressed()).toBe('true')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+      fireEvent.click(await screen.findByRole('menuitem', { name: /No project/ }))
+      await waitFor(() =>
+        expect(screen.getByRole('heading').textContent).toBe('What should we build?'),
+      )
+      await waitFor(() => expect(composerValue()).toBe(''))
+      expect(creatifyPressed()).toBe('false')
+      fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+        target: { value: 'Words without a project' },
+      })
+
+      await chooseProject('project')
+      await waitFor(() => expect(composerValue()).toBe('Words for project'))
+      expect(creatifyPressed()).toBe('true')
+      fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+      fireEvent.click(await screen.findByRole('menuitem', { name: /No project/ }))
+      await waitFor(() => expect(composerValue()).toBe('Words without a project'))
+    })
+
     it('keeps a draft in its project when the project switch cannot be saved', async () => {
       const view = render(<App />)
       fireEvent.change(await screen.findByPlaceholderText('Do anything'), {

@@ -375,6 +375,11 @@ const CREATIFY_BY_THREAD_PREFIX = 'harness.creatifyByThread:'
 const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 /** The project whose New chat draft is the one under NEW_CHAT_DRAFT_KEY. */
 const NEW_CHAT_DRAFT_PROJECT_KEY = 'harness.newChatDraftProject'
+/**
+ * Owns New chat's draft while it is a chat without a project, as a project's
+ * path owns its own. Not a path, so it never names a project.
+ */
+const NO_PROJECT_DRAFT_OWNER = 'tastecode:no-project'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const EMPTY_PROVIDER_ROSTER: ProviderRoster = []
 const NO_STOPPING_ROWS: ReadonlyMap<string, number> = new Map()
@@ -5013,7 +5018,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         projectPath === undefined ||
         projectsRef.current.some((project) => project.path === projectPath && project.chat)
       setSurface('chat')
-      if (!withoutProject && projectPath) enterNewChatDraft(projectPath)
+      enterNewChatDraft(withoutProject || !projectPath ? NO_PROJECT_DRAFT_OWNER : projectPath)
       if (draft !== undefined) {
         // Added to what is drafted there already: an unsent prompt is never replaced.
         const next = threadController.recoverDraft(NEW_CHAT_DRAFT_KEY, {
@@ -5833,7 +5838,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           ? !activePathRef.current && !activeIdRef.current
           : path === activePathRef.current
       if (unchanged) return
-      if (path) enterNewChatDraft(path)
+      enterNewChatDraft(path ?? NO_PROJECT_DRAFT_OWNER)
       setActivePath(path)
       activeIdRef.current = undefined
       setActiveId(undefined)
