@@ -281,19 +281,30 @@ function inProjectTree(session: Session): boolean {
 
 const projectSidebarProjections = new WeakMap<
   Project,
-  { held: string | undefined; projection: ProjectSidebarProjection }
+  {
+    /** The held chat this projection was asked for, which a project need not contain. */
+    asked: string | undefined
+    held: string | undefined
+    projection: ProjectSidebarProjection
+  }
 >()
 
 function projectSidebarProjection(
   source: Project,
   heldSessionId?: string,
 ): ProjectSidebarProjection {
+  // A project's sessions never change in place, so whether it holds the chat is
+  // known for as long as the same chat is held: no scan of every project's chats.
+  const cached = projectSidebarProjections.get(source)
+  if (cached && cached.asked === heldSessionId) return cached.projection
   const held =
     heldSessionId !== undefined && source.sessions.some(({ id }) => id === heldSessionId)
       ? heldSessionId
       : undefined
-  const cached = projectSidebarProjections.get(source)
-  if (cached && cached.held === held) return cached.projection
+  if (cached && cached.held === held) {
+    cached.asked = heldSessionId
+    return cached.projection
+  }
 
   const pinnedSessions: PinnedSession[] = []
   const archivedSessions: PinnedSession[] = []
@@ -310,7 +321,7 @@ function projectSidebarProjection(
       ? source
       : { ...source, sessions: grouped }
   const projection = { project, pinnedSessions, archivedSessions }
-  projectSidebarProjections.set(source, { held, projection })
+  projectSidebarProjections.set(source, { asked: heldSessionId, held, projection })
   return projection
 }
 

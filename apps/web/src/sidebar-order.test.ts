@@ -430,3 +430,36 @@ describe('a folded project', () => {
     }
   })
 })
+
+describe('sidebar rail cost', () => {
+  /** Projects whose chats count every read of their id. */
+  function counted(projects: number, chats: number) {
+    let reads = 0
+    const list = Array.from({ length: projects }, (_, index) => {
+      const source = project(`/p${index}`, [])
+      source.sessions = Array.from({ length: chats }, (_, chat) => {
+        const session = { ...project('/x', [`p${index}-${chat}`]).sessions[0]! }
+        const id = session.id
+        Object.defineProperty(session, 'id', {
+          enumerable: true,
+          get: () => {
+            reads += 1
+            return id
+          },
+        })
+        return session
+      })
+      return source
+    })
+    return { list, reads: () => reads }
+  }
+
+  it('does not scan every chat again for a held chat while the projects are unchanged', () => {
+    const { list, reads } = counted(50, 100)
+    const first = sidebarRail(list, 'p49-0')
+    const afterFirst = reads()
+    const second = sidebarRail(list, 'p49-0')
+    expect(reads() - afterFirst).toBe(0)
+    expect(second.orderedProjects).toEqual(first.orderedProjects)
+  })
+})
