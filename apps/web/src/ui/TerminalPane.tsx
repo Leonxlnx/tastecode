@@ -5,7 +5,12 @@ import { Terminal, type ITheme } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { IconCopy as Copy, IconRotate as RotateCcw, IconX as X } from '@tabler/icons-react'
 import { memo, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
-import { isMacOS, writeClipboardText } from '../bridge.js'
+import {
+  assistiveTechnologyActive,
+  isMacOS,
+  onAssistiveTechnologyChange,
+  writeClipboardText,
+} from '../bridge.js'
 import { prepareAppHaptics } from '../haptics.js'
 import type { Transport, ConnectionState } from '../transport.js'
 import { errorMessage } from '../boundary.js'
@@ -77,7 +82,9 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       macOptionIsMeta: workspace && macOS,
       minimumContrastRatio: workspace ? 1.5 : 1,
       rescaleOverlappingGlyphs: true,
-      screenReaderMode: true,
+      // Mirrors every written row into the DOM for screen readers, which costs
+      // main-thread time on every write. On only while the OS reports one.
+      screenReaderMode: assistiveTechnologyActive(),
       scrollback: 10_000,
       theme: terminalTheme(workspace ? 'workspace' : 'app'),
       ...(windows ? { windowsPty: { backend: 'conpty' as const } } : {}),
@@ -85,6 +92,9 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
     const unfollowTheme = followTerminalTheme(instance, () =>
       terminalTheme(workspace ? 'workspace' : 'app'),
     )
+    const unfollowAssistive = onAssistiveTechnologyChange((enabled) => {
+      instance.options.screenReaderMode = enabled
+    })
     const fit = new FitAddon()
     instance.loadAddon(fit)
     const unicode = new Unicode11Addon()
@@ -391,6 +401,7 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       activate.current = () => {}
       observer.disconnect()
       unfollowTheme()
+      unfollowAssistive()
       input.dispose()
       selection.dispose()
       offState()

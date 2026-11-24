@@ -70,6 +70,8 @@ type Bridge = {
     listener: (guestId: number, action: BrowserShortcutAction) => void,
   ) => () => void
   onZoomChange: (listener: (factor: number) => void) => () => void
+  accessibilitySupportEnabled?: () => boolean
+  onAccessibilitySupportChange?: (listener: (enabled: boolean) => void) => () => void
   reportChatAttention?: (report: ChatAttentionReport) => void
   onOpenChat?: (listener: (chatId: string) => void) => () => void
   reportStartupMilestone?: (name: RendererStartupMilestone) => void
@@ -466,6 +468,19 @@ export function onOpenChatRequest(listener: (chatId: string) => void): () => voi
 
 export function onAppZoomChange(listener: (factor: number) => void): () => void {
   return bridge?.onZoomChange(listener) ?? (() => undefined)
+}
+
+/**
+ * Whether the OS reports assistive technology (a screen reader) to the app.
+ * True wherever that cannot be known: the browser build or an older shell.
+ */
+export function assistiveTechnologyActive(): boolean {
+  return bridge?.accessibilitySupportEnabled?.() ?? true
+}
+
+/** Follows the OS turning assistive technology on or off while the app runs. */
+export function onAssistiveTechnologyChange(listener: (active: boolean) => void): () => void {
+  return bridge?.onAccessibilitySupportChange?.(listener) ?? (() => undefined)
 }
 
 type BrowserShortcutListener = (guestId: number, action: BrowserShortcutAction) => void

@@ -28,6 +28,20 @@ const haptics = vi.hoisted(() => ({
   prepareAppHaptics: vi.fn(),
 }))
 
+const assistive = vi.hoisted(() => ({
+  active: true,
+  listeners: new Set<(active: boolean) => void>(),
+}))
+
+vi.mock('../bridge.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../bridge.js')>()),
+  assistiveTechnologyActive: () => assistive.active,
+  onAssistiveTechnologyChange: (listener: (active: boolean) => void) => {
+    assistive.listeners.add(listener)
+    return () => assistive.listeners.delete(listener)
+  },
+}))
+
 vi.mock('../haptics.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../haptics.js')>()),
   appHapticsEnabled: () => true,
@@ -116,6 +130,8 @@ beforeEach(() => {
   )
   xterm.instances.length = 0
   xterm.fitRows = 24
+  assistive.active = true
+  assistive.listeners.clear()
 })
 
 afterEach(() => {
@@ -129,6 +145,25 @@ afterEach(() => {
 })
 
 describe('TerminalPane', () => {
+  it('mirrors rows for screen readers only while the OS reports one', async () => {
+    assistive.active = false
+    const harness = fakeTransport()
+    const { unmount } = render(
+      <TerminalPane transport={harness.transport} threadId="thread-a11y" onClose={vi.fn()} />,
+    )
+    await waitFor(() => expect(xterm.instances).toHaveLength(1))
+    const instance = xterm.instances[0]!
+    expect(instance.options['screenReaderMode']).toBe(false)
+
+    act(() => assistive.listeners.forEach((listener) => listener(true)))
+    expect(instance.options['screenReaderMode']).toBe(true)
+    act(() => assistive.listeners.forEach((listener) => listener(false)))
+    expect(instance.options['screenReaderMode']).toBe(false)
+
+    unmount()
+    expect(assistive.listeners.size).toBe(0)
+  })
+
   it('prepares an inactive renderer without opening a shell until activation', async () => {
     const harness = fakeTransport()
     const view = render(

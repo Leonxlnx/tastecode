@@ -415,3 +415,35 @@ describe('browser path prompt fallback', () => {
     }
   })
 })
+
+describe('assistive technology bridge', () => {
+  it('assumes a screen reader where the OS answer cannot be known', async () => {
+    const bridge = await import('./bridge.js')
+
+    expect(bridge.assistiveTechnologyActive()).toBe(true)
+    expect(bridge.onAssistiveTechnologyChange(() => undefined)).toBeTypeOf('function')
+  })
+
+  it('follows the desktop shell', async () => {
+    const listeners: Array<(enabled: boolean) => void> = []
+    const stop = vi.fn()
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      accessibilitySupportEnabled: () => false,
+      onAccessibilitySupportChange: (listener: (enabled: boolean) => void) => {
+        listeners.push(listener)
+        return stop
+      },
+    }
+    const bridge = await import('./bridge.js')
+    const seen: boolean[] = []
+
+    expect(bridge.assistiveTechnologyActive()).toBe(false)
+    const off = bridge.onAssistiveTechnologyChange((active) => seen.push(active))
+    listeners.forEach((listener) => listener(true))
+    off()
+
+    expect(seen).toEqual([true])
+    expect(stop).toHaveBeenCalledOnce()
+  })
+})
