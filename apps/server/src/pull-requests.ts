@@ -1752,12 +1752,17 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
   })
 }
 
+/** At most this many `git config` processes at once, however many projects there are. */
+const REPOSITORY_PROBES = 8
+
 export async function resolveProjectRepositories(
   paths: readonly string[],
 ): Promise<Map<string, string>> {
   const matches = new Map<string, string>()
-  await Promise.all(
-    paths.map(async (projectPath) => {
+  let next = 0
+  const probe = async (): Promise<void> => {
+    for (let index = next++; index < paths.length; index = next++) {
+      const projectPath = paths[index]!
       try {
         const { stdout } = await runFile('git', ['config', '--get', 'remote.origin.url'], {
           cwd: projectPath,
@@ -1772,8 +1777,9 @@ export async function resolveProjectRepositories(
       } catch {
         // A configured project without a GitHub origin is a normal local project.
       }
-    }),
-  )
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(REPOSITORY_PROBES, paths.length) }, probe))
   return matches
 }
 
