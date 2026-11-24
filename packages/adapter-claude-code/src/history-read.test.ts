@@ -3,7 +3,11 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { DomainEvent, ProviderHistorySession } from '@harness/contracts'
-import { transcriptEvents } from './history.js'
+import {
+  AUDITED_AGENT_SDK_VERSIONS,
+  installedAgentSdkVersion,
+  transcriptEvents,
+} from './history.js'
 
 // Counts the rows each read hands the Agent SDK, through its own session store.
 const loaded = vi.hoisted(() => ({ calls: 0, rows: 0 }))
@@ -103,7 +107,9 @@ function exchange(id: string, parent: string | null, words = id) {
   ]
 }
 
-async function read(rows: unknown[], options: { lineEnd?: string; tail?: string } = {}) {
+type ReadOptions = { lineEnd?: string; tail?: string; cuts?: boolean }
+
+async function readOnce(rows: unknown[], options: ReadOptions = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'claude-read-'))
   directories.push(dir)
   const file = path.join(dir, `${SESSION}.jsonl`)
@@ -123,7 +129,18 @@ async function read(rows: unknown[], options: { lineEnd?: string; tail?: string 
     createdAt: AT,
     updatedAt: AT,
   }
-  return transcriptEvents(file, session)
+  return transcriptEvents(file, session, options.cuts === undefined ? {} : { cuts: options.cuts })
+}
+
+/**
+ * The events read with cuts, after checking that they equal, in order and in every field,
+ * the events of the read that hands the SDK every row before each compaction.
+ */
+async function read(rows: unknown[], options: ReadOptions = {}) {
+  const full = await readOnce(rows, { ...options, cuts: false })
+  const cut = await readOnce(rows, { ...options, cuts: true })
+  expect(cut).toEqual(full)
+  return cut
 }
 
 /** Every event, one line each: its type, the turn or item it is about, and what it shows. */
@@ -433,11 +450,255 @@ describe('reading a Claude Code transcript', () => {
     }
     loaded.calls = 0
     loaded.rows = 0
-    const events = await read(rows)
+    const events = await readOnce(rows)
     expect(loaded.calls).toBe(9)
     // Each segment and the rows its compaction kept; every row before each compaction, as
     // the SDK used to be handed, is 810.
     expect(loaded.rows).toBeLessThan(rows.length + 3 * 8)
     expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(81)
+  })
+})
+
+/** Rows as saved, in file order, each one second after the one before. */
+function saved(rows: Array<Record<string, unknown>>) {
+  return rows.map((item) => ({
+    sessionId: SESSION,
+    timestamp: new Date(AT + ++clock * 1000).toISOString(),
+    ...item,
+  }))
+}
+
+const texts = (events: DomainEvent[]) =>
+  events.flatMap((event) =>
+    event.type === 'item.completed' && 'text' in event.item ? [event.item.text] : [],
+  )
+
+describe('reading a transcript the cut cannot cover', () => {
+  it('reads ids with a line feed whole, where SDK keys of parent and id could collide', async () => {
+    clock = 0
+    const events = await read(
+      saved([
+        {
+          type: 'user',
+          uuid: 'c',
+          parentUuid: 'a\nb',
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'old', content: 'orphan' }],
+          },
+        },
+        { type: 'system', subtype: 'compact_boundary', uuid: 'K', parentUuid: null },
+        { type: 'user', uuid: 'U', parentUuid: 'K', message: { role: 'user', content: 'Run it' } },
+        {
+          type: 'assistant',
+          uuid: 'a',
+          parentUuid: 'U',
+          message: {
+            id: 'm',
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'T', name: 'Bash', input: { command: 'echo result' } },
+            ],
+          },
+        },
+        {
+          type: 'user',
+          uuid: 'b\nc',
+          parentUuid: 'a',
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'T', content: 'only result' }],
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: 'Z',
+          parentUuid: 'a',
+          message: {
+            id: 'z',
+            role: 'assistant',
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: 'Done' }],
+          },
+        },
+      ]),
+    )
+    expect(texts(events)).not.toContain('only result')
+    expect(texts(events)).toContain('Done')
+  })
+
+  it('fails a parent that is not a string as the full read does', async () => {
+    clock = 0
+    const rows = saved([
+      {
+        type: 'user',
+        uuid: 'r',
+        parentUuid: { toString: 0 },
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'old', content: 'orphan' }],
+        },
+      },
+      { type: 'system', subtype: 'compact_boundary', uuid: 'K', parentUuid: null },
+      {
+        type: 'assistant',
+        uuid: 'A',
+        parentUuid: null,
+        message: { id: 'm', role: 'assistant', content: text('Answer') },
+      },
+    ])
+    const full = await readOnce(rows, { cuts: false }).then(
+      () => 'read',
+      (error: Error) => error.message,
+    )
+    expect(full).not.toBe('read')
+    await expect(readOnce(rows, { cuts: true })).rejects.toThrow(full)
+  })
+
+  it.each([
+    ['an id that is not a string', { uuid: { toString: null } }],
+    ['no id', {}],
+  ])('reads past a compaction with %s as the full read does', async (_name, id) => {
+    clock = 0
+    const events = await read(
+      saved([
+        { type: 'user', uuid: 'U', parentUuid: null, message: { role: 'user', content: 'Ask' } },
+        { type: 'system', subtype: 'compact_boundary', parentUuid: null, ...id },
+        {
+          type: 'assistant',
+          uuid: 'A',
+          parentUuid: 'U',
+          message: { id: 'm', role: 'assistant', content: text('Answer') },
+        },
+      ]),
+    )
+    expect(texts(events)).toEqual(['Ask', 'Answer'])
+  })
+})
+
+describe('the Agent SDK the cut was checked against', () => {
+  it('is the installed one', () => {
+    // A new SDK version can compare rows in ways `references` does not list: check `cutter`
+    // in history.ts against its session read, then add the version.
+    expect(
+      AUDITED_AGENT_SDK_VERSIONS,
+      `@anthropic-ai/claude-agent-sdk ${installedAgentSdkVersion()} was not audited`,
+    ).toContain(installedAgentSdkVersion())
+  })
+
+  it('reads every row before each compaction when cuts are off', async () => {
+    clock = 0
+    const rows: unknown[] = [...exchange('s0', null)]
+    let last = 's0-a'
+    for (let segment = 1; segment <= 8; segment++) {
+      rows.push(...compaction(`c${segment}`, last, [last]))
+      let parent = `c${segment}-summary`
+      for (let turn = 0; turn < 10; turn++) {
+        rows.push(...exchange(`s${segment}-${turn}`, parent))
+        parent = `s${segment}-${turn}-a`
+      }
+      last = parent
+    }
+    loaded.calls = 0
+    loaded.rows = 0
+    await readOnce(rows, { cuts: false })
+    expect([loaded.calls, loaded.rows]).toEqual([9, 810])
+  })
+
+  it('reads siblings, deliveries and tool ids shared across a compaction as the full read does', async () => {
+    clock = 0
+    const queued = (id: string, parent: string, delivery: string, source: string) => ({
+      type: 'attachment',
+      uuid: id,
+      parentUuid: parent,
+      attachment: {
+        type: 'queued_command',
+        prompt: `Queued ${id}`,
+        delivery_id: delivery,
+        source_uuid: source,
+      },
+    })
+    const tool = (id: string, parent: string, message: string, call: string) => ({
+      type: 'assistant',
+      uuid: id,
+      parentUuid: parent,
+      message: {
+        id: message,
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: call, name: 'Bash', input: { command: call } }],
+      },
+    })
+    const result = (id: string, parent: string, call: string) => ({
+      type: 'user',
+      uuid: id,
+      parentUuid: parent,
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: call, content: `${call} by ${id}` }],
+      },
+    })
+    const events = await read(
+      saved([
+        { type: 'user', uuid: 'P', parentUuid: null, message: { role: 'user', content: 'Go' } },
+        // Before the compaction: E calls T under API message e.
+        tool('E', 'P', 'e', 'T'),
+        result('E-r', 'E', 'T'),
+        queued('Q1', 'E-r', 'd1', 'P'),
+        {
+          type: 'queue-operation',
+          operation: 'remove',
+          reason: 'absorbed_mid_turn',
+          deliveryId: 'd2',
+        },
+        {
+          type: 'system',
+          subtype: 'compact_boundary',
+          uuid: 'K',
+          parentUuid: null,
+          logicalParentUuid: 'E-r',
+        },
+        { type: 'user', uuid: 'U', parentUuid: 'K', message: { role: 'user', content: 'Again' } },
+        // After it: A calls T as well, under another API message, beside a parallel call.
+        tool('A', 'U', 'a', 'T'),
+        tool('A2', 'A', 'a', 'T2'),
+        result('A2-r', 'A2', 'T2'),
+        // A result for T whose parent was never saved.
+        result('R', 'missing', 'T'),
+        queued('Q2', 'A2-r', 'd2', 'U'),
+        {
+          type: 'assistant',
+          uuid: 'Z',
+          parentUuid: 'A',
+          message: { id: 'z', role: 'assistant', stop_reason: 'end_turn', content: text('Done') },
+        },
+      ]),
+    )
+    expect(texts(events)).toContain('Done')
+  })
+
+  it('reads a cut moved back past every limit as the full read does', async () => {
+    clock = 0
+    // Each retreat exposes another parent before it, more often than a cut moves back.
+    const rows: Array<Record<string, unknown>> = []
+    let parent: string | null = null
+    for (let index = 0; index < 12; index++) {
+      const role = index % 2 ? 'assistant' : 'user'
+      rows.push({
+        type: role,
+        uuid: `p${index}`,
+        parentUuid: parent,
+        message: { id: `m${index}`, role, content: `Row ${index}` },
+      })
+      parent = `p${index}`
+    }
+    rows.push({ type: 'system', subtype: 'compact_boundary', uuid: 'K', parentUuid: parent })
+    rows.push({
+      type: 'user',
+      uuid: 'U',
+      parentUuid: 'K',
+      message: { role: 'user', content: 'Last' },
+    })
+    const events = await read(saved(rows))
+    expect(texts(events).at(-1)).toBe('Last')
   })
 })

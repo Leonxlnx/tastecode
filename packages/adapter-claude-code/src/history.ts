@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
-import { createReadStream, type Stats } from 'node:fs'
+import { createReadStream, readFileSync, type Stats } from 'node:fs'
 import { open, readdir, readFile, realpath, stat, type FileHandle } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
@@ -507,6 +508,20 @@ function isCompactBoundary(row: SavedRecord): boolean {
 const GRAPH_TYPES = new Set(['user', 'assistant', 'progress', 'system', 'attachment'])
 // How often a cut that a shared identifier invalidates is moved back to before it.
 const CUT_ATTEMPTS = 8
+// A row id or parent link the cut handles: no line feed or any other control character.
+function plainId(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return false
+  }
+  return true
+}
+
+/** Whether the SDK reads a row into its message graph: a graph type with a string id. */
+function inGraph(row: SavedRecord): boolean {
+  return typeof row.uuid === 'string' && typeof row.type === 'string' && GRAPH_TYPES.has(row.type)
+}
 
 /**
  * Every string through which the SDK's read (getSessionMessages over a session store, Agent
@@ -563,11 +578,20 @@ function references(row: SavedRecord): string[] {
  */
 function cutter(main: SavedRecord[]): (end: number) => number {
   const boundaries: number[] = []
+  for (const [index, row] of main.entries()) {
+    // The SDK reads only rows with a string id into its graph, and builds keys of the form
+    // `parent + LF + id`: an id with a control character, or a parent of another shape, could
+    // make two keys equal across a cut, or throw. Such a transcript is read whole.
+    if (inGraph(row) && !(plainId(row.uuid) && (row.parentUuid == null || plainId(row.parentUuid))))
+      return () => 0
+    // A compaction without a string id is not in the SDK's graph, so it starts no segment.
+    if (isCompactBoundary(row) && inGraph(row)) boundaries.push(index)
+  }
+  if (!boundaries.length) return () => 0
   // The first row each identifier or parent link occurs in, and where each row id is.
   const first = new Map<string, number>()
   const at = new Map<string, number>()
   main.forEach((row, index) => {
-    if (isCompactBoundary(row)) boundaries.push(index)
     for (const id of references(row)) if (!first.has(id)) first.set(id, index)
     if (typeof row.parentUuid === 'string' && !first.has(row.parentUuid))
       first.set(row.parentUuid, index)
@@ -579,15 +603,15 @@ function cutter(main: SavedRecord[]): (end: number) => number {
     const graph = new Map<string, SavedRecord>()
     for (let index = cut; index < end; index++) {
       const row = main[index]!
-      if (typeof row.uuid === 'string' && GRAPH_TYPES.has(String(row.type)))
-        graph.set(row.uuid, row)
+      if (inGraph(row)) graph.set(row.uuid as string, row)
     }
     const relinked = new Set<string>()
     const targets = new Set<string>()
     for (let index = cut; index < end; index++) {
       const row = main[index]!
       // The SDK relinks for the compactions in its graph: the last row of each id.
-      if (!isCompactBoundary(row) || graph.get(String(row.uuid)) !== row) continue
+      if (!isCompactBoundary(row) || !inGraph(row) || graph.get(row.uuid as string) !== row)
+        continue
       for (const id of references(row)) targets.add(id)
       // As the SDK relinks: kept messages when all are present, else the kept segment's head.
       const { preservedMessages, preservedSegment } = object(sdkRecord(row).compactMetadata)
@@ -596,7 +620,7 @@ function cutter(main: SavedRecord[]): (end: number) => number {
         const ids = kept.uuids as string[]
         if (ids.length && ids.every((id) => graph.has(id))) for (const id of ids) relinked.add(id)
       } else if (preservedSegment) {
-        const head = String(object(preservedSegment).headUuid)
+        const head = object(preservedSegment).headUuid as string
         if (graph.has(head)) relinked.add(head)
       }
     }
@@ -630,9 +654,16 @@ function cutter(main: SavedRecord[]): (end: number) => number {
     return 0
   }
   return (end) => {
-    let last = -1
-    for (const index of boundaries) if (index < end) last = index
-    if (last === -1) return 0
+    // The last compaction before `end`, by binary search over their ascending positions.
+    let low = 0
+    let high = boundaries.length
+    while (low < high) {
+      const middle = (low + high) >> 1
+      if (boundaries[middle]! < end) low = middle + 1
+      else high = middle
+    }
+    if (low === 0) return 0
+    const last = boundaries[low - 1]!
     let cut = last
     for (const id of references(main[last]!)) {
       const index = at.get(id)
@@ -647,10 +678,51 @@ function cutter(main: SavedRecord[]): (end: number) => number {
   }
 }
 
+/** A cut that falls back to every row instead of failing a read the full one would answer. */
+function safely(make: () => (end: number) => number): (end: number) => number {
+  let cut: (end: number) => number
+  try {
+    cut = make()
+  } catch {
+    return () => 0
+  }
+  return (end) => {
+    try {
+      return cut(end)
+    } catch {
+      return 0
+    }
+  }
+}
+
+// The Agent SDK versions whose session read `references` and `cutter` were checked against.
+// Any other version reads every row before each compaction, as the read did before the cut.
+export const AUDITED_AGENT_SDK_VERSIONS: readonly string[] = ['0.3.296']
+let auditedSdk: boolean | undefined
+
+/** The installed Agent SDK's version, from its package manifest, or undefined. */
+export function installedAgentSdkVersion(): string | undefined {
+  try {
+    const entry = createRequire(import.meta.url).resolve('@anthropic-ai/claude-agent-sdk')
+    const manifest = object(
+      JSON.parse(readFileSync(path.join(path.dirname(entry), 'package.json'), 'utf8')),
+    )
+    return manifest.name === '@anthropic-ai/claude-agent-sdk' ? string(manifest.version) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function auditedAgentSdk(): boolean {
+  auditedSdk ??= AUDITED_AGENT_SDK_VERSIONS.includes(installedAgentSdkVersion() ?? '')
+  return auditedSdk
+}
+
 /** The SDK owns native branch selection and parallel tool-result sibling recovery. */
 async function conversation(
   rows: SavedRecord[],
   session: ProviderHistorySession,
+  cuts = auditedAgentSdk(),
 ): Promise<SavedRecord[]> {
   const byId = new Map(
     rows.flatMap((row, index) =>
@@ -664,7 +736,7 @@ async function conversation(
     if (!row.isSidechain && !row.teamName) main.push(row)
     mainBefore[index + 1] = main.length
   })
-  const cut = cutter(main)
+  const cut = cuts ? safely(() => cutter(main)) : () => 0
   const seen = new Set<string>()
   const result: SavedRecord[] = []
   /** What the SDK returns for rows [0, count), read from where nothing before matters. */
@@ -872,8 +944,9 @@ function eventsFor(rows: SavedRecord[], session: ProviderHistorySession): Domain
 export async function transcriptEvents(
   locator: string,
   session: ProviderHistorySession,
+  options: { cuts?: boolean } = {},
 ): Promise<DomainEvent[]> {
-  return eventsFor(await conversation(await records(locator), session), session)
+  return eventsFor(await conversation(await records(locator), session, options.cuts), session)
 }
 
 // One worker read at a time, across every source: each holds a heap the size of its whole
