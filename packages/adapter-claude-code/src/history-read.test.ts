@@ -6,6 +6,7 @@ import type { DomainEvent, ProviderHistorySession } from '@harness/contracts'
 import {
   AUDITED_AGENT_SDK_VERSIONS,
   installedAgentSdkVersion,
+  LineSplitter,
   transcriptEvents,
 } from './history.js'
 
@@ -700,5 +701,40 @@ describe('the Agent SDK the cut was checked against', () => {
     })
     const events = await read(saved(rows))
     expect(texts(events).at(-1)).toBe('Last')
+  })
+})
+
+describe('splitting transcript bytes into lines', () => {
+  const split = (chunks: string[]) => {
+    const lines = new LineSplitter()
+    const out: string[] = []
+    for (const chunk of chunks)
+      for (const line of lines.push(Buffer.from(chunk, 'latin1'))) out.push(line.toString('latin1'))
+    for (const line of lines.end()) out.push(line.toString('latin1'))
+    return out
+  }
+
+  it('ends a line once at a CRLF split across two chunks', () => {
+    expect(split(['one\r', '\ntwo\r\n'])).toEqual(['one', 'two'])
+  })
+
+  it('ends a line at a lone CR, and an empty one at the CRLF after it', () => {
+    expect(split(['one\r\r\ntwo\rthree'])).toEqual(['one', '', 'two', 'three'])
+    expect(split(['one\r', '\r', '\n', 'two'])).toEqual(['one', '', 'two'])
+  })
+
+  it('holds no more than the line not ended yet across chunks of CR-separated rows', () => {
+    const lines = new LineSplitter()
+    const row = `{"padding":"${'x'.repeat(1000)}"}`
+    let count = 0
+    for (let chunk = 0; chunk < 200; chunk++) {
+      // Chunks that do not line up with rows, so most of them end inside one.
+      const bytes = Buffer.from(`${row}\r`.repeat(7).slice(chunk % 13), 'latin1')
+      for (const line of lines.push(bytes)) {
+        if (line.length) count++
+      }
+      expect(lines.pending).toBeLessThan(2 * (row.length + 1))
+    }
+    expect(count).toBeGreaterThan(1000)
   })
 })

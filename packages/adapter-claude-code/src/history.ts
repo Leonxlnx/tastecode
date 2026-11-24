@@ -83,37 +83,76 @@ function timestamp(value: unknown): number | undefined {
   return Number.isFinite(at) ? at : undefined
 }
 
+const CARRIAGE_RETURN = 0x0d
+
 /**
- * Every row of a transcript, split into lines as readline splits them (at LF, CRLF and a lone
- * CR) but on bytes: readline decoded the whole file into strings and ran a regular expression
- * over them, which took longer than parsing the rows. A line feed never occurs inside a UTF-8
- * sequence, so decoding each line on its own gives the same text.
+ * Splits bytes into lines as readline does: at LF, at CRLF and at a lone CR. It holds only
+ * the line not ended yet, and whether the last byte was a CR whose LF may come next.
+ */
+export class LineSplitter {
+  #pieces: Buffer[] = []
+  #pending = 0
+  #afterReturn = false
+
+  /** The bytes of the line not ended yet. */
+  get pending(): number {
+    return this.#pending
+  }
+
+  /** The lines `chunk` ends, each as its bytes without the line end. */
+  *push(chunk: Buffer): Generator<Buffer> {
+    let cursor = 0
+    // The LF of a CRLF whose CR ended the last chunk.
+    if (this.#afterReturn && chunk[0] === LINE_FEED) cursor = 1
+    this.#afterReturn = false
+    let feed = chunk.indexOf(LINE_FEED, cursor)
+    let ret = chunk.indexOf(CARRIAGE_RETURN, cursor)
+    while (feed !== -1 || ret !== -1) {
+      const end = ret === -1 || (feed !== -1 && feed < ret) ? feed : ret
+      const piece = chunk.subarray(cursor, end)
+      yield this.#pieces.length ? Buffer.concat([...this.#pieces, piece]) : piece
+      this.#pieces = []
+      this.#pending = 0
+      cursor = end + 1
+      if (end === ret) {
+        if (cursor === chunk.length) this.#afterReturn = true
+        else if (chunk[cursor] === LINE_FEED) cursor++
+      }
+      if (feed !== -1 && feed < cursor) feed = chunk.indexOf(LINE_FEED, cursor)
+      if (ret !== -1 && ret < cursor) ret = chunk.indexOf(CARRIAGE_RETURN, cursor)
+    }
+    if (cursor < chunk.length) {
+      this.#pieces.push(chunk.subarray(cursor))
+      this.#pending += chunk.length - cursor
+    }
+  }
+
+  /** The last line, when the bytes did not end with a line end. */
+  *end(): Generator<Buffer> {
+    if (this.#pieces.length) yield Buffer.concat(this.#pieces)
+    this.#pieces = []
+    this.#pending = 0
+  }
+}
+
+/**
+ * Every row of a transcript, split into lines as readline splits them but on bytes: readline
+ * decoded the whole file into strings and ran a regular expression over them, which took
+ * longer than parsing the rows. LF and CR never occur inside a UTF-8 sequence, so decoding
+ * each line on its own gives the same text.
  */
 async function records(file: string): Promise<SavedRecord[]> {
   const rows: SavedRecord[] = []
   const add = (bytes: Buffer) => {
-    let text = bytes.toString('utf8')
-    if (text.endsWith('\r')) text = text.slice(0, -1)
-    for (const line of text.includes('\r') ? text.split('\r') : [text]) {
-      const row = parseRecord(line)
-      if (row) rows.push(row)
-    }
+    const row = parseRecord(bytes.toString('utf8'))
+    if (row) rows.push(row)
   }
   const stream = createReadStream(file, { highWaterMark: SCAN_CHUNK_BYTES })
-  let pieces: Buffer[] = []
+  const lines = new LineSplitter()
   try {
-    for await (const chunk of stream as AsyncIterable<Buffer>) {
-      let cursor = 0
-      for (let newline = chunk.indexOf(LINE_FEED); newline !== -1;) {
-        const piece = chunk.subarray(cursor, newline)
-        add(pieces.length ? Buffer.concat([...pieces, piece]) : piece)
-        pieces = []
-        cursor = newline + 1
-        newline = chunk.indexOf(LINE_FEED, cursor)
-      }
-      if (cursor < chunk.length) pieces.push(chunk.subarray(cursor))
-    }
-    if (pieces.length) add(Buffer.concat(pieces))
+    for await (const chunk of stream as AsyncIterable<Buffer>)
+      for (const line of lines.push(chunk)) add(line)
+    for (const line of lines.end()) add(line)
   } finally {
     stream.destroy()
   }
