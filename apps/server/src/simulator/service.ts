@@ -230,18 +230,7 @@ export class SimulatorService {
     if (!device.booted) {
       effectiveId = await this.#host.bootDevice(device)
       await this.#refreshDeviceList()
-      const booted =
-        this.#devices.find(
-          (candidate) =>
-            candidate.booted &&
-            (candidate.id === effectiveId || candidate.name === device!.name) &&
-            candidate.platform === device!.platform,
-        ) ??
-        this.#devices.find(
-          (candidate) =>
-            (candidate.id === effectiveId || candidate.name === device!.name) &&
-            candidate.platform === device!.platform,
-        )
+      const booted = sameDevice(this.#devices, device.platform, effectiveId, device.name)
       if (booted) {
         device = booted
         effectiveId = booted.id
@@ -360,12 +349,7 @@ export class SimulatorService {
       await this.#refreshDeviceList().catch(() => undefined)
     }
     const state = await this.#publishState()
-    const refreshed =
-      state.devices.find(
-        (candidate) =>
-          candidate.platform === device.platform &&
-          (candidate.id === device.id || candidate.name === device.name),
-      ) ?? device
+    const refreshed = sameDevice(state.devices, device.platform, device.id, device.name) ?? device
     return { device: refreshed, state }
   }
 
@@ -776,4 +760,25 @@ export class SimulatorService {
   get cachedState(): SimulatorState | undefined {
     return this.#cachedState
   }
+}
+
+/**
+ * The listed device a host operation answered with. Its id decides; the name
+ * stands in only when no device has that id (a platform that changes the id
+ * at boot) and exactly one device of the platform has the name, booted first,
+ * so a namesake on another runtime is never taken for it.
+ */
+function sameDevice(
+  devices: readonly SimulatorDevice[],
+  platform: SimulatorPlatform,
+  id: string,
+  name: string,
+): SimulatorDevice | undefined {
+  const onPlatform = devices.filter((candidate) => candidate.platform === platform)
+  const exact = onPlatform.find((candidate) => candidate.id === id)
+  if (exact) return exact
+  const named = onPlatform.filter((candidate) => candidate.name === name)
+  const booted = named.filter((candidate) => candidate.booted)
+  if (booted.length === 1) return booted[0]
+  return booted.length === 0 && named.length === 1 ? named[0] : undefined
 }
