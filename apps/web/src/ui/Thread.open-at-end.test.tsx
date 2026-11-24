@@ -16,14 +16,22 @@ let rendered: Set<number>
 let rowHeight: (index: number) => number
 /** Animation frames asked for and not yet run. */
 let frames: FrameRequestCallback[]
+/** The scroller's height, and what the column holds below the rows (approvals, previews). */
+let viewport: number
+let footer: number
+/** Every ResizeObserver alive, with what it watches. */
+let observers: Array<{ callback: ResizeObserverCallback; targets: Set<Element> }>
 const scrollTops = new WeakMap<Element, number>()
 
 beforeEach(() => {
   rendered = new Set()
   rowHeight = () => ROW
   frames = []
+  viewport = VIEWPORT
+  footer = 0
+  observers = []
   const heightOf = (element: HTMLElement) => {
-    if (element.classList.contains('thread')) return VIEWPORT
+    if (element.classList.contains('thread')) return viewport
     const index = element.getAttribute('data-index')
     return index === null ? 0 : rowHeight(Number(index))
   }
@@ -41,7 +49,7 @@ beforeEach(() => {
   // The scroller is as tall as its runway, and a scroll position stays where it was put.
   vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (this: Element) {
     const runway = this.querySelector<HTMLElement>('.thread__runway')
-    return runway ? Number.parseFloat(runway.style.height) || 0 : 0
+    return runway ? (Number.parseFloat(runway.style.height) || 0) + footer : 0
   })
   vi.spyOn(Element.prototype, 'scrollTop', 'get').mockImplementation(function (this: Element) {
     return scrollTops.get(this) ?? 0
@@ -60,12 +68,22 @@ beforeEach(() => {
   vi.stubGlobal(
     'ResizeObserver',
     class {
+      readonly entry: { callback: ResizeObserverCallback; targets: Set<Element> }
+      constructor(callback: ResizeObserverCallback) {
+        this.entry = { callback, targets: new Set() }
+        observers.push(this.entry)
+      }
       observe(target: Element) {
+        this.entry.targets.add(target)
         const index = target.getAttribute('data-index')
         if (index !== null) rendered.add(Number(index))
       }
-      unobserve() {}
-      disconnect() {}
+      unobserve(target: Element) {
+        this.entry.targets.delete(target)
+      }
+      disconnect() {
+        this.entry.targets.clear()
+      }
     },
   )
 })
@@ -75,6 +93,44 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
+
+/**
+ * Deliver one resize notification to every observer, as the browser does after
+ * layout: the rows first (the list measures them), then the scroller and column.
+ */
+function deliverResize() {
+  const size = (target: Element) => {
+    const height = (target as HTMLElement).offsetHeight
+    return { blockSize: height, inlineSize: 720 }
+  }
+  for (const rows of [true, false]) {
+    act(() => {
+      for (const { callback, targets } of observers) {
+        const entries = [...targets]
+          .filter((target) => target.hasAttribute('data-index') === rows)
+          .map(
+            (target) =>
+              ({
+                target,
+                borderBoxSize: [size(target)],
+                contentBoxSize: [size(target)],
+                contentRect: { height: size(target).blockSize, width: 720 },
+              }) as unknown as ResizeObserverEntry,
+          )
+        if (entries.length > 0) callback(entries, {} as ResizeObserver)
+      }
+    })
+  }
+}
+
+/** Alt+Up, as the turn shortcut reads it; whether the page took it. */
+function altUp(): boolean {
+  const event = new KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, cancelable: true })
+  // Without this, happy-dom's event fails the shortcut's AltGraph check; a browser's plain Alt passes.
+  Object.defineProperty(event, 'getModifierState', { value: () => false })
+  window.dispatchEvent(event)
+  return event.defaultPrevented
+}
 
 /** Run the frames asked for so far, and those they ask for, a few rounds deep. */
 function runFrames() {
@@ -223,6 +279,131 @@ describe('Thread opened at the end of a paged transcript', () => {
     await act(async () => Promise.resolve())
     expect(loadOlder).toHaveBeenCalledTimes(1)
     expect(loadOlder.mock.calls[0]![0]).toBe('paged')
+  })
+
+  it('reads one older page when rows measure shorter and leave the pane underfilled', async () => {
+    // 18 rows of 50 px slightly overfill the 800 px pane, so opening reads nothing.
+    const items = heldTranscript(9)
+    const { loadOlder, scroller } = open(items, false)
+    runFrames()
+    deliverResize()
+    await act(async () => Promise.resolve())
+    expect(loadOlder).not.toHaveBeenCalled()
+    const top = scroller.scrollTop
+
+    // Same rows, count and cursor; they now measure 40 px and fill only 720.
+    rowHeight = () => 40
+    deliverResize()
+    runFrames()
+    await act(async () => Promise.resolve())
+    expect(loadOlder).toHaveBeenCalledTimes(1)
+    expect(scroller.scrollTop).toBeLessThanOrEqual(top)
+
+    // The read left the cursor where it was: stalled, so no further read.
+    deliverResize()
+    runFrames()
+    await act(async () => Promise.resolve())
+    expect(loadOlder).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads one older page when the pane grows taller than the transcript', async () => {
+    const items = heldTranscript(9)
+    const { loadOlder } = open(items, false)
+    runFrames()
+    deliverResize()
+    await act(async () => Promise.resolve())
+    expect(loadOlder).not.toHaveBeenCalled()
+
+    viewport = 1_000
+    deliverResize()
+    await act(async () => Promise.resolve())
+    expect(loadOlder).toHaveBeenCalledTimes(1)
+  })
+
+  it('counts what follows the rows when deciding the pane is underfilled', async () => {
+    // A 700 px runway under a long approval: 2,100 px of settled content.
+    footer = 1_400
+    const items = heldTranscript(7)
+    const { view, loadOlder, props, scroller } = open(items, true)
+    runFrames()
+    view.rerender(<Thread {...props} loading={false} />)
+    runFrames()
+    deliverResize()
+    await act(async () => Promise.resolve())
+
+    // Settled at the physical bottom, far from the older edge.
+    expect(scroller.scrollTop).toBe(700 + 1_400 - VIEWPORT)
+    expect(loadOlder).not.toHaveBeenCalled()
+  })
+
+  it('reads nothing into a zero-height pane, and fills it once it shows', async () => {
+    viewport = 0
+    rowHeight = () => 0
+    const items = heldTranscript(3)
+    const { loadOlder } = open(items, false)
+    runFrames()
+    deliverResize()
+    await act(async () => Promise.resolve())
+    expect(loadOlder).not.toHaveBeenCalled()
+
+    viewport = VIEWPORT
+    deliverResize()
+    await act(async () => Promise.resolve())
+    expect(loadOlder).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads older history on an Alt+Up jump toward the first row', async () => {
+    // 1,100 px in an 800 px pane: opening at the end reads nothing.
+    const items = heldTranscript(11)
+    const { loadOlder } = open(items, false)
+    runFrames()
+    deliverResize()
+    await act(async () => Promise.resolve())
+    expect(loadOlder).not.toHaveBeenCalled()
+
+    // The list's own landing scroll asks for nothing; the jump itself does.
+    act(() => {
+      expect(altUp()).toBe(true)
+    })
+    await act(async () => Promise.resolve())
+    expect(loadOlder).toHaveBeenCalledTimes(1)
+    // Jumping again while already free joins the read, or finds the cursor stalled.
+    act(() => {
+      expect(altUp()).toBe(true)
+    })
+    await act(async () => Promise.resolve())
+    expect(loadOlder).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads older history on upward input at the top, and not on any other', async () => {
+    const items = heldTranscript(11)
+    const { view, loadOlder, props, scroller } = open(items, false)
+    runFrames()
+    deliverResize()
+    await act(async () => Promise.resolve())
+    // A search hit in the first turn lands the list at the top with its own scroll.
+    view.rerender(
+      <Thread {...props} loading={false} searchJump={{ turnId: 'turn-0', request: 1 }} />,
+    )
+    runFrames()
+    await act(async () => Promise.resolve())
+    expect(scroller.scrollTop).toBe(0)
+    expect(loadOlder).not.toHaveBeenCalled()
+
+    // A downward or neutral wheel asks for nothing.
+    act(() => {
+      fireEvent.wheel(scroller, { deltaY: 120 })
+      fireEvent.wheel(scroller, { deltaY: 0 })
+    })
+    await act(async () => Promise.resolve())
+    expect(loadOlder).not.toHaveBeenCalled()
+
+    // An upward wheel at the top moves nothing and sends no scroll event.
+    act(() => {
+      fireEvent.wheel(scroller, { deltaY: -120 })
+    })
+    await act(async () => Promise.resolve())
+    expect(loadOlder).toHaveBeenCalledTimes(1)
   })
 
   it('reads older history once the reader scrolls up toward it', async () => {

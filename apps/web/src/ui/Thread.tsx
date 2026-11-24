@@ -709,6 +709,30 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     [sizeRunwayNow],
   )
 
+  const loadingRef = useRef(props.loading)
+  loadingRef.current = props.loading
+  /**
+   * Asks for the page above the loaded rows when the reader cannot reach it by
+   * scrolling: the settled transcript, rows plus everything around them but
+   * not the follow room, leaves a visible pane unfilled; or, `towardOlder`,
+   * the reader is heading for older rows and is near the top. Guarded by the
+   * live read state, so a read in flight, a stalled cursor or a failed read
+   * asks nothing. Called from the passive check, the coalesced resize
+   * notification and navigation toward older rows; never per streamed delta.
+   */
+  const fillOlder = useCallback(
+    (towardOlder: boolean, settled?: number) => {
+      const el = scroller.current
+      if (!el || loadingRef.current || !canLoadOnScroll()) return
+      if (props.frameStore.getStructureSnapshot().items.length === 0) return
+      // A hidden or collapsed pane shows nothing, so nothing is missing from it.
+      if (el.clientHeight <= 0) return
+      const underfilled = (settled ?? settledHeight(el)) <= el.clientHeight
+      if (underfilled || (towardOlder && nearOlderHistoryEdge(el))) void loadOlder()
+    },
+    [canLoadOnScroll, loadOlder, props.frameStore, settledHeight],
+  )
+
   /**
    * Reads what the end is made of besides the virtual rows. Only called
    * where layout is clean or has been read anyway (a resize notification,
@@ -864,8 +888,11 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       const reach = (continued ? previous.reach : state.knownTop) + delta
       state.intent = { up, at: now, reach, toEnd: !up && reach >= endOf() - END_TOLERANCE_PX }
       if (up) glide.stop()
+      // At the top already, asking for more of it moves nothing and so sends
+      // no scroll event: the request for older rows is made here.
+      if (up && (scroller.current?.scrollTop ?? 1) <= 0) fillOlder(true)
     },
-    [endOf, glide],
+    [endOf, glide, fillOlder],
   )
   const onWheel = useCallback(
     (event: ReactWheelEvent) => {
@@ -974,10 +1001,14 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const jumpToTurn = useCallback(
     (index: number) => {
       stopJump()
+      const towardOlder = index <= firstVisibleIndex(virtualizer, scroller.current)
       setMode('free')
       virtualizer.scrollToIndex(index, { align: 'start' })
+      // The landing scroll is the list's own and asks for nothing; a jump
+      // toward the first loaded row is the reader asking for what is above it.
+      if (towardOlder) fillOlder(true)
     },
-    [stopJump, virtualizer],
+    [stopJump, virtualizer, fillOlder],
   )
   /** The rows between the top of the transcript and the composer floating over its end. */
   const visibleRows = useCallback((): VisibleRows | undefined => {
@@ -1075,10 +1106,11 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       event.preventDefault()
       setMode('free')
       virtualizer.scrollToIndex(target, { align: 'start' })
+      if (target <= current) fillOlder(true)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [props.keyboardActive, turns, virtualizer])
+  }, [props.keyboardActive, turns, virtualizer, fillOlder])
 
   const anchor = prepend.current
   if (anchor && anchor.grown === undefined) {
@@ -1114,16 +1146,14 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // pixels up, so the prefetch distance is only for a reader who has
     // scrolled toward older rows; at the end, only a page that leaves the
     // viewport underfilled asks for more.
-    const underfilled = virtualizer.getTotalSize() <= el.clientHeight
-    if (underfilled || (modeRef.current === 'free' && nearOlderHistoryEdge(el))) void loadOlder()
+    fillOlder(modeRef.current === 'free')
   }, [
-    virtualizer,
     thread.olderCursor,
     thread.items.length,
     props.loading,
     olderHistory,
     completeStatus,
-    loadOlder,
+    fillOlder,
   ])
 
   // measureElement without a ResizeObserver entry returns the cached size, so
@@ -1603,6 +1633,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           endOf={endOf}
           updateJump={updateJump}
           setMode={setMode}
+          fillOlder={fillOlder}
         />
 
         {/* Mounted for as long as older turns exist: a live region announces
@@ -1691,6 +1722,7 @@ function FrameScrollFollower({
   endOf,
   updateJump,
   setMode,
+  fillOlder,
 }: {
   frameStore: ThreadFrameStore
   threadId: string | undefined
@@ -1713,6 +1745,8 @@ function FrameScrollFollower({
   /** Offers or withdraws Jump to latest for the end's distance while free. */
   updateJump: (distance: number) => void
   setMode: (mode: ScrollMode) => void
+  /** Asks for older rows when the settled transcript no longer fills the pane. */
+  fillOlder: (towardOlder: boolean, settled?: number) => void
 }) {
   const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
   useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
@@ -1728,8 +1762,12 @@ function FrameScrollFollower({
       // measured. Settled, not scrollHeight: this fires right after a
       // disclosure commits, while its reveal and the runway are still mid-slide.
       const viewport = follow.current.clientHeight
-      measureFollow(element)
+      const settled = settledHeight(element)
+      measureFollow(element, settled)
       applyRoom()
+      // Shorter rows, collapsed content or a taller pane can leave less than
+      // a viewport with older rows still unread and no way to scroll to them.
+      fillOlder(false, settled)
       if (modeRef.current === 'free') updateJump(endOf() - follow.current.knownTop)
       if (modeRef.current !== 'follow-end') return
       // A viewport that changed size keeps the last line where it was at
@@ -1748,9 +1786,11 @@ function FrameScrollFollower({
     writeScrollTop,
     followTo,
     measureFollow,
+    settledHeight,
     applyRoom,
     endOf,
     updateJump,
+    fillOlder,
   ])
 
   // Follow every render before paint: replay and virtual row measurements can
@@ -1933,6 +1973,16 @@ const TURN_SETTLE_MS = 520
  * place — so during a toggle it puts the end further away than it will be.
  * The column's own box is in-flow layout only and never transformed.
  */
+/** The first row the viewport shows, as Alt+Up/Down counts from. */
+function firstVisibleIndex(
+  virtualizer: { getVirtualItems: () => Array<{ index: number; end: number }> },
+  element: HTMLElement | null,
+): number {
+  const rows = virtualizer.getVirtualItems()
+  const scrollTop = element?.scrollTop ?? 0
+  return (rows.find((row) => row.end > scrollTop) ?? rows[0])?.index ?? 0
+}
+
 function settledScrollHeight(element: HTMLElement): number {
   const height = element.firstElementChild?.getBoundingClientRect().height ?? 0
   // No layout box yet: nothing is animating either.
