@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
-import { createReadStream, type Stats } from 'node:fs'
+import { createReadStream, readFileSync, type Stats } from 'node:fs'
 import { open, readdir, readFile, realpath, stat, type FileHandle } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { createInterface } from 'node:readline'
 import { Worker } from 'node:worker_threads'
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk'
 import type {
@@ -71,8 +71,7 @@ const LINE_CHUNK_BYTES = 64 * 1024
 const SCAN_CHUNK_BYTES = 1024 * 1024
 const STAT_BATCH = 32
 // Reading a transcript resolves compaction and branches over all of its rows, synchronously
-// and once more for every compaction: 13-21 s for a 234 MB one in the app, during which every
-// other request waited. From this size it runs in a worker thread: starting one costs about
+// (and once took 13-21 s for a 234 MB one in the app, during which every other request waited). From this size it runs in a worker thread: starting one costs about
 // 0.35 s, which a read on the event loop of a transcript this large costs as well.
 const WORKER_READ_BYTES = 16 * 1024 * 1024
 // A transcript that grew is read on from where it stopped only while these still match.
@@ -84,21 +83,77 @@ function timestamp(value: unknown): number | undefined {
   return Number.isFinite(at) ? at : undefined
 }
 
+const CARRIAGE_RETURN = 0x0d
+
+/**
+ * Splits bytes into lines as readline does: at LF, at CRLF and at a lone CR. It holds only
+ * the line not ended yet, and whether the last byte was a CR whose LF may come next.
+ */
+export class LineSplitter {
+  #pieces: Buffer[] = []
+  #pending = 0
+  #afterReturn = false
+
+  /** The bytes of the line not ended yet. */
+  get pending(): number {
+    return this.#pending
+  }
+
+  /** The lines `chunk` ends, each as its bytes without the line end. */
+  *push(chunk: Buffer): Generator<Buffer> {
+    let cursor = 0
+    // The LF of a CRLF whose CR ended the last chunk.
+    if (this.#afterReturn && chunk[0] === LINE_FEED) cursor = 1
+    this.#afterReturn = false
+    let feed = chunk.indexOf(LINE_FEED, cursor)
+    let ret = chunk.indexOf(CARRIAGE_RETURN, cursor)
+    while (feed !== -1 || ret !== -1) {
+      const end = ret === -1 || (feed !== -1 && feed < ret) ? feed : ret
+      const piece = chunk.subarray(cursor, end)
+      yield this.#pieces.length ? Buffer.concat([...this.#pieces, piece]) : piece
+      this.#pieces = []
+      this.#pending = 0
+      cursor = end + 1
+      if (end === ret) {
+        if (cursor === chunk.length) this.#afterReturn = true
+        else if (chunk[cursor] === LINE_FEED) cursor++
+      }
+      if (feed !== -1 && feed < cursor) feed = chunk.indexOf(LINE_FEED, cursor)
+      if (ret !== -1 && ret < cursor) ret = chunk.indexOf(CARRIAGE_RETURN, cursor)
+    }
+    if (cursor < chunk.length) {
+      this.#pieces.push(chunk.subarray(cursor))
+      this.#pending += chunk.length - cursor
+    }
+  }
+
+  /** The last line, when the bytes did not end with a line end. */
+  *end(): Generator<Buffer> {
+    if (this.#pieces.length) yield Buffer.concat(this.#pieces)
+    this.#pieces = []
+    this.#pending = 0
+  }
+}
+
+/**
+ * Every row of a transcript, split into lines as readline splits them but on bytes: readline
+ * decoded the whole file into strings and ran a regular expression over them, which took
+ * longer than parsing the rows. LF and CR never occur inside a UTF-8 sequence, so decoding
+ * each line on its own gives the same text.
+ */
 async function records(file: string): Promise<SavedRecord[]> {
   const rows: SavedRecord[] = []
-  const stream = createReadStream(file, { encoding: 'utf8' })
-  const lines = createInterface({ input: stream, crlfDelay: Infinity })
+  const add = (bytes: Buffer) => {
+    const row = parseRecord(bytes.toString('utf8'))
+    if (row) rows.push(row)
+  }
+  const stream = createReadStream(file, { highWaterMark: SCAN_CHUNK_BYTES })
+  const lines = new LineSplitter()
   try {
-    for await (const line of lines) {
-      try {
-        const row = object(JSON.parse(line))
-        if (typeof row.type === 'string') rows.push(row)
-      } catch {
-        // Concurrent writes can leave the final record incomplete.
-      }
-    }
+    for await (const chunk of stream as AsyncIterable<Buffer>)
+      for (const line of lines.push(chunk)) add(line)
+    for (const line of lines.end()) add(line)
   } finally {
-    lines.close()
     stream.destroy()
   }
   return rows
@@ -484,24 +539,254 @@ function sdkRecord(row: SavedRecord): SavedRecord & { type: string } {
   }
 }
 
+function isCompactBoundary(row: SavedRecord): boolean {
+  return row.type === 'system' && row.subtype === 'compact_boundary'
+}
+
+// The row types the SDK builds its message graph from; it reads the others for delivery state.
+const GRAPH_TYPES = new Set(['user', 'assistant', 'progress', 'system', 'attachment'])
+// How often a cut that a shared identifier invalidates is moved back to before it.
+const CUT_ATTEMPTS = 8
+// A row id or parent link the cut handles: no line feed or any other control character.
+function plainId(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return false
+  }
+  return true
+}
+
+/** Whether the SDK reads a row into its message graph: a graph type with a string id. */
+function inGraph(row: SavedRecord): boolean {
+  return typeof row.uuid === 'string' && typeof row.type === 'string' && GRAPH_TYPES.has(row.type)
+}
+
+/**
+ * Every string through which the SDK's read (getSessionMessages over a session store, Agent
+ * SDK 0.3.296) relates one row to another, except `parentUuid`: ids of rows, API messages,
+ * tool calls, queued-command deliveries and compaction-kept rows. It compares rows by these
+ * and by file order only. Taking any other string as well only makes `rowsFrom` cut less.
+ */
+function references(row: SavedRecord): string[] {
+  const found: string[] = []
+  const add = (value: unknown) => {
+    if (typeof value === 'string') found.push(value)
+  }
+  add(row.uuid)
+  add(row.sourceToolAssistantUUID)
+  add(row.deliveryId)
+  add(row.commandUuid)
+  const attachment = object(row.attachment)
+  add(attachment.delivery_id)
+  add(attachment.source_uuid)
+  const message = object(row.message)
+  add(message.id)
+  if (Array.isArray(message.content))
+    for (const block of message.content) {
+      add(object(block).id)
+      add(object(block).tool_use_id)
+    }
+  const compaction = object(row.compactMetadata)
+  const kept = object(compaction.preservedMessages)
+  const segment = object(compaction.preservedSegment)
+  add(kept.anchorUuid)
+  if (Array.isArray(kept.uuids)) kept.uuids.forEach(add)
+  add(segment.anchorUuid)
+  add(segment.headUuid)
+  add(segment.tailUuid)
+  return found
+}
+
+/**
+ * Where the SDK can start reading main-chain rows [0, end) and still return what it returns
+ * for all of them: one pass over the rows that each compaction's read shares, so a
+ * transcript compacted k times hands the SDK its rows about once instead of about k/2 times.
+ *
+ * A read over rows [cut, end) returns the same messages as one over [0, end) when no row
+ * before `cut` can take part in it. The SDK relates rows only through the strings
+ * `references` lists and parent links, so that holds when (1) no such string of a row from
+ * `cut` on occurs before `cut`, (2) every parent link from `cut` on into the rows before it
+ * is one the SDK replaces, because a compaction from `cut` on keeps that row and relinks it,
+ * and (3) a user or assistant row from `cut` on is a leaf there, so the SDK's search for the
+ * newest leaf ends among those rows and never reaches an earlier one. Then every walk, leaf,
+ * sibling, queued command and delivery count the SDK derives for rows from `cut` on is the
+ * same, and nothing it returns comes from before `cut`. A cut is tried right before the last
+ * compaction and the rows it keeps, moved back before any row that breaks (1) or (2) a few
+ * times, and otherwise the read gets every row.
+ */
+function cutter(main: SavedRecord[]): (end: number) => number {
+  const boundaries: number[] = []
+  for (const [index, row] of main.entries()) {
+    // The SDK reads only rows with a string id into its graph, and builds keys of the form
+    // `parent + LF + id`: an id with a control character, or a parent of another shape, could
+    // make two keys equal across a cut, or throw. Such a transcript is read whole.
+    if (inGraph(row) && !(plainId(row.uuid) && (row.parentUuid == null || plainId(row.parentUuid))))
+      return () => 0
+    // A compaction without a string id is not in the SDK's graph, so it starts no segment.
+    if (isCompactBoundary(row) && inGraph(row)) boundaries.push(index)
+  }
+  if (!boundaries.length) return () => 0
+  // The first row each identifier or parent link occurs in, and where each row id is.
+  const first = new Map<string, number>()
+  const at = new Map<string, number>()
+  main.forEach((row, index) => {
+    for (const id of references(row)) if (!first.has(id)) first.set(id, index)
+    if (typeof row.parentUuid === 'string' && !first.has(row.parentUuid))
+      first.set(row.parentUuid, index)
+    if (typeof row.uuid === 'string' && !at.has(row.uuid)) at.set(row.uuid, index)
+  })
+  const before = (id: string, cut: number) => (first.get(id) ?? cut) < cut
+  /** The first row before `cut` a row from it on depends on, or -1 when none does. */
+  const blocker = (cut: number, end: number): number => {
+    const graph = new Map<string, SavedRecord>()
+    for (let index = cut; index < end; index++) {
+      const row = main[index]!
+      if (inGraph(row)) graph.set(row.uuid as string, row)
+    }
+    const relinked = new Set<string>()
+    const targets = new Set<string>()
+    for (let index = cut; index < end; index++) {
+      const row = main[index]!
+      // The SDK relinks for the compactions in its graph: the last row of each id.
+      if (!isCompactBoundary(row) || !inGraph(row) || graph.get(row.uuid as string) !== row)
+        continue
+      for (const id of references(row)) targets.add(id)
+      // As the SDK relinks: kept messages when all are present, else the kept segment's head.
+      const { preservedMessages, preservedSegment } = object(sdkRecord(row).compactMetadata)
+      const kept = object(preservedMessages)
+      if (preservedMessages) {
+        const ids = kept.uuids as string[]
+        if (ids.length && ids.every((id) => graph.has(id))) for (const id of ids) relinked.add(id)
+      } else if (preservedSegment) {
+        const head = object(preservedSegment).headUuid as string
+        if (graph.has(head)) relinked.add(head)
+      }
+    }
+    let earliest = -1
+    const note = (id: string) => {
+      const index = first.get(id)!
+      if (earliest === -1 || index < earliest) earliest = index
+    }
+    const parents = new Set<string>()
+    for (let index = cut; index < end; index++) {
+      const row = main[index]!
+      for (const id of references(row)) if (before(id, cut)) note(id)
+      const parent = row.parentUuid
+      if (typeof parent !== 'string') continue
+      parents.add(parent)
+      if (before(parent, cut) && !(typeof row.uuid === 'string' && relinked.has(row.uuid)))
+        note(parent)
+    }
+    if (earliest !== -1) return earliest
+    for (let index = end - 1; index >= cut; index--) {
+      const row = main[index]!
+      if (
+        (row.type === 'user' || row.type === 'assistant') &&
+        typeof row.uuid === 'string' &&
+        graph.get(row.uuid) === row &&
+        !parents.has(row.uuid) &&
+        !targets.has(row.uuid)
+      )
+        return -1
+    }
+    return 0
+  }
+  return (end) => {
+    // The last compaction before `end`, by binary search over their ascending positions.
+    let low = 0
+    let high = boundaries.length
+    while (low < high) {
+      const middle = (low + high) >> 1
+      if (boundaries[middle]! < end) low = middle + 1
+      else high = middle
+    }
+    if (low === 0) return 0
+    const last = boundaries[low - 1]!
+    let cut = last
+    for (const id of references(main[last]!)) {
+      const index = at.get(id)
+      if (index !== undefined && index < cut) cut = index
+    }
+    for (let attempt = 0; attempt < CUT_ATTEMPTS && cut > 0; attempt++) {
+      const earlier = blocker(cut, end)
+      if (earlier === -1) return cut
+      cut = earlier
+    }
+    return 0
+  }
+}
+
+/** A cut that falls back to every row instead of failing a read the full one would answer. */
+function safely(make: () => (end: number) => number): (end: number) => number {
+  let cut: (end: number) => number
+  try {
+    cut = make()
+  } catch {
+    return () => 0
+  }
+  return (end) => {
+    try {
+      return cut(end)
+    } catch {
+      return 0
+    }
+  }
+}
+
+// The Agent SDK versions whose session read `references` and `cutter` were checked against.
+// Any other version reads every row before each compaction, as the read did before the cut.
+export const AUDITED_AGENT_SDK_VERSIONS: readonly string[] = ['0.3.296']
+let auditedSdk: boolean | undefined
+
+/** The installed Agent SDK's version, from its package manifest, or undefined. */
+export function installedAgentSdkVersion(): string | undefined {
+  try {
+    const entry = createRequire(import.meta.url).resolve('@anthropic-ai/claude-agent-sdk')
+    const manifest = object(
+      JSON.parse(readFileSync(path.join(path.dirname(entry), 'package.json'), 'utf8')),
+    )
+    return manifest.name === '@anthropic-ai/claude-agent-sdk' ? string(manifest.version) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function auditedAgentSdk(): boolean {
+  auditedSdk ??= AUDITED_AGENT_SDK_VERSIONS.includes(installedAgentSdkVersion() ?? '')
+  return auditedSdk
+}
+
 /** The SDK owns native branch selection and parallel tool-result sibling recovery. */
 async function conversation(
   rows: SavedRecord[],
   session: ProviderHistorySession,
+  cuts = auditedAgentSdk(),
 ): Promise<SavedRecord[]> {
   const byId = new Map(
     rows.flatMap((row, index) =>
       typeof row.uuid === 'string' ? [[row.uuid, { row, index }] as const] : [],
     ),
   )
+  // The rows the SDK reads, and how many of them come before each row.
+  const main: SavedRecord[] = []
+  const mainBefore = new Int32Array(rows.length + 1)
+  rows.forEach((row, index) => {
+    if (!row.isSidechain && !row.teamName) main.push(row)
+    mainBefore[index + 1] = main.length
+  })
+  const cut = cuts ? safely(() => cutter(main)) : () => 0
   const seen = new Set<string>()
   const result: SavedRecord[] = []
-  const collect = async (prefix: SavedRecord[]): Promise<void> => {
+  /** What the SDK returns for rows [0, count), read from where nothing before matters. */
+  const collect = async (count: number): Promise<void> => {
+    const stop = mainBefore[count]!
+    const from = cut(stop)
     const messages = await getSessionMessages(session.id, {
       dir: session.workspacePath,
       includeSystemMessages: true,
       sessionStore: {
-        load: async () => prefix.filter((row) => !row.isSidechain && !row.teamName).map(sdkRecord),
+        load: async () => main.slice(from, stop).map(sdkRecord),
         append: async () => {
           throw new Error('Claude history is read-only')
         },
@@ -518,12 +803,12 @@ async function conversation(
         // Recover the earlier visible chain, without replaying discarded branches.
         const parent = byId.get(string(row.logicalParentUuid) ?? '')
         const end = parent?.index ?? entry.index - 1
-        if (end >= 0 && end < entry.index) await collect(rows.slice(0, end + 1))
+        if (end >= 0 && end < entry.index) await collect(end + 1)
       }
       if (visible(row) && !row.isCompactSummary) result.push(row)
     }
   }
-  await collect(rows)
+  await collect(rows.length)
   return result
 }
 
@@ -698,8 +983,9 @@ function eventsFor(rows: SavedRecord[], session: ProviderHistorySession): Domain
 export async function transcriptEvents(
   locator: string,
   session: ProviderHistorySession,
+  options: { cuts?: boolean } = {},
 ): Promise<DomainEvent[]> {
-  return eventsFor(await conversation(await records(locator), session), session)
+  return eventsFor(await conversation(await records(locator), session, options.cuts), session)
 }
 
 // One worker read at a time, across every source: each holds a heap the size of its whole
