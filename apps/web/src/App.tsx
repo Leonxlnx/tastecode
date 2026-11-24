@@ -113,7 +113,6 @@ import {
 } from './project-store.js'
 import {
   applyProjectOrder,
-  liftSession,
   moveRailSession,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
@@ -2708,9 +2707,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         // the next project refresh does not put it back by date.
         const finished = event.type === 'turn.completed'
         const finishedIn = finished
-          ? findSession(projectsRef.current, threadId)?.project.path
+          ? findSession(projectsRef.current, threadId)?.project
           : undefined
-        if (finishedIn) draggedSessionOrder.add(finishedIn)
+        // A chat already at the top moves nowhere: its project's order needs no saving.
+        if (finishedIn && finishedIn.sessions[0]?.id !== threadId)
+          draggedSessionOrder.add(finishedIn.path)
         if (finished && threadId === activeIdRef.current) setHeldSessionId(threadId)
         setProjects((current) => {
           const updated = updateSession(current, threadId, (session) => {
@@ -2728,7 +2729,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                 : {}),
             }
           })
-          return finished ? liftSession(updated, threadId) : updated
+          return finished ? promoteSession(updated, threadId) : updated
         })
         if (event.type === 'turn.completed' && threadController.isVisible(threadId)) {
           // Only here for the server's mark-as-read side effect — the live event
