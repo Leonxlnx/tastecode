@@ -1478,6 +1478,17 @@ export const Thread = memo(function Thread(props: ThreadProps) {
                 const activityGroup = presentation
                   ? activityGroupAt(presentation.activityGroups, row.index)
                   : undefined
+                if (
+                  isHiddenWorkRow(
+                    item,
+                    row.index,
+                    presentation,
+                    activityGroup,
+                    running && thread.activeTurn?.id === item.turnId,
+                    virtualizer.measurementsCache[row.index]?.size,
+                  )
+                )
+                  return null
                 return (
                   <ThreadFrameRow
                     key={row.key}
@@ -2204,6 +2215,32 @@ function isCompactedActivity(
       (presentation?.complete === true &&
         isWorkDisclosureItem(item) &&
         index !== presentation.finalAnswerIndex))
+  )
+}
+
+/**
+ * A row inside a finished work disclosure other than its lead: the lead shows
+ * the whole group, so this row renders an empty, zero-height box. A long chat
+ * mounted thousands of them on open (10,532 of 10,543 rows in one), and laying
+ * them out and measuring them took seconds. One the list already takes as 0
+ * is left out; a row it still holds at another height (one that was on screen
+ * before its turn compacted) still mounts once to measure 0. A running turn's
+ * rows mount as before.
+ */
+export function isHiddenWorkRow(
+  item: Item,
+  index: number,
+  presentation: TurnPresentation | undefined,
+  activityGroup: TurnActivityGroup | undefined,
+  live: boolean,
+  listedSize: number | undefined,
+): boolean {
+  return (
+    !live &&
+    listedSize === 0 &&
+    activityGroup !== undefined &&
+    activityGroup.firstIndex !== index &&
+    isCompactedActivity(item, index, presentation, activityGroup)
   )
 }
 

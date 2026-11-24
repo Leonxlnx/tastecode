@@ -183,6 +183,8 @@ describe('Thread virtual rows', () => {
     heights = [333, 211, 287, 199, 341, 263]
     const items = heights.map((_, index) =>
       item(`row-${index}`, {
+        // Each prompt starts its own turn, as in a real chat.
+        turnId: `turn-${Math.floor(index / 2)}`,
         role: index % 2 === 0 ? 'user' : 'assistant',
         text: `Message ${index}`,
         createdAt: index,
@@ -218,10 +220,13 @@ describe('Thread virtual rows', () => {
   })
 
   it('follows rows that one observer callback measured once, after the callback', async () => {
-    // A finished chat open at its end, three viewports long.
-    heights = Array.from({ length: 30 }, () => 100)
+    // A finished chat open at its end, nearly three viewports long. Rows measure what the
+    // list estimates, so the end is right before the rows above it ever mount.
+    heights = Array.from({ length: 30 }, () => 72)
     const items = heights.map((_, index) =>
       item(`row-${index}`, {
+        // Each prompt starts its own turn, as in a real chat.
+        turnId: `turn-${Math.floor(index / 2)}`,
         role: index % 2 === 0 ? 'user' : 'assistant',
         text: `Message ${index}`,
         createdAt: index,
