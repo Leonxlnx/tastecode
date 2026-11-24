@@ -2178,23 +2178,23 @@ export class Store {
     revision: string,
     entries: Array<{ key: string; event: DomainEvent }>,
   ): boolean {
-    const previous = new Map(
-      sqliteRows<{ event_key: string; event_seq: number; payload: string; active: number }>(
-        this.#db
-          .prepare(`SELECT p.event_key, p.event_seq, p.active, e.payload FROM provider_history_events p
-        JOIN events e ON e.seq = p.event_seq WHERE p.thread_id = ? ORDER BY p.event_seq`),
-        threadId,
-      ).map((row) => [row.event_key, row]),
-    )
-    const link = this.#db.prepare(
-      'INSERT INTO provider_history_events (thread_id, event_key, event_seq) VALUES (?, ?, ?)',
-    )
     let changed = false
     // Whether a row of the thread's log stopped counting: its key is gone or its event changed.
     let deactivated = false
     // Set once the thread's state was derived from its log again, kept only if that commits.
     let rebuilt = false
     this.#transaction(() => {
+      const previous = new Map(
+        sqliteRows<{ event_key: string; event_seq: number; payload: string; active: number }>(
+          this.#db
+            .prepare(`SELECT p.event_key, p.event_seq, p.active, e.payload FROM provider_history_events p
+        JOIN events e ON e.seq = p.event_seq WHERE p.thread_id = ? ORDER BY p.event_seq`),
+          threadId,
+        ).map((row) => [row.event_key, row]),
+      )
+      const link = this.#db.prepare(
+        'INSERT INTO provider_history_events (thread_id, event_key, event_seq) VALUES (?, ?, ?)',
+      )
       const keys = JSON.stringify(entries.map(({ key }) => key))
       const retired = this.#db
         .prepare(
