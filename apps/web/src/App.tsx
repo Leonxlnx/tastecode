@@ -3820,12 +3820,36 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const savedSetupsShared = useRef(false)
   // Chats this window deleted; a list read before the delete must not bring one back.
   const deletedThreadIds = useRef(new Set<string>())
+  /** Chat ids the newest projects.list answer listed, and how many lists were asked for. */
+  const listedThreadIds = useRef<ReadonlySet<string>>(new Set())
+  const projectListRequests = useRef(0)
   const refreshProjects = useCallback(async () => {
     if (!startupMilestones.current.projectsRequested) {
       startupMilestones.current.projectsRequested = true
       reportStartupMilestone('projects-requested')
     }
+    const listRequest = ++projectListRequests.current
     const result = await transport.request('projects.list', {})
+    if (listRequest === projectListRequests.current) {
+      // The chat kept for switching back is held whatever its size. Once the
+      // server stops listing it (deleted in another window, or its project
+      // removed), it is gone: stop holding it. Only the newest answer counts,
+      // and only for a chat an earlier answer listed, so a chat started after
+      // this request went out is not taken for a deleted one.
+      const listed = new Set(
+        result.projects.flatMap((project) => project.sessions.map((session) => session.id)),
+      )
+      const kept = threadController.previousId
+      if (
+        kept !== undefined &&
+        listedThreadIds.current.has(kept) &&
+        !listed.has(kept) &&
+        !threadController.isVisible(kept) &&
+        !isThreadCacheProtected(kept)
+      )
+        threadController.forget(kept)
+      listedThreadIds.current = listed
+    }
     const list = withoutDeletedSessions(result.projects, deletedThreadIds.current).filter(
       (project) => !removedProjectPaths.current.has(project.path),
     )
@@ -3861,7 +3885,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       (current) => current ?? (chatWithoutProjectRef.current ? undefined : firstProjectPath),
     )
     return list
-  }, [transport])
+  }, [transport, threadController, isThreadCacheProtected])
 
   const refreshCheckpoints = useCallback(
     async (threadId: string) => {

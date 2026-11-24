@@ -24,7 +24,7 @@ import { resetInstalls } from './provider-install.js'
 import { PROVIDER_RECHECK_INTERVAL_MS } from './provider-recheck.js'
 import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
-import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
+import { NEWEST_HISTORY_TURNS, ThreadController } from './thread-controller.js'
 import { MAX_INACTIVE_THREAD_CHARACTERS, MAX_INACTIVE_THREAD_STATES } from './thread-state-cache.js'
 import { composerWireText } from './ui/composer-chips.js'
 
@@ -16314,6 +16314,117 @@ describe('reopening a session', () => {
     expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
       threadId: 'thread-a',
       page: NEWEST_PAGE,
+    })
+  })
+
+  describe('a kept chat that went away', () => {
+    function useProjects() {
+      serverProjects = [
+        {
+          path: '/work/project',
+          name: 'project',
+          pinned: false,
+          createdAt: 0,
+          sessions: [{ id: 'thread-a', title: 'Thread A', running: false }],
+        },
+        {
+          path: '/work/other',
+          name: 'other',
+          pinned: false,
+          createdAt: 1,
+          sessions: [{ id: 'thread-b', title: 'Thread B', running: false }],
+        },
+      ]
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method !== 'thread.history') return request(method, params)
+        const { threadId, afterSeq } = methods['thread.history'].params.parse(params)
+        if (afterSeq !== undefined) return Promise.resolve({ events: [], running: false })
+        return Promise.resolve({
+          events: [completedHistoryEvent(1, `${threadId}-item`, `History ${threadId}`)],
+          running: false,
+        })
+      })
+      return request
+    }
+    /** The App's controller: the receiver of its first activate call. */
+    function controllerSpy() {
+      const activate = vi.spyOn(ThreadController.prototype, 'activate')
+      return () => activate.mock.contexts[0] as ThreadController
+    }
+    function removeProjectOnServer(path: string) {
+      serverProjects = serverProjects.filter((project) => project.path !== path)
+    }
+
+    it('is no longer held once another window deleted it', async () => {
+      useProjects()
+      // Both chats in the one expanded project.
+      serverProjects = [
+        {
+          ...serverProjects[0]!,
+          sessions: [...serverProjects[0]!.sessions, ...serverProjects[1]!.sessions],
+        },
+      ]
+      const controller = controllerSpy()
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Thread A,/ }))
+      expect(await screen.findByText('History thread-a')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: /^Thread B,/ }))
+      expect(await screen.findByText('History thread-b')).toBeTruthy()
+      expect(controller().previousId).toBe('thread-a')
+      expect(controller().snapshot('thread-a')).toBeDefined()
+
+      serverProjects = serverProjects.map((project) => ({
+        ...project,
+        sessions: project.sessions.filter((session) => session.id !== 'thread-a'),
+      }))
+      act(() => transport.listeners.get('projects.changed')?.({}))
+      await waitFor(() => expect(controller().snapshot('thread-a')).toBeUndefined())
+      expect(controller().cursor('thread-a')).toBeUndefined()
+      expect(controller().previousId).toBeUndefined()
+      expect(screen.getByText('History thread-b')).toBeTruthy()
+    })
+
+    it('is no longer held once its project was removed', async () => {
+      const request = useProjects()
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method !== 'projects.remove') return request(method, params)
+        removeProjectOnServer('/work/project')
+        return Promise.resolve({})
+      })
+      useProjects()
+      const controller = controllerSpy()
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Thread A,/ }))
+      expect(await screen.findByText('History thread-a')).toBeTruthy()
+      act(() => sidebarProps().onRemoveProject('/work/project'))
+      expect(controller().previousId).toBe('thread-a')
+      await waitFor(() => expect(controller().snapshot('thread-a')).toBeUndefined())
+      expect(controller().cursor('thread-a')).toBeUndefined()
+      expect(controller().previousId).toBeUndefined()
+    })
+
+    it('stays held when removing its project failed', async () => {
+      const request = useProjects()
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'projects.remove'
+          ? Promise.reject(new Error('removal refused'))
+          : request(method, params),
+      )
+      useProjects()
+      const controller = controllerSpy()
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Thread A,/ }))
+      expect(await screen.findByText('History thread-a')).toBeTruthy()
+      const lists = rpcCount('projects.list')
+      act(() => sidebarProps().onRemoveProject('/work/project'))
+      await waitFor(() => expect(rpcCount('projects.list')).toBe(lists + 1))
+      await act(async () => Promise.resolve())
+      expect(await screen.findByRole('button', { name: /^Thread A,/ })).toBeTruthy()
+      expect(controller().previousId).toBe('thread-a')
+      expect(controller().snapshot('thread-a')).toBeDefined()
+      expect(controller().cursor('thread-a')).toBe(1)
     })
   })
 
