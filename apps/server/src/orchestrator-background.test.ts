@@ -187,6 +187,7 @@ function harness(
     model: string | undefined
     agent?: string | undefined
     accountHome?: string
+    runtime?: string
   }> = []
   /** What each background run was asked. */
   const prompts: string[] = []
@@ -211,6 +212,7 @@ function harness(
         model: options.model,
         agent: options.agent,
         ...(accountHome ? { accountHome } : {}),
+        ...(options.runtime ? { runtime: options.runtime } : {}),
       })
       return {
         thread: { id: 'background-thread', provider, workspacePath, createdAt: 0 },
@@ -872,6 +874,47 @@ describe('background writing for a chat on another account', () => {
       { provider: 'claude-code', model: 'claude-haiku-4-5', accountHome: workHome },
     ])
     expect(store.provisionalTitle('thread-1')).toBeUndefined()
+  })
+
+  it("writes through the runtime each account chose, as that account's chats do", async () => {
+    signIn('claude-code', [model('claude-haiku-4-5')])
+    const { orchestrator, store, started } = harness({ mode: 'automatic' }, undefined, accounts)
+    for (const [id, accountId] of [
+      ['work-chat', 'work'],
+      ['own-chat', undefined],
+    ] as const) {
+      store.addThread({
+        id,
+        projectPath: os.tmpdir(),
+        provider: 'claude-code',
+        ...(accountId ? { accountId } : {}),
+        title: 'Queue',
+      })
+    }
+    const diff = {
+      threadId: 'workspace',
+      version: 'tree',
+      files: [{ path: 'src/queue.ts', status: 'modified' as const, binary: false, hunks: [] }],
+    }
+    const write = async () => {
+      await orchestrator.generateBackgroundCommitMessage(diff, 'work-chat')
+      await orchestrator.generateBackgroundCommitMessage(diff, 'own-chat')
+    }
+
+    // Work chose the CLI; the default account chose nothing and keeps the default.
+    store.updateAccountRuntimeSetting('claude-code', 'work', 'cli')
+    await write()
+    // Each account chooses alone: the provider's choice is the default account's only.
+    store.updateAccountRuntimeSetting('claude-code', 'work', null)
+    store.updateProviderRuntimeSettings('claude-code', 'cli')
+    await write()
+
+    expect(started).toEqual([
+      { provider: 'claude-code', model: 'claude-haiku-4-5', accountHome: workHome, runtime: 'cli' },
+      { provider: 'claude-code', model: 'claude-haiku-4-5' },
+      { provider: 'claude-code', model: 'claude-haiku-4-5', accountHome: workHome },
+      { provider: 'claude-code', model: 'claude-haiku-4-5', runtime: 'cli' },
+    ])
   })
 
   it("chooses a Work chat's model from the Work account's own plan", async () => {
