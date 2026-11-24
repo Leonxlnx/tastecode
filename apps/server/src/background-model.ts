@@ -268,6 +268,8 @@ export async function runBackgroundCompletion(input: {
   runtime: ProviderRuntime
   selection: BackgroundModelSelection
   prompt: string
+  /** The runtime the account this writing goes through chose; absent is the default one. */
+  runtimeChoice?: string | undefined
   timeoutMs?: number | undefined
   /** A provider process that could not be stopped; its folder is kept. */
   onCleanupError?: ((error: unknown) => void) | undefined
@@ -291,6 +293,7 @@ export async function runBackgroundCompletion(input: {
     ...(input.selection.serviceTier ? { serviceTier: input.selection.serviceTier } : {}),
     ...(input.selection.agent ? { agent: input.selection.agent } : {}),
     ...(input.selection.connectionId ? { connectionId: input.selection.connectionId } : {}),
+    ...(input.runtimeChoice ? { runtime: input.runtimeChoice } : {}),
     approval: 'ask',
     ephemeral: true,
     instructions: BACKGROUND_INSTRUCTIONS,

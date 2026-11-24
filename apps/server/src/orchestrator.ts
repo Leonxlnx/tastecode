@@ -1209,17 +1209,23 @@ export class Orchestrator {
       )
       const resolved = await resolveBackgroundModelFrom(preference, loaders)
       if (!resolved) break
+      // A custom harness keeps its own sign-in; another provider has no account of this chat.
+      const ownAccount = chat && !resolved.agent && resolved.provider === chat.provider
       const runtime = this.#runtimeFor(
         resolved.provider,
         this.#onLog,
-        // A custom harness keeps its own sign-in; another provider has no account of this chat.
-        chat && !resolved.agent && resolved.provider === chat.provider
-          ? threadAccountHome(this.#accounts, chat)
-          : undefined,
+        ownAccount ? threadAccountHome(this.#accounts, chat) : undefined,
+      )
+      // The account's own runtime choice, as its chats and model lists use it.
+      const { runtime: runtimeChoice } = this.#runtimeLaunch(
+        resolved.provider,
+        resolved.agent,
+        ownAccount ? chat.accountId : undefined,
       )
       try {
         return await runBackgroundCompletion({
           runtime,
+          runtimeChoice,
           selection: resolved,
           prompt,
           onCleanupError: (error) =>
