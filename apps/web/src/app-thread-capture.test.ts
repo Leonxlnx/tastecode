@@ -297,10 +297,12 @@ const app = (...lines: string[]) =>
   ].join('\n')
 
 describe('App closures', () => {
+  // Parsing and walking all of App.tsx takes about five seconds on a busy Windows runner, which is
+  // the default limit: the walk is the test, so it gets room instead of a smaller input.
   it('never use the focused chat snapshot, so no memoized callback keeps a closed chat', () => {
     const text = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8')
     expect(nestedUses(text)).toEqual([])
-  })
+  }, 60_000)
 
   it('finds a use inside a callback, but not a shadowing one or a render-level one', () => {
     const uses = nestedUses(
