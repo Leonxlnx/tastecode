@@ -7138,6 +7138,93 @@ describe('new chats', () => {
     )
   })
 
+  it('keeps a chat lifted by its first prompt first after it finishes and the list refreshes', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-b', title: 'Second chat', provider: 'codex', createdAt: 2, running: false },
+          { id: 'thread-a', title: 'New session', provider: 'codex', createdAt: 1, running: false },
+        ],
+      },
+    ]
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('New session')))
+    await screen.findByTestId('thread')
+    const order = () => sidebarProps().projects[0]!.sessions.map(({ id }) => id)
+
+    submitTurn('Plan the trip')
+    await waitFor(() => expect(order()).toEqual(['thread-a', 'thread-b']))
+    startTurn('thread-a', 'turn-a')
+    completeTurn('thread-a', 'turn-a')
+    await waitFor(() => expect(sidebarProps().projects[0]!.sessions[0]?.status).not.toBe('running'))
+
+    const listed = rpcCount('projects.list')
+    act(() => transport.listeners.get('providerHistory.changed')?.({ threadIds: [] }))
+    await waitFor(() => expect(rpcCount('projects.list')).toBe(listed + 1))
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)))
+
+    expect(order()).toEqual(['thread-a', 'thread-b'])
+  })
+
+  it('saves the lift a finish makes from the list it lands on, not the last render', async () => {
+    const project = (ids: string[]): ServerProject => ({
+      path: '/work/project',
+      name: 'project',
+      pinned: false,
+      createdAt: 0,
+      sessions: ids.map((id) => ({
+        id,
+        title: `Chat ${id}`,
+        provider: 'codex',
+        createdAt: { 'thread-c': 3, 'thread-a': 2, 'thread-b': 1 }[id]!,
+        running: false,
+      })),
+    })
+    serverProjects = [project(['thread-a', 'thread-b'])]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const lists: Array<(value: ResultOf<'projects.list'>) => void> = []
+    let capture = false
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'projects.list' && capture
+        ? new Promise<ResultOf<'projects.list'>>((resolve) => lists.push(resolve))
+        : request(method, params),
+    )
+    render(<App />)
+    await screen.findByRole('button', { name: chatRowName('Chat thread-b') })
+    const order = () => sidebarProps().projects[0]!.sessions.map(({ id }) => id)
+    expect(order()).toEqual(['thread-a', 'thread-b'])
+    startTurn('thread-a', 'turn-a')
+
+    capture = true
+    act(() => transport.listeners.get('providerHistory.changed')?.({ threadIds: [] }))
+    await waitFor(() => expect(lists).toHaveLength(1))
+    const newer = project(['thread-c', 'thread-a', 'thread-b'])
+    serverProjects = [newer]
+    // The newer list and the finish land in one batch, before the next render.
+    await act(async () => {
+      lists[0]!({ projects: [newer] })
+      for (let tick = 0; tick < 10; tick += 1) await Promise.resolve()
+      transport.listeners.get('thread.event')?.({
+        threadId: 'thread-a',
+        event: { type: 'turn.completed', turnId: 'turn-a', status: 'completed' },
+      })
+    })
+    await waitFor(() => expect(order()).toEqual(['thread-a', 'thread-c', 'thread-b']))
+
+    capture = false
+    const listed = rpcCount('projects.list')
+    act(() => transport.listeners.get('providerHistory.changed')?.({ threadIds: [] }))
+    await waitFor(() => expect(rpcCount('projects.list')).toBe(listed + 1))
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)))
+
+    expect(order()).toEqual(['thread-a', 'thread-c', 'thread-b'])
+  })
+
   it('saves no chat order when a finished chat already leads its project', async () => {
     serverProjects = [
       {

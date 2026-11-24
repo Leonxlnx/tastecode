@@ -2706,12 +2706,6 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         // status change keeps it where it is. The lift is saved like a drag, so
         // the next project refresh does not put it back by date.
         const finished = event.type === 'turn.completed'
-        const finishedIn = finished
-          ? findSession(projectsRef.current, threadId)?.project
-          : undefined
-        // A chat already at the top moves nowhere: its project's order needs no saving.
-        if (finishedIn && finishedIn.sessions[0]?.id !== threadId)
-          draggedSessionOrder.add(finishedIn.path)
         if (finished && threadId === activeIdRef.current) setHeldSessionId(threadId)
         setProjects((current) => {
           const updated = updateSession(current, threadId, (session) => {
@@ -2729,7 +2723,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                 : {}),
             }
           })
-          return finished ? promoteSession(updated, threadId) : updated
+          return finished ? liftAndEnroll(updated, threadId, draggedSessionOrder) : updated
         })
         if (event.type === 'turn.completed' && threadController.isVisible(threadId)) {
           // Only here for the server's mark-as-read side effect — the live event
@@ -5449,7 +5443,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       const untitled = !titledOnCreate && existingSession?.title === 'New session'
       if (untitled) {
         const title = titleFrom(titlePrompt)
-        setProjects((current) => promoteSession(renameSession(current, threadId, title), threadId))
+        setProjects((current) =>
+          liftAndEnroll(renameSession(current, threadId, title), threadId, draggedSessionOrder),
+        )
         void transport
           .request('thread.rename', { threadId, title })
           .then(() => generateSessionTitle(threadId, titlePrompt, title))
@@ -9276,6 +9272,23 @@ function loadSessionOrder() {
 }
 
 const serializeSessionOrder = createSessionOrderSerializer()
+
+/**
+ * Lift a chat to the top of its project. A lift that moves it makes an order
+ * the server's creation order does not know, so the project is enrolled for
+ * saving in the same state transition that moves it, judged from the
+ * updater's own input rather than the last render; the effect that saves the
+ * order runs after the commit. A chat already first, alone or not, moves
+ * nowhere and enrolls nothing. Enrolling twice is harmless, so a repeated
+ * updater call is too.
+ */
+function liftAndEnroll(projects: Project[], threadId: string, enrolled: Set<string>): Project[] {
+  const lifted = promoteSession(projects, threadId)
+  if (lifted === projects) return projects
+  const path = findSession(lifted, threadId)?.project.path
+  if (path) enrolled.add(path)
+  return lifted
+}
 
 function saveSessionOrder(projects: Project[], dragged: ReadonlySet<string>): void {
   const serialized = serializeSessionOrder(projects.filter((project) => dragged.has(project.path)))
