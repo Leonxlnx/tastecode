@@ -75,6 +75,14 @@ describe('sidebar theme CSS', () => {
     )
   })
 
+  it('does not blur the page behind the open glass rail', () => {
+    // Only the OS material sits behind the rail, so a backdrop-filter only costs
+    // a full-height filter pass; packaged builds never kept it anyway.
+    const glassRail = appCss.match(/:root\[data-glass='on'\] \.rail \{[^}]*\}/s)?.[0]
+    expect(glassRail).toBeDefined()
+    expect(glassRail?.replace(/\/\*.*?\*\//gs, '')).not.toContain('backdrop-filter')
+  })
+
   it('keeps the narrow-window drawer opaque over the chat', () => {
     // Below 700px the open rail covers the transcript, so glass would show the
     // chat through the sidebar items instead of the OS material.

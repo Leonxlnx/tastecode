@@ -3614,14 +3614,14 @@
 :root[data-glass='on'] .rail {
   /* A thinner pane per strength step, plus a hairline edge highlight. What
      shows through is the OS blur material behind the window (see below) —
-     never a painted gradient. */
+     never a painted gradient. No backdrop-filter: inside the page there is
+     nothing behind the rail to blur, and the built CSS never kept one (the
+     minifier merged it into the -webkit- form, which Chromium ignores). */
   background: color-mix(
     in srgb,
     var(--bg-rail-tint) calc(100% - var(--rail-glass, 0) * var(--rail-glass-fade, 130%)),
     transparent
   );
-  backdrop-filter: blur(26px) saturate(1.4);
-  -webkit-backdrop-filter: blur(26px) saturate(1.4);
 }
 
 /* The collapsed rail is a flyout over live app content, not a window-edge
