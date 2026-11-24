@@ -2708,9 +2708,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         // the next project refresh does not put it back by date.
         const finished = event.type === 'turn.completed'
         const finishedIn = finished
-          ? findSession(projectsRef.current, threadId)?.project.path
+          ? findSession(projectsRef.current, threadId)?.project
           : undefined
-        if (finishedIn) draggedSessionOrder.add(finishedIn)
+        // A chat already at the top moves nowhere: its project's order needs no saving.
+        if (finishedIn && finishedIn.sessions[0]?.id !== threadId)
+          draggedSessionOrder.add(finishedIn.path)
         if (finished && threadId === activeIdRef.current) setHeldSessionId(threadId)
         setProjects((current) => {
           const updated = updateSession(current, threadId, (session) => {

@@ -7025,6 +7025,56 @@ describe('new chats', () => {
     )
   })
 
+  it('saves no chat order when a finished chat already leads its project', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-a', title: 'First chat', provider: 'codex', createdAt: 1, running: false },
+          { id: 'thread-b', title: 'Second chat', provider: 'codex', createdAt: 0, running: false },
+        ],
+      },
+      {
+        path: '/home/me/.tastecode/threads/2026-11-01-amber-heron',
+        name: '2026-11-01-amber-heron',
+        pinned: false,
+        createdAt: 2,
+        chat: true,
+        sessions: [
+          {
+            id: 'standalone',
+            title: 'Lisbon trip',
+            provider: 'codex',
+            createdAt: 3,
+            running: false,
+          },
+        ],
+      },
+    ]
+    render(<App />)
+    await screen.findByRole('button', { name: 'Second chat, Codex' })
+    const project = () => sidebarProps().projects.find(({ path }) => path === '/work/project')!
+    const order = () => project().sessions.map(({ id }) => id)
+    const saves = vi.spyOn(localStorage, 'setItem')
+    const orderSaves = () =>
+      saves.mock.calls.filter(([key]) => key === 'harness.sessionOrder.dragged').length
+
+    startTurn('thread-a', 'turn-a')
+    completeTurn('thread-a', 'turn-a')
+    startTurn('standalone', 'turn-s')
+    completeTurn('standalone', 'turn-s')
+    await waitFor(() =>
+      expect(project().sessions.find(({ id }) => id === 'thread-a')?.unread).toBe(true),
+    )
+
+    expect(order()).toEqual(['thread-a', 'thread-b'])
+    expect(orderSaves()).toBe(0)
+    expect(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}').toBe('{}')
+  })
+
   it('keeps a chat in its sidebar place when a turn starts in it', async () => {
     serverProjects = [
       {
