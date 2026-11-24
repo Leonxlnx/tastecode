@@ -291,12 +291,29 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-23 dev e1920a0d · nightly 8a60342f · main dd8f4264</span>
+        <span class="meta">2026-11-24 dev f8a0b97a · nightly 8a60342f · main dd8f4264</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 24 on dev (f8a0b97a, not on nightly or main): performance and fixes, measured in
+          packaged builds with 55 imported real chats. Switching back to a chat is several times
+          faster: a reopened transcript starts at its end instead of rendering twice (#2504), and
+          chats the reader left stay in memory within 16 chats, 24,000 rows and 24 Mi characters,
+          the chat just left always (#2505), for about 16 to 21 MiB more renderer memory after ten
+          large chats. Opening a chat with many rows no longer freezes while detached rows are
+          cleaned up (#2503). A large Claude Code transcript that changed outside TasteCode is read
+          in a fraction of the time with the same result, compared on 2,230 real transcripts
+          (#2508). The renderer's startup chunk no longer builds the protocol's schemas (#2506,
+          #2507). Fixes for what landed on November 23: creating an Android emulator no longer
+          overwrites an existing one (#2496), a simulator attaches by its exact id (#2497), titles
+          and commit messages run on the chat account's runtime (#2498), pull request discovery
+          skips chat folders (#2499), the sidebar rail reuses unchanged groups (#2500), the chat
+          after a deleted chat without a project gets its own folder (#2501), and an open chat can
+          pick a model only its own account offers (#2502).
+        </p>
         <p>
           November 23 on dev (e1920a0d, not on nightly or main): performance, measured in a packaged
           build with 55 imported real chats. The desktop page connects once its own server listens,
