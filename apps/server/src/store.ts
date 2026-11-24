@@ -2185,6 +2185,8 @@ export class Store {
       'INSERT INTO provider_history_events (thread_id, event_key, event_seq) VALUES (?, ?, ?)',
     )
     let changed = false
+    // Whether a row of the thread's log stopped counting: its key is gone or its event changed.
+    let deactivated = false
     this.#transaction(() => {
       const keys = JSON.stringify(entries.map(({ key }) => key))
       const retired = this.#db
@@ -2193,7 +2195,7 @@ export class Store {
         WHERE thread_id = ? AND active = 1 AND event_key NOT IN (SELECT value FROM json_each(?))`,
         )
         .run(threadId, keys).changes
-      if (retired) changed = true
+      if (retired) changed = deactivated = true
       // After a restore the local log holds, or deliberately dropped, everything
       // the provider saved until then; only what the provider saves later is new.
       const restoredAt = sqliteRow<{ restored_at: SqliteInteger | null }>(
@@ -2211,12 +2213,14 @@ export class Store {
             (restoredAt != null && turnAt <= Number(restoredAt)))
         )
           continue
-        if (existing)
+        if (existing) {
           this.#db
             .prepare(
               'UPDATE provider_history_events SET active = 0 WHERE thread_id = ? AND event_key = ?',
             )
             .run(threadId, key)
+          if (existing.active) deactivated = true
+        }
         const at =
           event.type === 'item.completed' || event.type === 'item.started'
             ? event.item.createdAt
@@ -2247,8 +2251,14 @@ export class Store {
         this.#searchRevision += 1
         this.#deleteReplaySnapshot.run(threadId)
         this.#forgetReplaySnapshot(threadId)
-        this.#rebuildThreadInboxState(threadId)
-        this.#rebuildThreadRecoveryState(threadId)
+        // Appending folded each new event into the inbox and recovery state already, after
+        // every earlier one, as a rebuild would. Only a row that stopped counting needs the
+        // thread's state derived again; a rebuild over a long chat blocked the server for
+        // seconds after every outside turn.
+        if (deactivated) {
+          this.#rebuildThreadInboxState(threadId)
+          this.#rebuildThreadRecoveryState(threadId)
+        }
       }
     })
     return changed
