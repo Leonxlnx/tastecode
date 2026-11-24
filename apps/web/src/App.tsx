@@ -4927,6 +4927,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           ),
         )
         threadController.moveDraft(provisionalId, threadId)
+        // Not a switch: the chat shown, or kept as the one just left, is renamed.
+        threadController.replaceId(provisionalId, threadId)
         if (activeIdRef.current === provisionalId) {
           if (threadController.draftOwner === provisionalId) threadController.draftOwner = threadId
           if (composerDraftKeyRef.current === provisionalId) composerDraftKeyRef.current = threadId

@@ -25,7 +25,7 @@ import { PROVIDER_RECHECK_INTERVAL_MS } from './provider-recheck.js'
 import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
-import { MAX_INACTIVE_THREAD_STATES } from './thread-state-cache.js'
+import { MAX_INACTIVE_THREAD_CHARACTERS, MAX_INACTIVE_THREAD_STATES } from './thread-state-cache.js'
 import { composerWireText } from './ui/composer-chips.js'
 
 const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
@@ -16261,6 +16261,58 @@ describe('reopening a session', () => {
     })
     expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
       threadId: 'thread-1',
+      page: NEWEST_PAGE,
+    })
+  })
+
+  it('still holds the chat left for a new chat once the new chat gets its server id', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-a', title: 'Thread A', running: false }],
+      },
+    ]
+    // Over the whole budget for inactive chats: only the chat just left keeps it.
+    const huge = 'x'.repeat(MAX_INACTIVE_THREAD_CHARACTERS + 1)
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      const parsed = methods['thread.history'].params.parse(params)
+      if (parsed.threadId !== 'thread-a' || parsed.afterSeq !== undefined)
+        return Promise.resolve({ events: [], running: false })
+      return Promise.resolve({
+        events: [
+          completedHistoryEvent(1, 'a-big', huge),
+          completedHistoryEvent(2, 'a', 'History A'),
+        ],
+        running: false,
+      })
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Thread A,/ }))
+    expect(await screen.findByText('History A')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    act(() => composerProps().onSend('First prompt', []))
+    await waitFor(() => expect(sidebarProps().activeSessionId).toBe('thread-1'))
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+
+    transport.request.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /^Thread A,/ }))
+    // Shown from memory at once; only what happened since is asked for.
+    expect(screen.getByText('History A')).toBeTruthy()
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'thread-a', afterSeq: 2 }),
+      )
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
+      threadId: 'thread-a',
       page: NEWEST_PAGE,
     })
   })

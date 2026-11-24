@@ -440,6 +440,41 @@ describe('ThreadController lifecycle owner', () => {
     controller.prune(unprotected)
     expect(controller.snapshot('left')).toBeUndefined()
   })
+
+  it('keeps the chat left when a new chat shown since gets its server id', () => {
+    const controller = new ThreadController(new TestTransport())
+    const left = reduce(emptyThread, {
+      ...started,
+      item: { ...started.item, text: 'x'.repeat(MAX_INACTIVE_THREAD_CHARACTERS + 1) },
+    })
+    controller.update('left', left)
+    controller.setCursor('left', 1)
+    controller.activate('left')
+    controller.activate(undefined)
+    controller.activate('pending:new')
+    controller.replaceId('pending:new', 'durable')
+    controller.activate('durable')
+    controller.prune(unprotected)
+    expect(controller.previousId).toBe('left')
+    expect(controller.snapshot('left')).toBe(left)
+    expect(controller.cursor('left')).toBe(1)
+  })
+
+  it('keeps a new chat left before its server id arrived under that id', () => {
+    const controller = new ThreadController(new TestTransport())
+    const big = reduce(emptyThread, {
+      ...started,
+      item: { ...started.item, text: 'x'.repeat(MAX_INACTIVE_THREAD_CHARACTERS + 1) },
+    })
+    controller.activate('pending:new')
+    controller.activate('other')
+    controller.replaceId('pending:new', 'durable')
+    controller.update('durable', big)
+    controller.setCursor('durable', 1)
+    controller.prune(unprotected)
+    expect(controller.previousId).toBe('durable')
+    expect(controller.snapshot('durable')).toBe(big)
+  })
 })
 
 describe('history gap recovery', () => {

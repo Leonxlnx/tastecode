@@ -140,6 +140,21 @@ export class ThreadController {
     this.#shown[this.#focused] = id
     this.#activeId = id
   }
+  /** The chat kept for switching back, whatever its size. */
+  get previousId(): string | undefined {
+    return this.#previousId
+  }
+  /**
+   * A new chat got its server id: the same chat under its lasting name. Where
+   * it is shown, or kept as the chat just left, the new id takes its place;
+   * nobody left anything, so the chat kept for switching back stays kept.
+   */
+  replaceId(from: string, to: string): void {
+    if (this.#shown[0] === from) this.#shown[0] = to
+    if (this.#shown[1] === from) this.#shown[1] = to
+    if (this.#previousId === from) this.#previousId = to
+    this.#syncVisible()
+  }
   /** Show `id` in a column and publish what is cached for it there. */
   show(slot: PaneSlot, id: string | undefined): void {
     this.#shown[slot] = id
