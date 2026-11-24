@@ -1109,8 +1109,15 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     const el = scroller.current
     if (!el || !thread.olderCursor || props.loading || thread.items.length === 0) return
     if (olderHistory !== 'idle' || completeStatus === 'loading') return
-    if (nearOlderHistoryEdge(el)) void loadOlder()
+    // A chat opens at its estimated end. A tall early row that was never
+    // measured can make the top look a viewport away when it is thousands of
+    // pixels up, so the prefetch distance is only for a reader who has
+    // scrolled toward older rows; at the end, only a page that leaves the
+    // viewport underfilled asks for more.
+    const underfilled = virtualizer.getTotalSize() <= el.clientHeight
+    if (underfilled || (modeRef.current === 'free' && nearOlderHistoryEdge(el))) void loadOlder()
   }, [
+    virtualizer,
     thread.olderCursor,
     thread.items.length,
     props.loading,
