@@ -134,7 +134,10 @@ export function searchSessionTitles(
   const normalizedQuery = terms.join(' ')
   const limit = options.limit ?? 6
   if (limit <= 0) return []
-  const ranked: Array<{ entry: SessionTitleIndexEntry; rank: number }> = []
+  // Parallel lists instead of one wrapper object per kept match: when the
+  // index runs oldest first, every match briefly enters the top list.
+  const ranked: SessionTitleIndexEntry[] = []
+  const ranks: number[] = []
 
   for (const entry of entries) {
     if (options.projectPath && entry.projectPath !== options.projectPath) continue
@@ -149,21 +152,25 @@ export function searchSessionTitles(
           : 2
     let insertion = 0
     while (insertion < ranked.length) {
-      const existing = ranked[insertion]!
+      const existingRank = ranks[insertion]!
       if (
-        rank < existing.rank ||
-        (rank === existing.rank && entry.createdAt > existing.entry.createdAt)
+        rank < existingRank ||
+        (rank === existingRank && entry.createdAt > ranked[insertion]!.createdAt)
       ) {
         break
       }
       insertion += 1
     }
     if (insertion >= limit) continue
-    ranked.splice(insertion, 0, { entry, rank })
-    if (ranked.length > limit) ranked.pop()
+    ranked.splice(insertion, 0, entry)
+    ranks.splice(insertion, 0, rank)
+    if (ranked.length > limit) {
+      ranked.pop()
+      ranks.pop()
+    }
   }
 
-  return ranked.map(({ entry }) => entry)
+  return ranked
 }
 
 function normalizeSearchText(value: string): string {
