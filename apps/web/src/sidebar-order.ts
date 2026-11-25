@@ -145,7 +145,6 @@ function sameIds<T>(
 export function sidebarRail(projects: Project[], heldSessionId?: string): SidebarRail {
   const pinned: PinnedSession[] = []
   const archived: PinnedSession[] = []
-  const chats: PinnedSession[] = []
   const chatSources: Project[] = []
   const pinnedProjects: Project[] = []
   const unpinnedProjects: Project[] = []
@@ -153,34 +152,27 @@ export function sidebarRail(projects: Project[], heldSessionId?: string): Sideba
     const projection = projectSidebarProjection(source, heldSessionId)
     pinned.push(...projection.pinnedSessions)
     archived.push(...projection.archivedSessions)
-    if (source.chat) {
-      chatSources.push(source)
-      for (const session of projection.project.sessions) {
-        chats.push({ projectPath: source.path, session })
-      }
-    } else if (source.pinned) pinnedProjects.push(projection.project)
+    if (source.chat) chatSources.push(source)
+    else if (source.pinned) pinnedProjects.push(projection.project)
     else unpinnedProjects.push(projection.project)
   }
   return {
     orderedProjects: [...pinnedProjects, ...unpinnedProjects],
     pinnedSessions: pinned,
-    chatSessions: groupedChats(chatSources, chats, heldSessionId),
+    chatSessions: groupedChats(chatSources, heldSessionId),
     archivedSessions: archived.sort((a, b) => archivedAt(b.session) - archivedAt(a.session)),
   }
 }
 
 /**
  * The last grouping of the chats without a project. A status change elsewhere
- * leaves their projects as they were, and then their sort is not redone.
+ * leaves their projects as they were, and then their sort is not redone, nor
+ * are their entries listed again.
  */
 type GroupedChats = { sources: Project[]; held: string | undefined; grouped: PinnedSession[] }
 let lastChats: GroupedChats = { sources: [], held: undefined, grouped: [] }
 
-function groupedChats(
-  sources: Project[],
-  chats: PinnedSession[],
-  heldSessionId: string | undefined,
-): PinnedSession[] {
+function groupedChats(sources: Project[], heldSessionId: string | undefined): PinnedSession[] {
   const last = lastChats
   if (
     last.held === heldSessionId &&
@@ -188,6 +180,13 @@ function groupedChats(
     last.sources.every((source, index) => source === sources[index])
   ) {
     return last.grouped
+  }
+  const chats: PinnedSession[] = []
+  for (const source of sources) {
+    // sidebarRail has just projected every source, so this is a cache hit.
+    for (const session of projectSidebarProjection(source, heldSessionId).project.sessions) {
+      chats.push({ projectPath: source.path, session })
+    }
   }
   const grouped = groupChats(chats, heldSessionId)
   lastChats = { sources, held: heldSessionId, grouped }

@@ -494,4 +494,31 @@ describe('sidebar rail cost', () => {
     added.sessions[0] = { ...added.sessions[0]!, createdAt: 1_000 }
     expect(sidebarRail([changed, added, ...folders]).chatSessions[0]!.session.id).toBe('chat-new')
   })
+
+  it('does not list the chats without a project again while their folders are unchanged', () => {
+    let reads = 0
+    const folders = Array.from({ length: 300 }, (_, index) => {
+      const folder: Project = { ...project(`/loose/${index}`, [`loose-${index}`]), chat: true }
+      const sessions = [{ ...folder.sessions[0]!, createdAt: index }]
+      Object.defineProperty(folder, 'sessions', {
+        enumerable: true,
+        get: () => {
+          reads += 1
+          return sessions
+        },
+      })
+      return folder
+    })
+    const work = project('/work', ['a', 'b'])
+    const first = sidebarRail([work, ...folders])
+    const afterFirst = reads
+    const changed = { ...work, sessions: [{ ...work.sessions[0]!, status: 'working' as const }] }
+    const second = sidebarRail([changed, ...folders])
+    expect(reads - afterFirst).toBe(0)
+    expect(second.chatSessions).toBe(first.chatSessions)
+    expect(second.chatSessions.map(({ session }) => session.id).slice(0, 2)).toEqual([
+      'loose-299',
+      'loose-298',
+    ])
+  })
 })
