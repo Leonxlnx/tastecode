@@ -334,6 +334,19 @@ export function withoutDeletedSessions(
   return changed ? projects : snapshot
 }
 
+/** The sidebar without the chats that wait for Undo. */
+export function withoutHiddenSessions(
+  projects: Project[],
+  hiddenIds: readonly string[],
+): Project[] {
+  if (hiddenIds.length === 0) return projects
+  const hidden = new Set(hiddenIds)
+  return projects.map((project) => ({
+    ...project,
+    sessions: project.sessions.filter((session) => !hidden.has(session.id)),
+  }))
+}
+
 /**
  * The sidebar while Stops are on their way: a chat the user stopped, mapped to when, shows
  * as idle since then instead of running. The chat itself stops showing work at the click,
