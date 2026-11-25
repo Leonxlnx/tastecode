@@ -452,6 +452,12 @@ const loadWorkspacePanel = (): Promise<LazyWorkspacePanelModule> =>
     return { default: module.WorkspacePanel }
   }))
 const WorkspacePanel = lazy(loadWorkspacePanel)
+/**
+ * Only the rich Markdown renderer's stylesheets, not its code: in the document
+ * before a chat opens, they cause no layout when the renderer loads with it.
+ */
+const loadCompletedMarkdownStyles = (): Promise<unknown> =>
+  import('./ui/completed-markdown-styles.js')
 type SettingsComponent = (typeof import('./ui/Settings.js'))['Settings']
 let settingsPromise: Promise<{ default: SettingsComponent }> | undefined
 let resolvedSettings: SettingsComponent | undefined
@@ -1094,6 +1100,12 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   useEffect(() => {
     if (projectsStatus !== 'ready') return
     return preloadMonospaceFont()
+  }, [projectsStatus])
+  // The rich Markdown renderer's stylesheets (KaTeX's font faces) made the
+  // browser lay the first opened chat out again when they arrived with it.
+  useEffect(() => {
+    if (projectsStatus !== 'ready') return
+    return preloadWhenIdle(loadCompletedMarkdownStyles)
   }, [projectsStatus])
   const [modelVisibility, setModelVisibility] = useState(readModelVisibility)
   // The catalog effect reads and settles the record per source without

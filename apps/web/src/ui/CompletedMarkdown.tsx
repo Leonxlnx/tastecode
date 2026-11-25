@@ -16,9 +16,8 @@ import {
   type BlockProps,
   type Components,
 } from 'streamdown'
-import 'streamdown/styles.css'
 import { createMathPlugin } from '@streamdown/math'
-import 'katex/dist/katex.min.css'
+import './completed-markdown-styles.js'
 import { canRevealProjectFile, revealProjectFile } from '../bridge.js'
 import {
   preserveProjectFileLinks,
