@@ -2194,10 +2194,17 @@ describe('web client', () => {
     expect(await screen.findByRole('option', { name: /^New session, project,/ })).toBeTruthy()
     expect(screen.queryAllByRole('option', { name: /^Doomed chat,/ })).toHaveLength(0)
 
+    // The open search keeps the server's answer from before the delete; committing the
+    // delete (here, or the ten-second Undo window running out on a slow run) must not
+    // bring the chat back into it.
     await act(async () => window.dispatchEvent(new Event('pagehide')))
     expect(transport.request).toHaveBeenCalledWith('thread.delete', {
       threadId: 'doomed-thread',
     })
+    // One task later the answered delete has left the queue.
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(screen.getByRole('option', { name: /^New session, project,/ })).toBeTruthy()
+    expect(screen.queryAllByRole('option', { name: /^Doomed chat,/ })).toHaveLength(0)
   })
 
   it('does not open a chat queued for deletion after settling the active chat', async () => {
