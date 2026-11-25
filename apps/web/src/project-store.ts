@@ -111,27 +111,27 @@ function inheritSessionIndex(source: Project[], target: Project[]): void {
 }
 
 /** Flatten immutable reorder history, then periodically reset it to one exact map. */
-function appendSessionIndexMutation(
+function appendSessionIndexMutations(
   source: Project[],
   target: Project[],
-  mutation: SessionIndexMutation,
+  mutations: readonly SessionIndexMutation[],
 ): void {
   const inherited = sessionIndexOverlays.get(source)
   if (
     inherited &&
     !sessionIndexes.has(source) &&
-    inherited.mutations.length >= MAX_SESSION_INDEX_OVERLAY_MUTATIONS
+    inherited.mutations.length + mutations.length > MAX_SESSION_INDEX_OVERLAY_MUTATIONS
   ) {
     locationsFor(target)
     return
   }
   if (!inherited || sessionIndexes.has(source)) {
-    sessionIndexOverlays.set(target, { source, mutations: [mutation] })
+    sessionIndexOverlays.set(target, { source, mutations: [...mutations] })
     return
   }
   sessionIndexOverlays.set(target, {
     source: inherited.source,
-    mutations: [...inherited.mutations, mutation],
+    mutations: [...inherited.mutations, ...mutations],
   })
 }
 
@@ -288,12 +288,14 @@ export function promoteSession(projects: Project[], threadId: string): Project[]
   sessions.unshift(session)
   const next = [...projects]
   next[location.projectIndex] = { ...project, sessions }
-  appendSessionIndexMutation(projects, next, {
-    kind: 'promote',
-    threadId,
-    projectIndex: location.projectIndex,
-    sessionIndex: location.sessionIndex,
-  })
+  appendSessionIndexMutations(projects, next, [
+    {
+      kind: 'promote',
+      threadId,
+      projectIndex: location.projectIndex,
+      sessionIndex: location.sessionIndex,
+    },
+  ])
   return next
 }
 
@@ -305,12 +307,14 @@ export function removeSession(projects: Project[], threadId: string): Project[] 
   sessions.splice(location.sessionIndex, 1)
   const next = [...projects]
   next[location.projectIndex] = { ...project, sessions }
-  appendSessionIndexMutation(projects, next, {
-    kind: 'remove',
-    threadId,
-    projectIndex: location.projectIndex,
-    sessionIndex: location.sessionIndex,
-  })
+  appendSessionIndexMutations(projects, next, [
+    {
+      kind: 'remove',
+      threadId,
+      projectIndex: location.projectIndex,
+      sessionIndex: location.sessionIndex,
+    },
+  ])
   return next
 }
 
@@ -335,7 +339,11 @@ export function withoutDeletedSessions(
 }
 
 /** A project as last shown without some of its chats, kept while the same chats stay hidden. */
-const hiddenSessionProjects = new WeakMap<Project, { ids: readonly string[]; project: Project }>()
+type HiddenSession = { threadId: string; sessionIndex: number }
+const hiddenSessionProjects = new WeakMap<
+  Project,
+  { ids: readonly string[]; project: Project; removed: readonly HiddenSession[] }
+>()
 
 /**
  * The sidebar without the chats that wait for Undo. Each hidden chat is found
@@ -359,20 +367,36 @@ export function withoutHiddenSessions(
   }
   if (hiddenByProject.size === 0) return projects
   const next = [...projects]
+  const removals: SessionIndexMutation[] = []
   for (const [projectIndex, ids] of hiddenByProject) {
     const source = projects[projectIndex]!
-    const cached = hiddenSessionProjects.get(source)
-    if (cached && cached.ids.length === ids.length && ids.every((id) => cached.ids.includes(id))) {
-      next[projectIndex] = cached.project
-      continue
+    let shown = hiddenSessionProjects.get(source)
+    if (!shown || shown.ids.length !== ids.length || !ids.every((id) => shown!.ids.includes(id))) {
+      const hidden = new Set(ids)
+      const sessions: Session[] = []
+      const removed: HiddenSession[] = []
+      for (let sessionIndex = 0; sessionIndex < source.sessions.length; sessionIndex += 1) {
+        const session = source.sessions[sessionIndex]!
+        const threadId = session.id
+        if (hidden.has(threadId)) removed.unshift({ threadId, sessionIndex })
+        else sessions.push(session)
+      }
+      shown = { ids, project: { ...source, sessions }, removed }
+      hiddenSessionProjects.set(source, shown)
     }
-    const hidden = new Set(ids)
-    const project = {
-      ...source,
-      sessions: source.sessions.filter((session) => !hidden.has(session.id)),
+    next[projectIndex] = shown.project
+    for (const { threadId, sessionIndex } of shown.removed) {
+      removals.push({ kind: 'remove', threadId, projectIndex, sessionIndex })
     }
-    hiddenSessionProjects.set(source, { ids, project })
-    next[projectIndex] = project
+  }
+  // The filtered list answers lookups through its source's index: each removal
+  // (highest position first, so the ones before it still hold) shifts the chats
+  // after it, instead of a rebuild of every chat's location on the first lookup.
+  // A chain that would pass the cap is left to a rebuild on its first lookup.
+  const inherited = sessionIndexes.has(projects) ? undefined : sessionIndexOverlays.get(projects)
+  const chained = inherited?.mutations.length ?? 0
+  if (chained + removals.length <= MAX_SESSION_INDEX_OVERLAY_MUTATIONS) {
+    appendSessionIndexMutations(projects, next, removals)
   }
   return next
 }
