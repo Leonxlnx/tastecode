@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
+import { classifyInboxEntries } from '../inbox-order.js'
 import { findSession, updateSession } from '../project-store.js'
 import {
   createInboxEntryClassifier,
@@ -83,6 +84,54 @@ describe('InboxSidebar', () => {
         expect(entry.project).not.toHaveProperty('sessions')
       }
     }
+  })
+
+  it('classifies only the changed project again when a chat is removed and restored', () => {
+    let lifecycleReads = 0
+    const counted = (session: Session): Session => {
+      const { lifecycle, ...rest } = session
+      return Object.defineProperty(rest, 'lifecycle', {
+        enumerable: true,
+        get() {
+          lifecycleReads += 1
+          return lifecycle
+        },
+      }) as Session
+    }
+    const original: Project[] = Array.from({ length: 50 }, (_, projectIndex) => ({
+      path: `/project-${projectIndex}`,
+      name: `Project ${projectIndex}`,
+      sessions: Array.from({ length: 20 }, (_, sessionIndex) =>
+        counted(
+          active(
+            `thread-${projectIndex}-${sessionIndex}`,
+            `Chat ${sessionIndex}`,
+            (sessionIndex * 7919 + projectIndex * 104_729) % 1_000,
+          ),
+        ),
+      ),
+    }))
+    const withoutOne = original.map((project, index) =>
+      index === 17 ? { ...project, sessions: project.sessions.slice(1) } : project,
+    )
+    const shape = (groups: ReturnType<typeof classify>) =>
+      groups.ordered.map(({ project, session }) => `${project.path}:${project.name}:${session.id}`)
+    const classify = createInboxEntryClassifier()
+    classify(original, '', '')
+
+    lifecycleReads = 0
+    const removed = classify(withoutOne, '', '')
+    const removedReads = lifecycleReads
+    lifecycleReads = 0
+    const restored = classify(original, '', '')
+    const restoredReads = lifecycleReads
+
+    expect(removedReads).toBeLessThanOrEqual(19 * 2)
+    expect(restoredReads).toBe(0)
+    lifecycleReads = Number.NEGATIVE_INFINITY
+    expect(shape(removed)).toEqual(shape(classifyInboxEntries(withoutOne, '', '')))
+    expect(shape(restored)).toEqual(shape(classifyInboxEntries(original, '', '')))
+    expect(removed.ordered).toHaveLength(999)
   })
 
   it('range-selects only mounted rows across collapsed and paginated sections', () => {
@@ -457,6 +506,38 @@ describe('InboxSidebar', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('keeps the project filter when only a chat changes', () => {
+    let nameReads = 0
+    const projects: Project[] = Array.from({ length: 300 }, (_, index) => {
+      const project: Project = {
+        path: `/project-${index}`,
+        sessions: [active(`thread-${index}`, `Thread ${index}`, index)],
+      }
+      Object.defineProperty(project, 'name', {
+        enumerable: true,
+        get() {
+          nameReads += 1
+          return `Project ${index}`
+        },
+      })
+      return project
+    })
+    const view = render(<InboxSidebar {...props(projects)} />)
+    const onScopeChange = vi.fn()
+    view.rerender(<InboxSidebar {...props(projects)} onScopeChange={onScopeChange} />)
+    const working = updateSession(projects, 'thread-5', (session) => ({
+      ...session,
+      status: 'working',
+    }))
+    nameReads = 0
+
+    view.rerender(<InboxSidebar {...props(working)} onScopeChange={onScopeChange} />)
+
+    // Only the replaced project's previous object is compared (by the filter
+    // options and by the classifier); the other 299 are not read at all.
+    expect(nameReads).toBeLessThanOrEqual(2)
   })
 
   it('does not rebuild static rows on the one-second working clock', () => {
