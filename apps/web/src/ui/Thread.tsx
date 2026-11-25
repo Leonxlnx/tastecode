@@ -2053,8 +2053,12 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   checkpointIndex: CheckpointIndex<Checkpoint>
   onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
 }) {
-  const firstSubscribedIndex = activityGroup?.firstIndex ?? index
-  const lastSubscribedIndex = activityGroup?.lastIndex ?? index
+  // A stacked tool below the lead always renders a suppressed row. Only the
+  // disclosure needs its siblings' output. Reasoning placeholders can become visible.
+  const sibling = activityGroup && index !== activityGroup.firstIndex ? items[index] : undefined
+  const subscribedGroup = sibling && isStackedActivity(sibling) ? undefined : activityGroup
+  const firstSubscribedIndex = subscribedGroup?.firstIndex ?? index
+  const lastSubscribedIndex = subscribedGroup?.lastIndex ?? index
   const liveItems = useFrameLiveItemRange(frameStore, firstSubscribedIndex, lastSubscribedIndex)
   const item = threadItemAt(items, liveItems, index)
   if (!item) return null
