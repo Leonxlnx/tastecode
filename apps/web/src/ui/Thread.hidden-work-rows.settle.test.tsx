@@ -7,6 +7,12 @@ import { emptyThread, type ThreadState } from '../thread-store.js'
 
 /** One call per transcript render: the real virtual list, counted. */
 const transcriptRenders = vi.hoisted(() => vi.fn())
+/**
+ * Far above what the whole sequence needs (17 renders), far below what a render loop reaches.
+ * A loop chained through microtasks never returns to `settle`, so the list's
+ * render throws past this count instead.
+ */
+const RENDER_BOUND = vi.hoisted(() => 200)
 
 vi.mock('@tanstack/react-virtual', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@tanstack/react-virtual')>()
@@ -14,6 +20,8 @@ vi.mock('@tanstack/react-virtual', async (importOriginal) => {
     ...actual,
     useVirtualizer: ((options: Parameters<typeof actual.useVirtualizer>[0]) => {
       transcriptRenders()
+      if (transcriptRenders.mock.calls.length > RENDER_BOUND)
+        throw new Error(`the transcript rendered more than ${RENDER_BOUND} times`)
       return actual.useVirtualizer(options)
     }) as typeof actual.useVirtualizer,
   }
@@ -36,9 +44,8 @@ const EXPANDED = 400
 /** More than the 256 rows the overscan walks past zero-height rows. */
 const OLD_GROUP = 600
 const LAST_GROUP = 300
-/** Far above what the whole sequence needs, far below what a render loop reaches. */
-const RENDER_BOUND = 1000
-const WRITE_BOUND = 1000
+/** Far above what the whole sequence needs (4 writes), far below what a scroll loop reaches. */
+const WRITE_BOUND = 100
 
 let items: Item[] = []
 let top = 0
@@ -394,5 +401,6 @@ describe('hidden work rows with the real virtual list', () => {
     expect(scrollWrites).toBe(writes)
     expect(frameRequests).toBe(requested)
     expect(frames.size).toBe(0)
-  })
+    // Its own limit, whatever the run passes as the default.
+  }, 20_000)
 })
