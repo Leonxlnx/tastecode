@@ -2063,8 +2063,12 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   checkpointIndex: CheckpointIndex<Checkpoint>
   onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
 }) {
-  const firstSubscribedIndex = activityGroup?.firstIndex ?? index
-  const lastSubscribedIndex = activityGroup?.lastIndex ?? index
+  // A stacked tool below the lead always renders a suppressed row. Only the
+  // disclosure needs its siblings' output. Reasoning placeholders can become visible.
+  const sibling = activityGroup && index !== activityGroup.firstIndex ? items[index] : undefined
+  const subscribedGroup = sibling && isStackedActivity(sibling) ? undefined : activityGroup
+  const firstSubscribedIndex = subscribedGroup?.firstIndex ?? index
+  const lastSubscribedIndex = subscribedGroup?.lastIndex ?? index
   const liveItems = useFrameLiveItemRange(frameStore, firstSubscribedIndex, lastSubscribedIndex)
   const item = threadItemAt(items, liveItems, index)
   if (!item) return null
@@ -2601,7 +2605,7 @@ export function providerNoticeLabel(
 }
 
 /** A call that started a subagent draws as that subagent; anything else as a plain row. */
-function ActivityRow({
+const ActivityRow = memo(function ActivityRow({
   item,
   live,
   batched = false,
@@ -2615,7 +2619,7 @@ function ActivityRow({
   ) : (
     <AuxDisclosure item={item} live={live} batched={batched} />
   )
-}
+})
 
 function loneToolCall(activity: ActivityRenderSource): Item | undefined {
   const items = activityItemsForRender(activity.group, activity.items, activity.liveItems)
