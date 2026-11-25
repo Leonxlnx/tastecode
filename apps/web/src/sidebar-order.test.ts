@@ -521,4 +521,33 @@ describe('sidebar rail cost', () => {
       'loose-298',
     ])
   })
+
+  it('does not regroup the chats without a project, nor scan every chat, when another chat in a project is held', () => {
+    const { list, reads } = counted(50, 100)
+    let dated = 0
+    const folders = Array.from({ length: 300 }, (_, index) => {
+      const folder: Project = { ...project(`/single/${index}`, [`single-${index}`]), chat: true }
+      Object.defineProperty(folder.sessions[0]!, 'createdAt', {
+        enumerable: true,
+        get: () => {
+          dated += 1
+          return index
+        },
+      })
+      return folder
+    })
+    const library = [...list, ...folders]
+    const first = sidebarRail(library, 'p3-1')
+    const idReads = reads()
+    const datedReads = dated
+    const second = sidebarRail(library, 'p40-2')
+    // Only the project that held the chat and the one that holds it now are sorted
+    // again, reading each of their 100 ids twice; the other 48 are not scanned.
+    expect(reads() - idReads).toBeLessThanOrEqual(400)
+    expect(dated - datedReads).toBe(0)
+    expect(second.chatSessions).toBe(first.chatSessions)
+    // A held chat without a project stays with the done chats, and leaves them when another opens.
+    expect(sidebarRail(library, 'single-7').chatSessions[0]!.session.id).toBe('single-7')
+    expect(sidebarRail(library, 'p40-2').chatSessions[0]!.session.id).toBe('single-299')
+  })
 })
