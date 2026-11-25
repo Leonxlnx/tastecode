@@ -3812,6 +3812,14 @@ describe('web client', () => {
     async (platform) => {
       shortcutPlatform.macOS = platform === 'macOS'
       const modifier = shortcutPlatform.macOS ? { metaKey: true } : { ctrlKey: true }
+      // The panel, its browser and files tabs and Settings are lazy chunks. Load them first,
+      // so the one-second waits below do not depend on an earlier test having loaded them.
+      await Promise.all([
+        import('./ui/workspace/WorkspacePanel.js'),
+        import('./ui/workspace/WorkspaceBrowser.js'),
+        import('./ui/workspace/WorkspaceFiles.js'),
+        import('./ui/Settings.js'),
+      ])
       render(<App />)
 
       await screen.findByRole('button', { name: 'Show workspace tools' })
