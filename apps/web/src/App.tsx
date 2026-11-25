@@ -175,6 +175,7 @@ import { ChatDropOverlay } from './ui/ChatDropOverlay.js'
 import { SurfaceErrorBoundary } from './ui/SurfaceErrorBoundary.js'
 import { surfaceLoadFailed } from './surface-load-error.js'
 import { preloadWhenIdle } from './idle-preload.js'
+import { preloadMonospaceFont } from './font-preload.js'
 import { NoticePresence } from './ui/NoticePresence.js'
 import type { ComposerError } from './ui/ComposerErrors.js'
 import { LazyThread } from './ui/LazyThread.js'
@@ -1087,6 +1088,12 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   useEffect(() => {
     if (projectsStatus !== 'ready') return
     return preloadWhenIdle(loadSettings)
+  }, [projectsStatus])
+  // Transcripts set code and tool output in the monospace font; fetched on the
+  // first chat's first layout, it arrived after the rows were measured.
+  useEffect(() => {
+    if (projectsStatus !== 'ready') return
+    return preloadMonospaceFont()
   }, [projectsStatus])
   const [modelVisibility, setModelVisibility] = useState(readModelVisibility)
   // The catalog effect reads and settles the record per source without
