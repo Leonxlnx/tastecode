@@ -422,6 +422,56 @@ describe('Thread live frame isolation', () => {
     vi.restoreAllMocks()
   })
 
+  it('keeps the other tools in an open stack out of a streamed output update', () => {
+    let unchangedTextReads = 0
+    const oldTool: Item = {
+      id: 'old',
+      turnId: 'turn',
+      type: 'tool_call',
+      status: 'completed',
+      createdAt: 1,
+      get text() {
+        unchangedTextReads++
+        return 'Read\n{"path":"old.ts"}\nold output'
+      },
+    }
+    const target: Item = {
+      ...oldTool,
+      id: 'live',
+      status: 'started',
+      text: 'Read\n{"path":"live.ts"}\nnew output',
+    }
+    const items = [{ ...oldTool, id: 'lead' }, oldTool, target]
+    const store = new ThreadFrameStore({
+      ...emptyThread,
+      items,
+      running: true,
+      activeTurn: { id: 'turn', startedAt: 0 },
+    })
+    const view = render(
+      <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
+    )
+    fireEvent.click(view.getByTitle('Reading files'))
+    fireEvent.click(view.container.querySelector<HTMLButtonElement>('.aux--live > button')!)
+    unchangedTextReads = 0
+    const batch = Array.from({ length: 8 }, () => ({
+      type: 'item.delta' as const,
+      turnId: 'turn',
+      itemId: 'live',
+      textDelta: ' x',
+    }))
+    for (let frame = 0; frame < 250; frame++) {
+      act(() => store.publish(reduceDeltas(store.getSnapshot(), batch)))
+    }
+
+    const expected = 'new output' + ' x'.repeat(2_000)
+    expect(store.getSnapshot().liveItems.get(2)?.item.text).toBe(
+      'Read\n{"path":"live.ts"}\n' + expected,
+    )
+    expect(view.container.querySelector('.tool-detail__output')?.textContent).toBe(expected)
+    expect(unchangedTextReads).toBe(0)
+  })
+
   it('resolves live activity rows when the collapsed disclosure opens', () => {
     const items: Item[] = [
       {

@@ -2565,7 +2565,7 @@ export function providerNoticeLabel(
 }
 
 /** A call that started a subagent draws as that subagent; anything else as a plain row. */
-function ActivityRow({
+const ActivityRow = memo(function ActivityRow({
   item,
   live,
   batched = false,
@@ -2579,7 +2579,7 @@ function ActivityRow({
   ) : (
     <AuxDisclosure item={item} live={live} batched={batched} />
   )
-}
+})
 
 function loneToolCall(activity: ActivityRenderSource): Item | undefined {
   const items = activityItemsForRender(activity.group, activity.items, activity.liveItems)
