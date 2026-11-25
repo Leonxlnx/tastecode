@@ -3817,6 +3817,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const savedSetupsShared = useRef(false)
   // Chats this window deleted; a list read before the delete must not bring one back.
   const deletedThreadIds = useRef(new Set<string>())
+  // The same chats for an open chat search: its results can predate the delete, and
+  // once the Undo window commits, the chat leaves the queued ids that hid it there.
+  const [deletedChatIds, setDeletedChatIds] = useState<readonly string[]>([])
+  const searchHiddenThreadIds = useMemo(
+    () => (deletedChatIds.length ? [...archivingIds, ...deletedChatIds] : archivingIds),
+    [archivingIds, deletedChatIds],
+  )
   /** Chat ids the newest projects.list answer listed, and how many lists were asked for. */
   const listedThreadIds = useRef<ReadonlySet<string>>(new Set())
   const projectListRequests = useRef(0)
@@ -6379,6 +6386,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         deletedThreadIds.current.delete(id)
         throw error
       }
+      setDeletedChatIds((current) => (current.includes(id) ? current : [...current, id]))
       const projectPath = clearWorkspaceThread(id)
       threadController.discardSnapshot(id)
       threadController.invalidateHistory(id)
@@ -8860,7 +8868,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         ref={sessionSearch}
         transport={transport}
         projects={archiveProjects}
-        hiddenThreadIds={archivingIds}
+        hiddenThreadIds={searchHiddenThreadIds}
         onSelect={selectSessionSearchResult}
       />
 
