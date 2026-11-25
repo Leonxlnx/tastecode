@@ -3,7 +3,7 @@ import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Item } from '@harness/contracts'
 import { ThreadFrameStore } from '../thread-frame-store.js'
-import { emptyThread, type ThreadState } from '../thread-store.js'
+import { emptyThread, reduceDeltas, type ThreadState } from '../thread-store.js'
 import { Thread } from './Thread.js'
 
 const VIEWPORT = 800
@@ -217,6 +217,141 @@ describe('rows hidden inside a finished work disclosure', () => {
     })
     // Finished, they show nothing and the list takes them as 0: left out.
     expect(row(firstWork + 1)).toBeNull()
+    expect(row(8 + 2)).toBeNull()
+  })
+
+  it('stay mounted and subscribed through a pending and a rejected Stop until the turn finished', async () => {
+    const state = history()
+    // turn-2's tool rows follow the import (8 rows) and turn-1 (242 rows).
+    const firstWork = 8 + 242 + 1
+    const leadId = state.items[firstWork]!.id
+    const items = state.items.map((item, index) =>
+      index === firstWork ? ({ ...item, status: 'started', text: '' } as Item) : item,
+    )
+    const running = {
+      ...state,
+      items,
+      running: true,
+      activeTurn: { id: 'turn-2', startedAt: 1_000 },
+    } as ThreadState
+    const store = new ThreadFrameStore(running)
+    // Every subscription a row takes, how often it heard of a change, and
+    // whether it was given back.
+    type Subscription = { first: number; last: number; notified: number; active: boolean }
+    const subscriptions: Subscription[] = []
+    const track = (
+      first: number,
+      last: number,
+      listener: () => void,
+      subscribe: (listener: () => void) => () => void,
+    ) => {
+      const subscription = { first, last, notified: 0, active: true }
+      subscriptions.push(subscription)
+      const unsubscribe = subscribe(() => {
+        subscription.notified += 1
+        listener()
+      })
+      return () => {
+        subscription.active = false
+        unsubscribe()
+      }
+    }
+    const subscribeItems = store.subscribeItems.bind(store)
+    const subscribeItemRange = store.subscribeItemRange.bind(store)
+    store.subscribeItems = (indices, listener) =>
+      track(indices[0]!, indices.at(-1)!, listener, (heard) => subscribeItems(indices, heard))
+    store.subscribeItemRange = (first, last, listener) =>
+      track(first, last, listener, (heard) => subscribeItemRange(first, last, heard))
+    const thread = (stopping: boolean) => (
+      <Thread
+        frameStore={store}
+        stopping={stopping}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />
+    )
+    const view = render(thread(false))
+    const settle = () =>
+      act(async () => {
+        await Promise.resolve()
+      })
+    await settle()
+    const row = (index: number) =>
+      view.container.querySelector<HTMLElement>(`.thread__row[data-index="${index}"]`)
+    const hidden = row(firstWork + 1)
+    expect(hidden?.classList.contains('is-suppressed')).toBe(true)
+    // The reader opened the running work disclosure.
+    await act(async () => {
+      row(firstWork)!.querySelector<HTMLButtonElement>('button')!.click()
+      await Promise.resolve()
+    })
+    const groupSubscriptions = () =>
+      subscriptions.filter(({ first, last }) => first <= firstWork + 1 && last >= firstWork + 1)
+    const subscribed = groupSubscriptions()
+    expect(subscribed.length).toBeGreaterThan(1)
+    expect(subscribed.every(({ active }) => active)).toBe(true)
+    const lead = row(firstWork)
+    expect(lead?.querySelector('.activity__summary')?.getAttribute('aria-expanded')).toBe('true')
+    const unchanged = () => {
+      expect(row(firstWork)).toBe(lead)
+      expect(lead?.querySelector('.activity__summary')?.getAttribute('aria-expanded')).toBe('true')
+      expect(row(firstWork + 1)).toBe(hidden)
+      expect(groupSubscriptions()).toHaveLength(subscribed.length)
+      expect(
+        groupSubscriptions().every((subscription, at) => subscription === subscribed[at]),
+      ).toBe(true)
+      expect(subscribed.every(({ active }) => active)).toBe(true)
+    }
+
+    // Stop clicked: the interrupt is pending, the turn still runs.
+    view.rerender(thread(true))
+    await settle()
+    unchanged()
+    // The interrupt was rejected.
+    view.rerender(thread(false))
+    await settle()
+    unchanged()
+    // The turn goes on: another delta reaches the lead through the group's subscription.
+    const live = reduceDeltas(running, [
+      { type: 'item.delta', turnId: 'turn-2', itemId: leadId, textDelta: 'streamed output' },
+    ])
+    await act(async () => {
+      store.publish(live)
+      await Promise.resolve()
+    })
+    unchanged()
+    expect(subscribed.every(({ notified }) => notified === 1)).toBe(true)
+
+    // Finished: the hidden row goes and gives its subscription back.
+    await act(async () => {
+      store.publish({
+        ...state,
+        items: state.items.map((item, index) =>
+          index === firstWork ? ({ ...item, text: 'streamed output' } as Item) : item,
+        ),
+      })
+      await Promise.resolve()
+    })
+    expect(row(firstWork + 1)).toBeNull()
+    expect(hidden?.isConnected).toBe(false)
+    expect(subscribed.filter(({ active }) => active).length).toBeLessThan(subscribed.length)
+  })
+
+  it('mount in an unfinished turn that is not running', async () => {
+    const state = history()
+    // A partial imported history: turn-2 ends in two started tools, no answer.
+    const firstWork = 8 + 242 + 1
+    const items = state.items
+      .slice(0, firstWork + 2)
+      .map((item, index) => (index >= firstWork ? ({ ...item, status: 'started' } as Item) : item))
+    const { view } = open({ ...state, items } as ThreadState)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const row = (index: number) =>
+      view.container.querySelector<HTMLElement>(`.thread__row[data-index="${index}"]`)
+    expect(row(firstWork + 1)?.classList.contains('is-suppressed')).toBe(true)
+    // turn-1 is complete: its hidden rows stay out.
     expect(row(8 + 2)).toBeNull()
   })
 })

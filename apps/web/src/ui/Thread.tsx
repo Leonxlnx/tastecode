@@ -1484,7 +1484,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
                     row.index,
                     presentation,
                     activityGroup,
-                    running && thread.activeTurn?.id === item.turnId,
                     virtualizer.measurementsCache[row.index]?.size,
                   )
                 )
@@ -2224,19 +2223,19 @@ function isCompactedActivity(
  * mounted thousands of them on open (10,532 of 10,543 rows in one), and laying
  * them out and measuring them took seconds. One the list already takes as 0
  * is left out; a row it still holds at another height (one that was on screen
- * before its turn compacted) still mounts once to measure 0. A running turn's
- * rows mount as before.
+ * before its turn compacted) still mounts once to measure 0. Only a complete
+ * turn qualifies: a running turn's rows mount as before, also while a Stop is
+ * pending or after one was rejected, and so do an unfinished older turn's.
  */
 export function isHiddenWorkRow(
   item: Item,
   index: number,
   presentation: TurnPresentation | undefined,
   activityGroup: TurnActivityGroup | undefined,
-  live: boolean,
   listedSize: number | undefined,
 ): boolean {
   return (
-    !live &&
+    presentation?.complete === true &&
     listedSize === 0 &&
     activityGroup !== undefined &&
     activityGroup.firstIndex !== index &&
