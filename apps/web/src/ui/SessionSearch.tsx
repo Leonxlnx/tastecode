@@ -103,6 +103,24 @@ function SessionSearchComponent(props: {
   const indexTitles = useMemo(createSessionTitleIndexer, [])
   const titleIndex = useMemo(() => indexTitles(props.projects), [indexTitles, props.projects])
 
+  const projectFilter = useMemo(
+    () => (
+      <AppSelect
+        ariaLabel="Project"
+        value={projectPath}
+        onChange={setProjectPath}
+        options={[
+          { value: '', label: 'All projects' },
+          ...props.projects.map((project) => ({
+            value: project.path,
+            label: project.name ?? basename(project.path),
+          })),
+        ]}
+      />
+    ),
+    [projectPath, props.projects],
+  )
+
   const availableProviders = useMemo(() => {
     const present = new Set(titleIndex.map((entry) => entry.provider))
     return PROVIDERS.filter((id) => present.has(id)).map((id) => ({
@@ -340,18 +358,7 @@ function SessionSearchComponent(props: {
         <div className="session-search__filters">
           <label>
             <span>Project</span>
-            <AppSelect
-              ariaLabel="Project"
-              value={projectPath}
-              onChange={setProjectPath}
-              options={[
-                { value: '', label: 'All projects' },
-                ...props.projects.map((project) => ({
-                  value: project.path,
-                  label: project.name ?? basename(project.path),
-                })),
-              ]}
-            />
+            {projectFilter}
           </label>
           <label>
             <span>Agent</span>
