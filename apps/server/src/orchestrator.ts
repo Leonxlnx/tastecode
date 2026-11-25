@@ -207,7 +207,12 @@ export type SimulatorAgentBridge = {
 }
 
 type HistoryEntry = { seq: number; event: DomainEvent }
-type HistoryRead = { events: HistoryEntry[]; serializedEvents?: string | undefined }
+type HistoryRead = {
+  events: HistoryEntry[]
+  serializedEvents?: string | undefined
+  /** `serializedEvents` is what this process just encoded from `events`, not a saved row's text. */
+  encodedFromEvents?: boolean | undefined
+}
 
 /** The same entry objects in the same order, so their JSON is the same too. */
 function sameEntries(page: readonly HistoryEntry[], replay: readonly HistoryEntry[]): boolean {
@@ -3687,7 +3692,7 @@ export class Orchestrator {
       const page = await this.#readNewestHistoryPage(threadId, request.turnLimit)
       if (page) return page
     }
-    const { events, serializedEvents } = await this.#readHistory(threadId, 0)
+    const { events, serializedEvents, encodedFromEvents } = await this.#readHistory(threadId, 0)
     const page = readHistoryPage(threadId, events, {
       before,
       turnLimit: request.turnLimit,
@@ -3697,9 +3702,13 @@ export class Orchestrator {
         cursor.seq > snapshotSeq || this.#store.providerHistoryChangedAfter(threadId, cursor.seq),
     })
     // A chat with few turns fits its newest page whole. The replay's JSON, just
-    // encoded for saving or read from the saved row, is then the page's JSON:
-    // encoding megabytes again held the reply back by tens of milliseconds.
-    return serializedEvents !== undefined && sameEntries(page.events, events)
+    // encoded for saving, is then the page's JSON: encoding megabytes again held
+    // the reply back by tens of milliseconds. A saved row's text is not: reading
+    // it drops fields an older build wrote and can reorder keys, so the page is
+    // encoded from the entries that read produced.
+    return encodedFromEvents === true &&
+      serializedEvents !== undefined &&
+      sameEntries(page.events, events)
       ? { ...page, serializedEvents }
       : page
   }
@@ -3745,7 +3754,7 @@ export class Orchestrator {
       const serializedEvents = this.#store.saveReplaySnapshot(threadId, seq, compacted, {
         readToEnd: true,
       })
-      return { events: compacted, serializedEvents }
+      return { events: compacted, serializedEvents, encodedFromEvents: true }
     }
     return { events: this.#store.history(threadId, afterSeq) }
   }

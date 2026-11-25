@@ -23,10 +23,11 @@ import {
   onTestFinished,
   vi,
 } from 'vitest'
+import { z } from 'zod'
 import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
-import { ProviderIdSchema } from '@harness/contracts'
+import { DomainEventSchema, ProviderIdSchema } from '@harness/contracts'
 import type {
   Account,
   ApprovalMode,
@@ -3264,32 +3265,130 @@ describe('history replay', () => {
         await orchestrator.disposeAll()
       })
 
-      it('answers after a restart with the saved replay row, identical to encoding the page', async () => {
+      /** What a reply holds as its events: the page's JSON if it has one, else the page encoded. */
+      const wireEvents = (page: { events: unknown; serializedEvents?: string | undefined }) =>
+        page.serializedEvents ?? JSON.stringify(page.events)
+      /** The saved row as the store validates it, encoded: what dev sends after a restart. */
+      const validated = (payload: string) =>
+        JSON.stringify(
+          z
+            .array(z.object({ seq: z.number(), event: DomainEventSchema }))
+            .parse(JSON.parse(payload)),
+        )
+
+      /**
+       * Opens the whole newest page, closes the file-backed store, lets `edit`
+       * change the saved replay row, restarts and opens the page twice.
+       */
+      async function wholePageAfterRestart(
+        append: (store: Store, threadId: string) => void,
+        edit: (payload: string) => string = (payload) => payload,
+      ) {
         const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-whole-page-'))
         const database = path.join(directory, 'state.db')
         try {
           const first = new Store(database)
           const opened = harness(undefined, first)
           const thread = await opened.orchestrator.startThread('codex', '/repo')
-          appendMixedHistory(first, thread.id)
+          append(first, thread.id)
           const before = await opened.orchestrator.historyPage(thread.id, { turnLimit: 10 })
           await opened.orchestrator.disposeAll()
           first.close()
+
+          const raw = new DatabaseSync(database)
+          const row = raw
+            .prepare(`SELECT payload FROM thread_replay_snapshots WHERE thread_id = ?`)
+            .get(thread.id) as { payload: string }
+          const saved = edit(row.payload)
+          raw
+            .prepare(`UPDATE thread_replay_snapshots SET payload = ? WHERE thread_id = ?`)
+            .run(saved, thread.id)
+          raw.close()
 
           const store = new Store(database)
           const { orchestrator } = harness(undefined, store)
           const history = vi.spyOn(store, 'history')
           const page = await orchestrator.historyPage(thread.id, { turnLimit: 10 })
+          const again = await orchestrator.historyPage(thread.id, { turnLimit: 10 })
           // Served from the saved replay, not rebuilt from the log.
           expect(history).not.toHaveBeenCalled()
-          expect(page.events).toEqual(before.events)
-          expect(page.page).toEqual(before.page)
-          expect(page.serializedEvents).toBe(JSON.stringify(page.events))
           await orchestrator.disposeAll()
           store.close()
+          return { before, saved, page, again }
         } finally {
           rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
         }
+      }
+
+      it('answers after a restart with the saved replay encoded as validated, not its text', async () => {
+        const { before, saved, page, again } = await wholePageAfterRestart(appendMixedHistory)
+        // The first open in a run reuses the JSON it just encoded.
+        expect(before.serializedEvents).toBe(JSON.stringify(before.events))
+        expect(page.events).toEqual(before.events)
+        expect(page.page).toEqual(before.page)
+        expect(page.serializedEvents).toBeUndefined()
+        expect(wireEvents(page)).toBe(validated(saved))
+        expect(wireEvents(again)).toBe(validated(saved))
+      })
+
+      it('leaves out a field an older build saved, and keeps the saved order out of the reply', async () => {
+        const { before, saved, page, again } = await wholePageAfterRestart(
+          appendMixedHistory,
+          (payload) => {
+            const entries = JSON.parse(payload) as {
+              seq: number
+              event: { item?: Record<string, unknown> }
+            }[]
+            const tool = entries.find(({ event }) => event.item?.['id'] === 'import:tool')!
+            tool.event.item!['legacyMarker'] = 'x'.repeat(64)
+            // Another entry with its keys in another order.
+            const last = entries.length - 1
+            entries[last] = { event: entries[last]!.event, seq: entries[last]!.seq }
+            return JSON.stringify(entries)
+          },
+        )
+        expect(saved).toContain('legacyMarker')
+        expect(validated(saved)).not.toBe(saved)
+        expect(page.events).toEqual(before.events)
+        expect(wireEvents(page)).toBe(validated(saved))
+        expect(wireEvents(page)).not.toContain('legacyMarker')
+        expect(wireEvents(again)).toBe(wireEvents(page))
+      })
+
+      it('encodes a restarted command that began without text in the order the contract reads it', async () => {
+        const { before, saved, page, again } = await wholePageAfterRestart((store, threadId) => {
+          const command = {
+            id: 'command',
+            turnId: 'stopped',
+            type: 'command' as const,
+            status: 'started' as const,
+            command: 'pnpm test',
+            createdAt: 2,
+          }
+          store.append(threadId, {
+            type: 'turn.started',
+            turn: { id: 'stopped', threadId, status: 'running', createdAt: 2 },
+          })
+          store.append(threadId, { type: 'item.started', item: command })
+          store.append(threadId, {
+            type: 'item.delta',
+            turnId: 'stopped',
+            itemId: 'command',
+            textDelta: 'RUN v4\n',
+          })
+          store.append(threadId, {
+            type: 'turn.completed',
+            turnId: 'stopped',
+            status: 'interrupted',
+          })
+        })
+        expect(before.serializedEvents).toBe(JSON.stringify(before.events))
+        // The replay was saved with the text after createdAt; read back, text comes first.
+        expect(saved).toBe(before.serializedEvents)
+        expect(validated(saved)).not.toBe(saved)
+        expect(page.events).toEqual(before.events)
+        expect(wireEvents(page)).toBe(validated(saved))
+        expect(wireEvents(again)).toBe(validated(saved))
       })
 
       it('encodes a page that leaves older turns out as before', async () => {
