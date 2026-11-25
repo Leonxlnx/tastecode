@@ -55,6 +55,34 @@ describe('cross-session search', () => {
     vi.restoreAllMocks()
   })
 
+  it('keeps the project choices while typing and refreshes them when the library changes', () => {
+    const readName = vi.fn((index: number) => `Project ${index}`)
+    const projects = Array.from({ length: 32 }, (_, index) => ({
+      path: `/project-${index}`,
+      get name() {
+        return readName(index)
+      },
+      sessions: PROJECTS[0]!.sessions,
+    }))
+    const props = { transport: new TestTransport(), onSelect: vi.fn(), onClose: vi.fn() }
+    const view = render(<SessionSearch {...props} projects={projects} />)
+    const input = screen.getByRole('combobox', { name: 'Search every chat' })
+
+    readName.mockClear()
+    fireEvent.change(input, { target: { value: 'r' } })
+    fireEvent.change(input, { target: { value: 're' } })
+    expect(readName).toHaveBeenCalledTimes(0)
+
+    view.rerender(
+      <SessionSearch
+        {...props}
+        projects={[...projects, { path: '/new', name: 'New project', sessions: [] }]}
+      />,
+    )
+    fireEvent.click(screen.getByRole('combobox', { name: 'Project' }))
+    expect(screen.getByRole('option', { name: 'New project' })).toBeTruthy()
+  })
+
   it('contains forward and reverse Tab navigation inside the modal', () => {
     render(
       <SessionSearch
