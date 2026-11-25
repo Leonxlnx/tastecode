@@ -124,9 +124,10 @@ function plainTurn(index: number, extra: DomainEvent[] = []): DomainEvent[] {
  * A long, untidy session: prompts recorded before their turn starts,
  * overlapping turns, delta-first items, items completed turns later, repeated
  * usage, diff and plan reports, approvals and questions left open or asked
- * again, reviews and thread errors. By default, rows go through both write paths.
+ * again, reviews and thread errors. By default, rows go through both write paths;
+ * `oneTransaction` writes the whole session as a single batch instead.
  */
-function writeSession(store: Store, seed: number, batchOnly = false): void {
+function writeSession(store: Store, seed: number, oneTransaction = false): void {
   const next = mulberry32(seed)
   const chance = (probability: number) => next() < probability
   const count = (max: number) => Math.floor(next() * (max + 1))
@@ -137,9 +138,9 @@ function writeSession(store: Store, seed: number, batchOnly = false): void {
   }
   const write = (event: DomainEvent) => {
     // Consume the same random value so batching keeps the generated events identical.
-    if (chance(0.5) || batchOnly) {
+    if (chance(0.5) || oneTransaction) {
       batch.push({ threadId: THREAD, event })
-      if (batch.length >= 16) flush()
+      if (batch.length >= 16 && !oneTransaction) flush()
     } else {
       flush()
       store.append(THREAD, event)
@@ -409,7 +410,10 @@ describe('the indexed newest history page', () => {
   it('stays exact across unreadable rows, restores and retired provider rows', () => {
     const location = fileLocation()
     const store = newStore(location)
-    // Batch the file-backed fixture to avoid hundreds of individual SQLite commits.
+    // One transaction per fixture step on the file database. Every commit here rewrites
+    // about 25 index pages in the WAL, and the hosted Windows runner turned 123 batches of
+    // 16 rows into a 29 s run (CI 45575513422) for a test that takes 0.5 s locally. The
+    // rows, their order and every case below are the same as with small batches.
     writeSession(store, 7, true)
     const raw = new DatabaseSync(location)
     const insert = raw.prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, 0, ?)`)
@@ -447,11 +451,11 @@ describe('the indexed newest history page', () => {
     expect(
       store.mergeProviderHistory(THREAD, 'two', [provider('a', started('provider-1', savedAt))]),
     ).toBe(true)
-    for (let index = 100; index < 130; index += 1) {
-      store.appendBatchWithSerializedEvents(
-        plainTurn(index).map((event) => ({ threadId: THREAD, event })),
-      )
-    }
+    store.appendBatchWithSerializedEvents(
+      Array.from({ length: 30 }, (_, index) => plainTurn(100 + index))
+        .flat()
+        .map((event) => ({ threadId: THREAD, event })),
+    )
     check()
     expect(readIndexedNewestHistoryPage(store, THREAD, 3, 4)).toBeDefined()
     store.close()
