@@ -291,12 +291,23 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-24 dev f8a0b97a · nightly 8a60342f · main dd8f4264</span>
+        <span class="meta">2026-11-25 dev dd0aef48 · nightly 8a60342f · main dd8f4264</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 25 on dev (dd0aef48, not on nightly or main): performance with large libraries
+          and long turns. While a tool's output streams, the other rows of its work group no longer
+          render or get notified per delta (#2510, #2511). Hidden rows of finished work sections are
+          not mounted: the owner's largest chat mounts 512 rows instead of 1,854 on open (#2515).
+          The sidebar no longer redraws every pinned chat and every chat without a project on each
+          change or clock tick, lists and regroups them only when they change, keeps unaffected
+          projects untouched while a deletion waits for Undo, and finds the held chat's project
+          without scanning every chat (#2513, #2514, #2516, #2517). Chat search keeps its project
+          filter across keystrokes (#2512).
+        </p>
         <p>
           November 24 on dev (f8a0b97a, not on nightly or main): performance and fixes, measured in
           packaged builds with 55 imported real chats. Switching back to a chat is several times
