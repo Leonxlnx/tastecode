@@ -111,27 +111,27 @@ function inheritSessionIndex(source: Project[], target: Project[]): void {
 }
 
 /** Flatten immutable reorder history, then periodically reset it to one exact map. */
-function appendSessionIndexMutation(
+function appendSessionIndexMutations(
   source: Project[],
   target: Project[],
-  mutation: SessionIndexMutation,
+  mutations: readonly SessionIndexMutation[],
 ): void {
   const inherited = sessionIndexOverlays.get(source)
   if (
     inherited &&
     !sessionIndexes.has(source) &&
-    inherited.mutations.length >= MAX_SESSION_INDEX_OVERLAY_MUTATIONS
+    inherited.mutations.length + mutations.length > MAX_SESSION_INDEX_OVERLAY_MUTATIONS
   ) {
     locationsFor(target)
     return
   }
   if (!inherited || sessionIndexes.has(source)) {
-    sessionIndexOverlays.set(target, { source, mutations: [mutation] })
+    sessionIndexOverlays.set(target, { source, mutations: [...mutations] })
     return
   }
   sessionIndexOverlays.set(target, {
     source: inherited.source,
-    mutations: [...inherited.mutations, mutation],
+    mutations: [...inherited.mutations, ...mutations],
   })
 }
 
@@ -288,12 +288,14 @@ export function promoteSession(projects: Project[], threadId: string): Project[]
   sessions.unshift(session)
   const next = [...projects]
   next[location.projectIndex] = { ...project, sessions }
-  appendSessionIndexMutation(projects, next, {
-    kind: 'promote',
-    threadId,
-    projectIndex: location.projectIndex,
-    sessionIndex: location.sessionIndex,
-  })
+  appendSessionIndexMutations(projects, next, [
+    {
+      kind: 'promote',
+      threadId,
+      projectIndex: location.projectIndex,
+      sessionIndex: location.sessionIndex,
+    },
+  ])
   return next
 }
 
@@ -305,12 +307,14 @@ export function removeSession(projects: Project[], threadId: string): Project[] 
   sessions.splice(location.sessionIndex, 1)
   const next = [...projects]
   next[location.projectIndex] = { ...project, sessions }
-  appendSessionIndexMutation(projects, next, {
-    kind: 'remove',
-    threadId,
-    projectIndex: location.projectIndex,
-    sessionIndex: location.sessionIndex,
-  })
+  appendSessionIndexMutations(projects, next, [
+    {
+      kind: 'remove',
+      threadId,
+      projectIndex: location.projectIndex,
+      sessionIndex: location.sessionIndex,
+    },
+  ])
   return next
 }
 
