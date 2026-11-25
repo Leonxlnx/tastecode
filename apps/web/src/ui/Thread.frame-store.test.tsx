@@ -206,6 +206,60 @@ describe('Thread live frame isolation', () => {
     expect(view.getByText('1/1')).toBeTruthy()
   })
 
+  it('wakes only the work summary and the changed tool when a group streams', () => {
+    const items: Item[] = Array.from({ length: 48 }, (_, index) => ({
+      id: `call-${index}`,
+      turnId: 'turn',
+      type: 'tool_call',
+      status: index === 47 ? 'started' : 'completed',
+      text: 'Read\n{"path":"src/check.ts"}\nResult',
+      createdAt: index,
+    }))
+    const target = items.at(-1)!
+    const store = new ThreadFrameStore({
+      ...emptyThread,
+      items,
+      running: true,
+      activeTurn: { id: 'turn', startedAt: 0 },
+    })
+    let calls = 0
+    const subscribeRange = store.subscribeItemRange.bind(store)
+    vi.spyOn(store, 'subscribeItemRange').mockImplementation((first, last, listener) =>
+      subscribeRange(first, last, () => {
+        calls++
+        listener()
+      }),
+    )
+    const subscribeItems = store.subscribeItems.bind(store)
+    vi.spyOn(store, 'subscribeItems').mockImplementation((indices, listener) =>
+      subscribeItems(indices, () => {
+        calls++
+        listener()
+      }),
+    )
+    const view = render(
+      <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
+    )
+    const batch = Array.from({ length: 8 }, () => ({
+      type: 'item.delta' as const,
+      turnId: 'turn',
+      itemId: target.id,
+      textDelta: ' x',
+    }))
+    for (let frame = 0; frame < 250; frame++) {
+      act(() => store.publish(reduceDeltas(store.getSnapshot(), batch)))
+    }
+
+    const expected = 'Result' + ' x'.repeat(2_000)
+    expect(store.getSnapshot().liveItems.get(47)?.item.text).toBe(
+      'Read\n{"path":"src/check.ts"}\n' + expected,
+    )
+    fireEvent.click(view.getByTitle('Reading files'))
+    fireEvent.click(view.container.querySelector<HTMLButtonElement>('.aux--live > button')!)
+    expect(view.container.querySelector('.tool-detail__output')?.textContent).toBe(expected)
+    expect(calls).toBeLessThanOrEqual(2 * 250)
+  })
+
   it('updates the streamed row without rerendering the thread owner', () => {
     const item: Item = {
       id: 'answer-1',
