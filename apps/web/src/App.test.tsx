@@ -3922,7 +3922,9 @@ describe('web client', () => {
     const close = await screen.findByRole('button', { name: 'Hide workspace tools' })
     expect(close).toBe(launcher)
     expect(close.closest('.panel-toggles')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
+    // The panel is a lazy chunk with a module-level cache: it renders at once only when an
+    // earlier test already loaded it, so wait for its first render here.
+    fireEvent.click(await screen.findByRole('button', { name: 'Terminal' }))
     const terminalTab = await screen.findByTestId('terminal-pane')
     expect(screen.queryByRole('button', { name: 'Expand workspace tools' })).toBeNull()
     expect(close.closest('.stage')).toBeNull()
