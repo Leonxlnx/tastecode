@@ -220,9 +220,10 @@ describe('Thread virtual rows', () => {
   })
 
   it('follows rows that one observer callback measured once, after the callback', async () => {
-    // A finished chat open at its end, nearly three viewports long. Rows measure what the
-    // list estimates, so the end is right before the rows above it ever mount.
-    heights = Array.from({ length: 30 }, () => 72)
+    // A finished chat open at its end, nearly three viewports long. Every row is 100px, not
+    // the list's 72px estimate: the rows that mount at the end must correct the estimate
+    // before the chat settles there, while rows above that never mount keep it.
+    heights = Array.from({ length: 30 }, () => 100)
     const items = heights.map((_, index) =>
       item(`row-${index}`, {
         // Each prompt starts its own turn, as in a real chat.
@@ -235,6 +236,17 @@ describe('Thread virtual rows', () => {
     let top = 0
     let writes = 0
     let heightReads = 0
+    // The rows whose physical height the list read.
+    const measuredRows = new Set<number>()
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.classList.contains('thread')) return VIEWPORT
+      const index = this.getAttribute('data-index')
+      if (index === null) return 0
+      measuredRows.add(Number(index))
+      return heights[Number(index)] ?? 0
+    })
     vi.spyOn(Element.prototype, 'scrollTop', 'get').mockImplementation(() => top)
     vi.spyOn(Element.prototype, 'scrollTop', 'set').mockImplementation((next: number) => {
       writes += 1
@@ -259,7 +271,18 @@ describe('Thread virtual rows', () => {
     fireEvent.scroll(scroller)
     await act(async () => undefined)
     const end = top
-    expect(end).toBe(total() - VIEWPORT)
+    // The real end: measured rows at their height, the others at the estimate.
+    const runway = view.container.querySelector<HTMLElement>('.thread__runway')!
+    const laidOut = heights.reduce(
+      (sum, height, index) => sum + (measuredRows.has(index) ? height : 72),
+      0,
+    )
+    expect(measuredRows.has(29)).toBe(true)
+    expect(laidOut).toBeGreaterThan(30 * 72)
+    expect(runway.style.height).toBe(`${laidOut}px`)
+    expect(end).toBe(laidOut - VIEWPORT)
+    const last = view.container.querySelector<HTMLElement>('.thread__row[data-index="29"]')!
+    expect(last.style.transform).toBe(`translate3d(0, ${laidOut - heights[29]!}px, 0)`)
 
     // The last three rows grew, reported together.
     const rows = [27, 28, 29].map((index) =>
@@ -287,6 +310,8 @@ describe('Thread virtual rows', () => {
     expect(top).toBe(end + 60)
     expect(writes).toBe(1)
     expect(heightReads).toBe(1)
+    expect(runway.style.height).toBe(`${laidOut + 60}px`)
+    expect(last.style.transform).toBe(`translate3d(0, ${laidOut + 60 - heights[29]!}px, 0)`)
   })
 
   it('moves the rows and the working rail below a row that grew, without a render', () => {
