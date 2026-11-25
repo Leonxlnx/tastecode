@@ -324,10 +324,14 @@ describe('the indexed newest history page', () => {
     expect(readIndexedNewestHistoryPage(store, THREAD, 2, 8)).toEqual(expectedPage(store, 2))
     store.close()
 
-    // An older build appends without indexing; the next start notices.
+    // An older build appends without indexing; the next start notices. One transaction: this
+    // raw connection syncs every commit to disk, and the hosted Windows runner ran this test
+    // for 14 s of its 20 s limit. The rows are the same as with one commit per event.
     const raw = new DatabaseSync(location)
     const insert = raw.prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, 0, ?)`)
+    raw.exec('BEGIN')
     for (const event of plainTurn(30)) insert.run(THREAD, JSON.stringify(event))
+    raw.exec('COMMIT')
     raw.close()
     store = new Store(location)
     expect(store.historyIndexed(THREAD)).toBe(false)
