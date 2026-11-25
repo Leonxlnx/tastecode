@@ -109,6 +109,7 @@ import {
   updateSession,
   updateSessions,
   withoutDeletedSessions,
+  withoutHiddenSessions,
   withStoppingSessions,
 } from './project-store.js'
 import {
@@ -1310,14 +1311,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     },
     [cancelQueuedArchive],
   )
-  const archiveProjects = useMemo(() => {
-    if (archivingIds.length === 0) return projects
-    const hidden = new Set(archivingIds)
-    return projects.map((project) => ({
-      ...project,
-      sessions: project.sessions.filter((session) => !hidden.has(session.id)),
-    }))
-  }, [projects, archivingIds])
+  const archiveProjects = useMemo(
+    () => withoutHiddenSessions(projects, archivingIds),
+    [projects, archivingIds],
+  )
   const sidebarProjects = useMemo(
     () => withStoppingSessions(archiveProjects, stoppingRows),
     [archiveProjects, stoppingRows],

@@ -9472,6 +9472,62 @@ describe('new chats', () => {
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
   })
 
+  it('keeps a deleted chat hidden through another chat changing, then restores or deletes it', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 1_000
+        return nativeTimeout(...args)
+      },
+    )
+    serverProjects.push(
+      serverProject('/work/another-project', 'Another Project', [
+        { id: 'other-thread', title: 'Other chat' },
+      ]),
+    )
+    const otherWorking = () =>
+      screen.queryAllByRole('button', { name: /^Other chat,.*working/ }).length > 0
+    const shownProject = (path: string) =>
+      sidebarProps().projects.find((project) => project.path === path)!
+
+    await openNewSession()
+    fireEvent.click(screen.getByTitle('/work/another-project'))
+    await waitFor(() => treeChatRow('Other chat'))
+    await chooseChatMenuItem('New session', 'Delete chat')
+    expect(await screen.findByText('Chat deleted')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: chatRowName('New session') })).toBeNull()
+    expect(treeChatRow('Other chat')).toBeTruthy()
+    expect(otherWorking()).toBe(false)
+    const deletedFrom = shownProject('/work/project')
+    expect(deletedFrom.sessions.map(({ id }) => id)).not.toContain('untouched-thread')
+
+    // Another chat starts working while the delete waits for Undo.
+    act(() => startTurn('other-thread', 'other-turn'))
+    await waitFor(() => expect(otherWorking()).toBe(true))
+    expect(screen.queryByRole('button', { name: chatRowName('New session') })).toBeNull()
+    expect(screen.getByText('Chat deleted')).toBeTruthy()
+    // The project holding the deleted chat is left as it was shown.
+    expect(shownProject('/work/project')).toBe(deletedFrom)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
+    expect(otherWorking()).toBe(true)
+    expect(shownProject('/work/project').sessions.map(({ id }) => id)).toContain('untouched-thread')
+
+    // Deleted again and left alone, it goes when the Undo window ends.
+    await chooseChatMenuItem('New session', 'Delete chat')
+    await screen.findByText('Chat deleted')
+    expect(screen.queryByRole('button', { name: chatRowName('New session') })).toBeNull()
+    await act(async () => new Promise((resolve) => nativeTimeout(resolve, 1_050)))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+        threadId: 'untouched-thread',
+      }),
+    )
+    expect(screen.queryByRole('button', { name: chatRowName('New session') })).toBeNull()
+    expect(otherWorking()).toBe(true)
+  })
+
   it('saves a queued delete for the next start until Undo', async () => {
     await openNewSession()
     await chooseChatMenuItem('New session', 'Delete chat')

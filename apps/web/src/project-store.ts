@@ -334,6 +334,49 @@ export function withoutDeletedSessions(
   return changed ? projects : snapshot
 }
 
+/** A project as last shown without some of its chats, kept while the same chats stay hidden. */
+const hiddenSessionProjects = new WeakMap<Project, { ids: readonly string[]; project: Project }>()
+
+/**
+ * The sidebar without the chats that wait for Undo. Each hidden chat is found
+ * through the session index rather than a scan of every chat, and only the
+ * project holding it is copied, once for as long as the same chats of it stay
+ * hidden. A status change elsewhere during the Undo window then keeps every
+ * project as it was, and the rail's per-project caches and rows with it.
+ */
+export function withoutHiddenSessions(
+  projects: Project[],
+  hiddenIds: readonly string[],
+): Project[] {
+  if (hiddenIds.length === 0) return projects
+  const hiddenByProject = new Map<number, string[]>()
+  for (const id of hiddenIds) {
+    const location = locationFor(projects, id)
+    if (!location) continue
+    const ids = hiddenByProject.get(location.projectIndex)
+    if (!ids) hiddenByProject.set(location.projectIndex, [id])
+    else if (!ids.includes(id)) ids.push(id)
+  }
+  if (hiddenByProject.size === 0) return projects
+  const next = [...projects]
+  for (const [projectIndex, ids] of hiddenByProject) {
+    const source = projects[projectIndex]!
+    const cached = hiddenSessionProjects.get(source)
+    if (cached && cached.ids.length === ids.length && ids.every((id) => cached.ids.includes(id))) {
+      next[projectIndex] = cached.project
+      continue
+    }
+    const hidden = new Set(ids)
+    const project = {
+      ...source,
+      sessions: source.sessions.filter((session) => !hidden.has(session.id)),
+    }
+    hiddenSessionProjects.set(source, { ids, project })
+    next[projectIndex] = project
+  }
+  return next
+}
+
 /**
  * The sidebar while Stops are on their way: a chat the user stopped, mapped to when, shows
  * as idle since then instead of running. The chat itself stops showing work at the click,
