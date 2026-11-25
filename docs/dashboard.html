@@ -291,14 +291,14 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-25 dev c2cdd2f6 · nightly 8a60342f · main dd8f4264</span>
+        <span class="meta">2026-11-25 dev ecce9e04 · nightly 8a60342f · main dd8f4264</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <p>
-          November 25 on dev (c2cdd2f6, not on nightly or main): performance with large libraries
+          November 25 on dev (ecce9e04, not on nightly or main): performance with large libraries
           and long turns. While a tool's output streams, the other rows of its work group no longer
           render or get notified per delta (#2510, #2511). Hidden rows of finished work sections are
           not mounted: the owner's largest chat mounts 512 rows instead of 1,854 on open (#2515).
@@ -307,9 +307,10 @@
           projects untouched while a deletion waits for Undo, and finds the held chat's project
           without scanning every chat (#2513, #2514, #2516, #2517). Chat search keeps its project
           filter across keystrokes (#2512) and searches only the previous matches when a query grows
-          (#2523). The Inbox sidebar classifies only the project whose chats changed (#2522). A chat
-          deleted while chat search is open no longer comes back in its results (#2521). Two
-          unreliable tests were repaired (#2519, #2520).
+          (#2523). The Inbox sidebar classifies only the project whose chats changed (#2522) and
+          looks chats up during the Undo window without rebuilding its index (#2526). A chat deleted
+          while chat search is open no longer comes back in its results (#2521). Four unreliable
+          tests were repaired (#2519, #2520, #2525, #2527).
         </p>
         <p>
           November 24 on dev (f8a0b97a, not on nightly or main): performance and fixes, measured in
