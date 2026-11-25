@@ -12,6 +12,7 @@ import {
   updateSession,
   updateSessions,
   withoutDeletedSessions,
+  withoutHiddenSessions,
   withStoppingSessions,
 } from './project-store.js'
 
@@ -75,6 +76,82 @@ describe('deleted chats in a server list', () => {
     const snapshot = serverProjects(2, 2)
     expect(withoutDeletedSessions(snapshot, new Set())).toBe(snapshot)
     expect(withoutDeletedSessions(snapshot, new Set(['gone']))).toBe(snapshot)
+  })
+})
+
+describe('chats waiting for Undo', () => {
+  /** A library whose chat ids count how often they are read. */
+  function countedLibrary(projectCount: number, sessionsPerProject: number) {
+    const reads = { count: 0 }
+    const library = projects(projectCount, sessionsPerProject).map((project) => ({
+      ...project,
+      sessions: project.sessions.map(
+        ({ id, ...rest }) =>
+          Object.defineProperty(rest, 'id', {
+            enumerable: true,
+            get: () => {
+              reads.count += 1
+              return id
+            },
+          }) as Session,
+      ),
+    }))
+    return { library, reads }
+  }
+
+  it('copies only the project holding a hidden chat, and keeps it through a change elsewhere', () => {
+    const { library, reads } = countedLibrary(300, 100)
+    // The session index the app builds for its own lookups anyway.
+    findSession(library, 'thread-0-0')
+    reads.count = 0
+
+    const hidden = ['thread-150-7']
+    const shown = withoutHiddenSessions(library, hidden)
+    const firstReads = reads.count
+    expect(shown[150]?.sessions).toHaveLength(99)
+    expect(findSession(shown, 'thread-150-7')).toBeUndefined()
+    for (const [index, project] of shown.entries()) {
+      if (index !== 150) expect(project).toBe(library[index])
+    }
+    // One lookup and the one project's chats, not every chat in the library.
+    expect(firstReads).toBeLessThanOrEqual(101)
+
+    // Another chat changes status while the deleted one waits for Undo.
+    const changed = updateSession(library, 'thread-20-3', (entry) => ({
+      ...entry,
+      status: 'working',
+    }))
+    reads.count = 0
+    const next = withoutHiddenSessions(changed, hidden)
+    expect(next[150]).toBe(shown[150])
+    expect(next[20]).toBe(changed[20])
+    expect(next[21]).toBe(library[21])
+    expect(reads.count).toBeLessThanOrEqual(2)
+
+    // Undo shows the library itself again.
+    expect(withoutHiddenSessions(changed, [])).toBe(changed)
+  })
+
+  it('hides exactly the chats waiting for Undo', () => {
+    const library = projects(4, 3)
+    const hidden = ['thread-1-0', 'thread-3-2', 'thread-1-2', 'thread-1-0', 'gone']
+    const shown = withoutHiddenSessions(library, hidden)
+    expect(shown.map((project) => project.sessions.map(({ id }) => id))).toEqual(
+      library.map((project) =>
+        project.sessions.map(({ id }) => id).filter((id) => !hidden.includes(id)),
+      ),
+    )
+    expect(shown[0]).toBe(library[0])
+    expect(shown[2]).toBe(library[2])
+    // The same chats hidden in another order keep the copied project.
+    expect(withoutHiddenSessions(library, ['thread-1-2', 'thread-1-0', 'thread-3-2'])[1]).toBe(
+      shown[1],
+    )
+    // Restoring one of a project's hidden chats shows it again.
+    expect(
+      withoutHiddenSessions(library, ['thread-1-2', 'thread-3-2'])[1]?.sessions.map(({ id }) => id),
+    ).toEqual(['thread-1-0', 'thread-1-1'])
+    expect(withoutHiddenSessions(library, ['gone'])).toBe(library)
   })
 })
 
