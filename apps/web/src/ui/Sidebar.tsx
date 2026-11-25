@@ -573,6 +573,11 @@ function SidebarComponent(props: {
     },
     [animateArchive],
   )
+  // Pinned chats and chats without a project are deleted without the archive motion.
+  const deleteSessionAtOnce = useCallback(
+    (id: string) => actionsRef.current.onDeleteSession(id),
+    [],
+  )
   const archiveProject = useCallback(
     (sessionIds: string[]) =>
       animateArchive(sessionIds, (ids) => actionsRef.current.onArchiveProject(ids)),
@@ -881,16 +886,15 @@ function SidebarComponent(props: {
                     onClickCapture={pinnedDrag.onClickCapture}
                   >
                     {pinnedSessions.map(({ projectPath, session }) => (
-                      <SessionRow
+                      <StandaloneSessionRow
                         key={session.id}
                         session={session}
+                        projectPath={projectPath}
                         active={session.id === props.activeSessionId}
-                        standalone
-                        onSelect={() => selectSession(session.id)}
-                        onRename={(title) => props.onRenameSession(session.id, title)}
-                        onDelete={() => props.onDeleteSession(session.id)}
-                        onTogglePin={() => props.onToggleSessionPin?.(session.id)}
-                        onOpenInExplorer={() => void revealPath(projectPath)}
+                        onSelectSession={selectSession}
+                        onRenameSession={renameSession}
+                        onDeleteSession={deleteSessionAtOnce}
+                        onToggleSessionPin={toggleSessionPin}
                         drag={dragOut ? pinnedDrag : undefined}
                       />
                     ))}
@@ -915,16 +919,15 @@ function SidebarComponent(props: {
                   </div>
                   <ul className="proj__sessions pinned-sessions">
                     {chatSessions.map(({ projectPath, session }) => (
-                      <SessionRow
+                      <StandaloneSessionRow
                         key={session.id}
                         session={session}
+                        projectPath={projectPath}
                         active={session.id === props.activeSessionId}
-                        standalone
-                        onSelect={() => selectSession(session.id)}
-                        onRename={(title) => props.onRenameSession(session.id, title)}
-                        onDelete={() => props.onDeleteSession(session.id)}
-                        onTogglePin={() => props.onToggleSessionPin?.(session.id)}
-                        onOpenInExplorer={() => void revealPath(projectPath)}
+                        onSelectSession={selectSession}
+                        onRenameSession={renameSession}
+                        onDeleteSession={deleteSessionAtOnce}
+                        onToggleSessionPin={toggleSessionPin}
                         drag={undefined}
                       />
                     ))}
@@ -1827,6 +1830,36 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
       virtualTop={props.virtualTop}
       virtualPosition={props.virtualPosition}
       virtualSetSize={props.virtualSetSize}
+    />
+  )
+})
+
+/**
+ * A row in the Pinned or Chats section. Memoised with stable callbacks so a
+ * change elsewhere in the rail does not render every one of these rows again.
+ */
+const StandaloneSessionRow = memo(function StandaloneSessionRow(props: {
+  session: Session
+  projectPath: string
+  active: boolean
+  onSelectSession: (id: string) => void
+  onRenameSession: (id: string, title: string) => void
+  onDeleteSession: (id: string) => void
+  onToggleSessionPin: (id: string) => void
+  drag: RowDrag | undefined
+}) {
+  const { session } = props
+  return (
+    <SessionRow
+      session={session}
+      active={props.active}
+      standalone
+      onSelect={() => props.onSelectSession(session.id)}
+      onRename={(title) => props.onRenameSession(session.id, title)}
+      onDelete={() => props.onDeleteSession(session.id)}
+      onTogglePin={() => props.onToggleSessionPin(session.id)}
+      onOpenInExplorer={() => void revealPath(props.projectPath)}
+      drag={props.drag}
     />
   )
 })

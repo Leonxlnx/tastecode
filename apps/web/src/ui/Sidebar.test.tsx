@@ -241,6 +241,68 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
     expect(onNewSession).toHaveBeenCalledWith(folder, undefined)
   })
+
+  it('does not render pinned chats or chats without a project again for a change in a project', () => {
+    let titleReads = 0
+    const counted = (id: string, title: string, pinned = false) => {
+      const value: Session = { ...session(id, title), pinned }
+      Object.defineProperty(value, 'title', {
+        enumerable: true,
+        get: () => {
+          titleReads += 1
+          return title
+        },
+      })
+      return value
+    }
+    const loose = Array.from({ length: 40 }, (_, index) => ({
+      path: `/threads/2026-11-01-chat-${index}`,
+      chat: true,
+      sessions: [counted(`loose-${index}`, `Loose ${index}`)],
+    }))
+    const pinned = {
+      path: '/work/pinned',
+      name: 'Pinned',
+      sessions: [counted('pin', 'Kept', true)],
+    }
+    const work = { path: '/work/repo', name: 'Repo', sessions: [session('work', 'Fix the parser')] }
+    const props = {
+      activeProjectPath: '/work/repo',
+      activeSessionId: 'work',
+      account: undefined,
+      providerName: 'Codex',
+      collapsed: false,
+      width: 248,
+      onWidthChange: vi.fn(),
+      onClose: vi.fn(),
+      onAddProject: vi.fn(),
+      onNewSession: vi.fn(),
+      onNewChatWithoutProject: vi.fn(),
+      onSelectSession: vi.fn(),
+      onRenameProject: vi.fn(),
+      onRemoveProject: vi.fn(),
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onToggleSessionPin: vi.fn(),
+      onArchiveProject: vi.fn(),
+      onReorderSession: vi.fn(),
+      onOpenSearch: vi.fn(),
+      onOpenSettings: vi.fn(),
+    }
+    const view = render(<Sidebar {...props} projects={[work, pinned, ...loose]} />)
+    expect(screen.getByText('Loose 39')).toBeTruthy()
+    expect(screen.getByText('Kept')).toBeTruthy()
+
+    titleReads = 0
+    const working = { ...work, sessions: [{ ...work.sessions[0]!, status: 'working' as const }] }
+    view.rerender(<Sidebar {...props} projects={[working, pinned, ...loose]} />)
+    expect(titleReads).toBe(0)
+    expect(screen.getByText('Loose 0')).toBeTruthy()
+
+    fireEvent.click(screen.getByText('Loose 3'))
+    expect(props.onSelectSession).toHaveBeenCalledWith('loose-3')
+  })
   it('shows placeholder projects instead of an empty list while projects load', () => {
     const view = renderProjectCatalog([], undefined, undefined, true)
 
