@@ -320,7 +320,14 @@ describe('rows hidden inside a finished work disclosure', () => {
       await Promise.resolve()
     })
     unchanged()
-    expect(subscribed.every(({ notified }) => notified === 1)).toBe(true)
+    // The lead's group subscription heard the delta once. A suppressed row
+    // subscribes to its own index only, so it was not woken by the lead's output.
+    const reachesLead = subscribed.filter(({ first }) => first <= firstWork)
+    const ownIndexOnly = subscribed.filter(({ first }) => first > firstWork)
+    expect(reachesLead.length).toBeGreaterThan(0)
+    expect(ownIndexOnly.length).toBeGreaterThan(0)
+    expect(reachesLead.every(({ notified }) => notified === 1)).toBe(true)
+    expect(ownIndexOnly.every(({ notified }) => notified === 0)).toBe(true)
 
     // Finished: the hidden row goes and gives its subscription back.
     await act(async () => {
