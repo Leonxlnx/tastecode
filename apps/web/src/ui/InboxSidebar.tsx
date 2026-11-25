@@ -43,6 +43,7 @@ import {
   wakeAt,
   type InboxEntry as Entry,
   type InboxEntryGroups,
+  type InboxProjectEntries,
   type ProjectMetadata,
 } from '../inbox-order.js'
 import { AppSelect } from './AppSelect.js'
@@ -77,6 +78,49 @@ function useRetainedNumberArray(values: number[]): readonly number[] {
     retained.current = values
   }
   return retained.current
+}
+
+type ScopeOption = { value: string; label: string }
+
+/**
+ * Keeps the project filter's options while every project keeps its path, name
+ * and chat flag. Chat updates replace the project list on every status push;
+ * the options only depend on those three fields.
+ */
+function useRetainedScopeOptions(projects: Project[]): ScopeOption[] {
+  const retained = useRef<{ projects: Project[]; options: ScopeOption[] }>(undefined)
+  const previous = retained.current
+  if (previous && previous.projects === projects) return previous.options
+  if (previous && sameScopeProjects(previous.projects, projects)) {
+    previous.projects = projects
+    return previous.options
+  }
+  const options = [
+    { value: '', label: 'All projects' },
+    // A chat's own folder is not a project to filter by.
+    ...projects.flatMap((project) =>
+      project.chat ? [] : [{ value: project.path, label: projectName(project) }],
+    ),
+  ]
+  retained.current = { projects, options }
+  return options
+}
+
+function sameScopeProjects(previous: Project[], next: Project[]): boolean {
+  if (previous.length !== next.length) return false
+  for (let index = 0; index < next.length; index += 1) {
+    const before = previous[index]!
+    const after = next[index]!
+    if (before === after) continue
+    if (
+      before.path !== after.path ||
+      before.name !== after.name ||
+      Boolean(before.chat) !== Boolean(after.chat)
+    ) {
+      return false
+    }
+  }
+  return true
 }
 
 function scheduleIdle(callback: () => void): () => void {
@@ -239,6 +283,19 @@ function InboxSidebarComponent(props: {
     }
   }
   const relativeTimes = useRetainedNumberArray(nextRelativeTimes)
+  const scopeOptions = useRetainedScopeOptions(props.projects)
+  // The filter lists every project; a chat's status push must not rebuild it.
+  const scopeSelect = useMemo(
+    () => (
+      <AppSelect
+        ariaLabel="Sidebar project filter"
+        value={props.scope}
+        onChange={props.onScopeChange}
+        options={scopeOptions}
+      />
+    ),
+    [props.onScopeChange, props.scope, scopeOptions],
+  )
   const activePageDeferred =
     activeLimit === INITIAL_ACTIVE_LIMIT && active.length > INITIAL_ACTIVE_LIMIT
 
@@ -410,18 +467,7 @@ function InboxSidebarComponent(props: {
         <div className="inbox-toolbar__projects">
           <label className="inbox__scope">
             <span className="visually-hidden">Project filter</span>
-            <AppSelect
-              ariaLabel="Sidebar project filter"
-              value={props.scope}
-              onChange={props.onScopeChange}
-              options={[
-                { value: '', label: 'All projects' },
-                // A chat's own folder is not a project to filter by.
-                ...props.projects.flatMap((project) =>
-                  project.chat ? [] : [{ value: project.path, label: projectName(project) }],
-                ),
-              ]}
-            />
+            {scopeSelect}
           </label>
           <button className="inbox-toolbar__add" type="button" onClick={props.onAddProject}>
             <FolderPlus size={13} aria-hidden />
@@ -1314,14 +1360,50 @@ export function createInboxEntryClassifier(): typeof classifyInboxEntries {
   let previousResult: InboxEntryGroups | undefined
   let entriesById = new Map<string, Entry>()
   let sourceOrder = new Map<string, number>()
+  // Keyed by a project's chat array: immutable updates replace it whenever one
+  // of the project's chats changes, so a hit means the same chats in the same
+  // order. A delete, an Undo or a new chat regroups everything, but only the
+  // project that changed is classified again.
+  const projectEntries = new WeakMap<
+    Session[],
+    { path: string; name: string | undefined; query: string; entries: InboxProjectEntries }
+  >()
+  const entriesFor = (project: Project, query: string): InboxProjectEntries => {
+    const cached = projectEntries.get(project.sessions)
+    if (
+      cached &&
+      cached.path === project.path &&
+      cached.name === project.name &&
+      cached.query === query
+    ) {
+      return cached.entries
+    }
+    const metadata = projectMetadata(project)
+    const entries: InboxProjectEntries = { active: [], snoozed: [], settled: [] }
+    for (const session of project.sessions) {
+      if (query && !session.title.toLocaleLowerCase().includes(query)) continue
+      const entry = { project: metadata, session }
+      if (session.lifecycle.state === 'active') entries.active.push(entry)
+      else if (session.lifecycle.state === 'snoozed') entries.snoozed.push(entry)
+      else entries.settled.push(entry)
+    }
+    projectEntries.set(project.sessions, {
+      path: project.path,
+      name: project.name,
+      query,
+      entries,
+    })
+    return entries
+  }
 
   const rebuild = (projects: Project[], scope: string, query: string): InboxEntryGroups => {
-    const result = classifyInboxEntries(projects, scope, query)
+    const result = classifyInboxEntries(projects, scope, query, entriesFor)
     previousProjects = projects
     previousScope = scope
     previousQuery = query
     previousResult = result
-    entriesById = new Map(result.ordered.map((entry) => [entry.session.id, entry]))
+    entriesById = new Map()
+    for (const entry of result.ordered) entriesById.set(entry.session.id, entry)
     sourceOrder = new Map()
     let order = 0
     for (const project of projects) {
