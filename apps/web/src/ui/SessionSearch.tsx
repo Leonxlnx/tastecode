@@ -16,7 +16,7 @@ import { AppSelect } from './AppSelect.js'
 import { Skeleton, SkeletonStatus } from './Skeleton.js'
 import {
   createSessionTitleIndexer,
-  searchSessionTitles,
+  createSessionTitleSearcher,
   type SessionSearchProject,
 } from '../session-title-index.js'
 
@@ -102,6 +102,8 @@ function SessionSearchComponent(props: {
   const searchable = terms.length > 0
   const indexTitles = useMemo(createSessionTitleIndexer, [])
   const titleIndex = useMemo(() => indexTitles(props.projects), [indexTitles, props.projects])
+  // Typing one more character searches only the previous matches.
+  const searchTitles = useMemo(createSessionTitleSearcher, [])
 
   const projectFilter = useMemo(
     () => (
@@ -141,7 +143,7 @@ function SessionSearchComponent(props: {
 
   const titleResults = useMemo<DisplaySearchResult[]>(() => {
     if (!searchable) return []
-    return searchSessionTitles(titleIndex, terms, {
+    return searchTitles(titleIndex, terms, {
       ...(projectPath ? { projectPath } : {}),
       ...(provider ? { provider } : {}),
       limit: MAX_TITLE_RESULTS,
@@ -158,7 +160,7 @@ function SessionSearchComponent(props: {
       titleParts: highlightText(entry.threadTitle, terms),
       snippet: undefined,
     }))
-  }, [projectPath, provider, searchable, sources, terms, titleIndex])
+  }, [projectPath, provider, searchTitles, searchable, sources, terms, titleIndex])
 
   const { hiddenThreadIds } = props
   const displayResults = useMemo<DisplaySearchResult[]>(() => {
