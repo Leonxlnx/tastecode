@@ -153,6 +153,61 @@ describe('chats waiting for Undo', () => {
     ).toEqual(['thread-1-0', 'thread-1-1'])
     expect(withoutHiddenSessions(library, ['gone'])).toBe(library)
   })
+
+  it('finds a chat in the list without the hidden chats without reading every chat again', () => {
+    const { library, reads } = countedLibrary(300, 100)
+    findSession(library, 'thread-0-0')
+    const shown = withoutHiddenSessions(library, ['thread-150-7', 'thread-150-2'])
+    reads.count = 0
+
+    // The Inbox looks up the selected chat in the list it shows.
+    expect(findSession(shown, 'thread-150-50')?.session).toBe(library[150]!.sessions[50])
+    expect(findSession(shown, 'thread-299-99')?.session).toBe(library[299]!.sessions[99])
+    expect(findSession(shown, 'thread-150-7')).toBeUndefined()
+    // A handful of id checks, not a new index of all 30,000 chats.
+    expect(reads.count).toBeLessThanOrEqual(6)
+  })
+
+  it('answers every lookup as an index built from the shown list would', () => {
+    /** A fresh array of the same projects has no index and builds one from scratch. */
+    function expectSameAnswers(shown: Project[], ids: readonly string[]) {
+      const rebuilt = [...shown]
+      for (const id of ids) {
+        const found = findSession(shown, id)
+        const expected = findSession(rebuilt, id)
+        expect(found?.project).toBe(expected?.project)
+        expect(found?.session).toBe(expected?.session)
+      }
+    }
+
+    const library = projects(5, 8)
+    const ids = [...library.flatMap((project) => project.sessions.map(({ id }) => id)), 'gone']
+    findSession(library, 'thread-0-0')
+    const steps: (readonly string[])[] = [
+      // Several chats of one project: first, adjacent, last.
+      ['thread-2-0', 'thread-2-3', 'thread-2-4', 'thread-2-7'],
+      // Several projects, given out of order.
+      ['thread-4-5', 'thread-1-1', 'thread-2-6', 'thread-1-6', 'thread-0-0', 'gone'],
+      // Undo of some of them, then of all.
+      ['thread-4-5', 'thread-1-6'],
+      [],
+    ]
+    for (const hidden of steps) expectSameAnswers(withoutHiddenSessions(library, hidden), ids)
+
+    // A library whose own index is a chain of reorders and removals, then a
+    // status change: the hidden chats' shifts are added to that chain.
+    let changed = promoteSession(library, 'thread-1-5')
+    changed = removeSession(changed, 'thread-3-2')
+    changed = updateSession(changed, 'thread-1-3', (entry) => ({ ...entry, unread: true }))
+    findSession(changed, 'thread-0-0')
+    for (const hidden of [
+      ['thread-1-5', 'thread-1-0', 'thread-3-3', 'thread-3-7'],
+      ['thread-1-0', 'thread-3-7'],
+      [],
+    ]) {
+      expectSameAnswers(withoutHiddenSessions(changed, hidden), ids)
+    }
+  })
 })
 
 describe('chats the user just stopped', () => {
