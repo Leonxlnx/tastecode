@@ -121,14 +121,64 @@ export function createSessionTitleIndexer(): (
   }
 }
 
+export type SessionTitleSearchOptions = {
+  projectPath?: string | undefined
+  provider?: ProviderId | undefined
+  limit?: number | undefined
+}
+
 export function searchSessionTitles(
   entries: readonly SessionTitleIndexEntry[],
   terms: readonly string[],
-  options: {
-    projectPath?: string | undefined
-    provider?: ProviderId | undefined
-    limit?: number | undefined
-  } = {},
+  options: SessionTitleSearchOptions = {},
+): SessionTitleIndexEntry[] {
+  return rankSessionTitles(entries, terms, options)
+}
+
+/**
+ * Searches like `searchSessionTitles`, but scans only the previous query's
+ * matches when the new query cannot match anything else: same index, same
+ * project and provider filters, and every previous term is contained in a
+ * new term (typing one more character, adding a word). A title that contains
+ * every new term then contains every previous term, so the previous matches,
+ * kept in index order, hold every new match in index order. Entries that do
+ * not match are skipped without touching the ranking, so the result, its
+ * order and the limit are the same as a scan of the whole index. The full
+ * match list is kept, not the limited result. Any other edit scans the index.
+ */
+export function createSessionTitleSearcher(): typeof searchSessionTitles {
+  let previous:
+    | {
+        entries: readonly SessionTitleIndexEntry[]
+        terms: readonly string[]
+        projectPath: string | undefined
+        provider: ProviderId | undefined
+        matches: SessionTitleIndexEntry[]
+      }
+    | undefined
+
+  return (entries, terms, options = {}) => {
+    const projectPath = options.projectPath || undefined
+    const provider = options.provider || undefined
+    if (terms.length === 0 || (options.limit ?? 6) <= 0) return []
+    const narrows =
+      previous !== undefined &&
+      previous.entries === entries &&
+      previous.projectPath === projectPath &&
+      previous.provider === provider &&
+      previous.terms.every((term) => terms.some((next) => next.includes(term)))
+    const matches: SessionTitleIndexEntry[] = []
+    const result = rankSessionTitles(narrows ? previous!.matches : entries, terms, options, matches)
+    previous = { entries, terms, projectPath, provider, matches }
+    return result
+  }
+}
+
+function rankSessionTitles(
+  entries: readonly SessionTitleIndexEntry[],
+  terms: readonly string[],
+  options: SessionTitleSearchOptions,
+  matches?: SessionTitleIndexEntry[],
 ): SessionTitleIndexEntry[] {
   if (terms.length === 0) return []
   const normalizedQuery = terms.join(' ')
@@ -143,6 +193,7 @@ export function searchSessionTitles(
     if (options.projectPath && entry.projectPath !== options.projectPath) continue
     if (options.provider && entry.provider !== options.provider) continue
     if (!terms.every((part) => entry.normalizedTitle.includes(part))) continue
+    matches?.push(entry)
 
     const rank =
       entry.normalizedTitle === normalizedQuery
