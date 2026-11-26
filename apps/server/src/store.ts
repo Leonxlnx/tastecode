@@ -4615,7 +4615,7 @@ export class Store {
       for (const row of rows) {
         const sample = parseUsage(row.payload, threadId)
         if (!sample) continue
-        const current = sample.total
+        const current = sample.cumulative ? runningTotal(sample.total, previous) : sample.total
         const increment = sample.cumulative ? usageIncrement(current, previous) : current
         if (sample.cumulative) previous = current
         session = addUsage(session, increment)
@@ -4659,7 +4659,9 @@ export class Store {
         if (provider !== undefined && !counted(provider)) continue
         const sample = parseUsage(row.payload, row.thread_id)
         if (!sample) continue
-        const current = sample.total
+        const current = sample.cumulative
+          ? runningTotal(sample.total, previous.get(row.thread_id))
+          : sample.total
         const increment = sample.cumulative
           ? usageIncrement(current, previous.get(row.thread_id))
           : current
@@ -5598,6 +5600,17 @@ function addUsage(left: UsageTotal, right: UsageTotal): UsageTotal {
     totalTokens: left.totalTokens + right.totalTokens,
     ...(hasCost ? { costUsd: (left.costUsd ?? 0) + (right.costUsd ?? 0) } : {}),
   }
+}
+
+/**
+ * A running total that reports no cost leaves the cost where the previous one put it. ACP
+ * sends context-only updates without a cost; read as $0, the next cost would look like a
+ * fresh start and count the earlier spend again.
+ */
+function runningTotal(current: UsageTotal, previous: UsageTotal | undefined): UsageTotal {
+  return current.costUsd === undefined && previous?.costUsd !== undefined
+    ? { ...current, costUsd: previous.costUsd }
+    : current
 }
 
 function usageIncrement(current: UsageTotal, previous = emptyUsage()): UsageTotal {

@@ -1298,19 +1298,27 @@ function harnessUsageRecords(
 ): AttributedUsageRecord[] {
   const records: AttributedUsageRecord[] = []
   const previous = new Map<string, TokenCounts>()
-  // A provider can report a session's tokens and its cost in separate events. Where
-  // it reports the cost, pricing the tokens as well would count the session twice.
+  // A provider can report a session's running cost apart from its tokens, as ACP does.
+  // Where it does, pricing the tokens as well would count the session twice. A cost
+  // reported with one response covers only that response, and $0 is a reported cost.
   const costReported = new Set<string>()
   for (const event of events) {
-    if ((event.usage.costUsd ?? 0) > 0) costReported.add(`${event.provider}:${event.threadId}`)
+    if (event.usage.cumulative && event.usage.costUsd !== undefined)
+      costReported.add(`${event.provider}:${event.threadId}`)
   }
 
   for (const event of events) {
     const account = event.accountId ?? DEFAULT_ACCOUNT_ID
     if (richerLocalAccounts.get(event.provider)?.has(account)) continue
     const sessionKey = `${event.provider}:${event.threadId}`
-    const current = usageTokenCounts(event.usage)
     const prior = previous.get(sessionKey)
+    const counted = usageTokenCounts(event.usage)
+    // A running total without a cost leaves the cost where it was; read as $0, the next
+    // cost would look like a fresh start and count the earlier spend again.
+    const current =
+      event.usage.cumulative && event.usage.costUsd === undefined && prior
+        ? { ...counted, providerReportedCostUsd: prior.providerReportedCostUsd }
+        : counted
     // Counters that went back restarted: the whole sample is a fresh start, as
     // in the Codex rollout reader. Subtracting counter by counter would mix
     // the old run's counters with the new one's.
@@ -1339,7 +1347,8 @@ function harnessUsageRecords(
       sessionId: event.threadId,
       longContext: inputForThreshold > longContextThreshold(model),
       tokens,
-      ...(costReported.has(sessionKey) && tokens.providerReportedCostUsd <= 0
+      ...((costReported.has(sessionKey) || event.usage.costUsd !== undefined) &&
+      tokens.providerReportedCostUsd <= 0
         ? { costReportedElsewhere: true }
         : {}),
     })
