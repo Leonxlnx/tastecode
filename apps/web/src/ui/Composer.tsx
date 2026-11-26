@@ -568,6 +568,8 @@ function ComposerComponent(props: {
   withoutProject?: boolean | undefined
   /** The started chat this composer writes to; absent for a new chat. */
   threadId?: string | undefined
+  /** The same chat keeps this identity when its first server id arrives. */
+  draftChatId?: string | undefined
   projectsLoading?: boolean
   branch: string | undefined
   branches: string[]
@@ -875,9 +877,10 @@ function ComposerComponent(props: {
     if (props.attachmentsSupported) setAttachmentError(undefined)
   }, [props.attachmentsSupported])
 
+  const draftChatId = props.draftChatId ?? props.threadId
   useLayoutEffect(() => {
     heldSubmit.current = undefined
-  }, [props.threadId, props.projectPath, props.withoutProject, props.draftRequest?.request])
+  }, [draftChatId, props.projectPath, props.withoutProject, props.draftRequest?.request])
 
   useEffect(() => {
     const held = heldSubmit.current
@@ -887,17 +890,19 @@ function ComposerComponent(props: {
     if (
       props.sendAvailability !== 'ready' ||
       textRef.current !== held.text ||
-      props.threadId !== held.threadId ||
+      draftChatId !== held.threadId ||
       draftRequestRef.current?.request !== held.request
     ) {
       heldSubmit.current = undefined
       return
     }
     const captured = attachments.filter((file) => held.attachmentIds.has(file.id))
-    if (captured.length === held.attachmentIds.size && captured.some((file) => !file.path)) return
+    if (captured.length === held.attachmentIds.size && voiceState === 'idle') {
+      // sendContent handles local commands before requiring a saved path for each file.
+      const sent = sendContent(held.text, held.submission, captured)
+      if (!sent && captured.some((file) => !file.path)) return
+    }
     heldSubmit.current = undefined
-    if (captured.length === held.attachmentIds.size && voiceState === 'idle')
-      sendContent(held.text, held.submission, captured)
   }, [props.sendAvailability, attachments])
 
   useEffect(() => {
@@ -1653,7 +1658,7 @@ function ComposerComponent(props: {
         text: textRef.current,
         attachmentIds: new Set(attachments.map((file) => file.id)),
         submission,
-        threadId: props.threadId,
+        threadId: draftChatId,
         request: draftRequestRef.current?.request,
       }
       return

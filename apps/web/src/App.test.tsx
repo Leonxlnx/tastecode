@@ -11786,6 +11786,85 @@ describe('new chats', () => {
     },
   )
 
+  it.each(['No project', 'Other'])(
+    'parks a cancelled send when switching to %s',
+    async (target) => {
+      serverProjects = [
+        { path: '/work/project', name: 'TasteCode', pinned: false, createdAt: 0, sessions: [] },
+        { path: '/work/other', name: 'Other', pinned: false, createdAt: 1, sessions: [] },
+      ]
+      const choose = (name: string) => {
+        fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: new RegExp(name) }))
+      }
+      let finish!: (file: { path: string; name: string }) => void
+      vi.spyOn(await import('./bridge.js'), 'savePastedFile').mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+      )
+      render(<App />)
+      await screen.findByRole('heading', { name: /What should we build in TasteCode/ })
+      const area = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      fireEvent.paste(area(), { clipboardData: { files: [new File(['a'], 'private.txt')] } })
+      submitTurn('Project A text')
+      choose(target)
+      expect(area().value).toBe('')
+      fireEvent.change(area(), { target: { value: 'Second draft' } })
+      await act(async () => finish({ path: '/saved/private.txt', name: 'private.txt' }))
+      expect(screen.queryByRole('button', { name: 'Remove private.txt' })).toBeNull()
+      expect(area().value).toBe('Second draft')
+      choose('TasteCode')
+      expect(area().value).toBe('Project A text')
+      expect(screen.getByRole('button', { name: 'Remove private.txt' })).toBeTruthy()
+      choose(target)
+      expect(area().value).toBe('Second draft')
+      expect(screen.queryByRole('button', { name: 'Remove private.txt' })).toBeNull()
+      expect(rpcCount('thread.start')).toBe(0)
+      expect(rpcCount('thread.sendTurn')).toBe(0)
+    },
+  )
+
+  it('sends a held follow-up after its starting chat receives its durable id', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'TasteCode', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    let releaseStart!: () => void
+    const gate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation(async (method, params) => {
+      if (method === 'thread.start') await gate
+      return request(method, params)
+    })
+    let finish!: (file: { path: string; name: string }) => void
+    vi.spyOn(await import('./bridge.js'), 'savePastedFile').mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+    )
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('First turn')
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    const area = screen.getByPlaceholderText('Do anything')
+    fireEvent.paste(area, { clipboardData: { files: [new File(['x'], 'follow.txt')] } })
+    submitTurn('Follow-up')
+    await act(async () => releaseStart())
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    await act(async () => finish({ path: '/saved/follow.txt', name: 'follow.txt' }))
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(2))
+    expect(transport.request).toHaveBeenCalledWith(
+      'thread.sendTurn',
+      expect.objectContaining({
+        threadId: 'thread-1',
+        text: 'Follow-up',
+        attachments: ['/saved/follow.txt'],
+      }),
+    )
+  })
+
   it('starts a chat without a project in a folder of its own', async () => {
     serverProjects = [
       { path: '/work/project', name: 'TasteCode', pinned: false, createdAt: 0, sessions: [] },

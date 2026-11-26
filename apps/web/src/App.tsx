@@ -375,6 +375,8 @@ const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const CREATIFY_BY_THREAD_PREFIX = 'harness.creatifyByThread:'
 const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 /** The project whose New chat draft is the one under NEW_CHAT_DRAFT_KEY. */
+// Project paths are nonempty. Keep an explicit No project draft distinct from an unclaimed draft.
+const NO_PROJECT_DRAFT = ''
 const NEW_CHAT_DRAFT_PROJECT_KEY = 'harness.newChatDraftProject'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const EMPTY_PROVIDER_ROSTER: ProviderRoster = []
@@ -970,6 +972,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   >()
   const composerDraftKeyRef = useRef(NEW_CHAT_DRAFT_KEY)
   const injectedDraftTransition = useRef(false)
+  const promotedComposerChat = useRef<{ provisional: string; durable: string }>(undefined)
   const pendingSession = useRef<
     | {
         id: string
@@ -2349,7 +2352,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   // list after a start), New chat's live draft is that project's.
   useEffect(() => {
     if (activePath !== undefined) enterNewChatDraft(activePath)
-  }, [activePath, enterNewChatDraft])
+    else if (chatWithoutProject) enterNewChatDraft(NO_PROJECT_DRAFT)
+  }, [activePath, chatWithoutProject, enterNewChatDraft])
   const handleComposerReady = useCallback(() => {
     restoreComposerDraft(composerDraftKey(activeIdRef.current))
   }, [restoreComposerDraft])
@@ -2388,9 +2392,16 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   // no longer shows its draft, so the file joins the draft it was pasted into.
   const keepPendingAttachment = useCallback(
     (savedPath: Promise<string | undefined>) => {
-      const owner = threadController.draftOwner
-      void savedPath.then((path) => {
+      const draftKey = threadController.draftOwner
+      const project = newChatDraftProject.current ?? activePathRef.current ?? NO_PROJECT_DRAFT
+      const starting = pendingSession.current?.id === draftKey ? pendingSession.current : undefined
+      void savedPath.then(async (path) => {
         if (!path) return
+        const owner = starting
+          ? ((await starting.promise) ?? newChatDraftSlot(project))
+          : draftKey === NEW_CHAT_DRAFT_KEY
+            ? newChatDraftSlot(project)
+            : draftKey
         const draft = threadController.draft(owner)
         if (draft.attachments.includes(path)) return
         const next = threadController.editDraft(owner, {
@@ -2399,7 +2410,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         if (threadController.draftOwner === owner) publishComposerDraft(next)
       })
     },
-    [publishComposerDraft],
+    [newChatDraftSlot, publishComposerDraft],
   )
   // Editing a queued prompt removes it before the composer takes it back. If
   // the user switched chats meanwhile, the prompt returns to its own chat.
@@ -4960,6 +4971,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         // Not a switch: the chat shown, or kept as the one just left, is renamed.
         threadController.replaceId(provisionalId, threadId)
         if (activeIdRef.current === provisionalId) {
+          promotedComposerChat.current = { provisional: provisionalId, durable: threadId }
           if (threadController.draftOwner === provisionalId) threadController.draftOwner = threadId
           if (composerDraftKeyRef.current === provisionalId) composerDraftKeyRef.current = threadId
           activeIdRef.current = threadId
@@ -5045,7 +5057,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         projectPath === undefined ||
         projectsRef.current.some((project) => project.path === projectPath && project.chat)
       setSurface('chat')
-      if (!withoutProject && projectPath) enterNewChatDraft(projectPath)
+      enterNewChatDraft(withoutProject ? NO_PROJECT_DRAFT : projectPath)
       if (draft !== undefined) {
         // Added to what is drafted there already: an unsent prompt is never replaced.
         const next = threadController.recoverDraft(NEW_CHAT_DRAFT_KEY, {
@@ -5874,7 +5886,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           ? !activePathRef.current && !activeIdRef.current
           : path === activePathRef.current
       if (unchanged) return
-      if (path) enterNewChatDraft(path)
+      enterNewChatDraft(path ?? NO_PROJECT_DRAFT)
       setActivePath(path)
       activeIdRef.current = undefined
       setActiveId(undefined)
@@ -8251,6 +8263,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     projectPath: activePath,
     projectName: activeProject ? displayName(activeProject) : undefined,
     withoutProject: chatWithoutProject && !activePath,
+    draftChatId:
+      activeId && promotedComposerChat.current?.durable === activeId
+        ? promotedComposerChat.current.provisional
+        : activeId,
     threadId: activeId && !activeId.startsWith('pending:') ? activeId : undefined,
     projectsLoading: projectsStatus === 'loading',
     branch:

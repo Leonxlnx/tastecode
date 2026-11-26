@@ -576,6 +576,49 @@ describe('Composer draft state', () => {
     expect(composer.value).toBe('')
   })
 
+  it('opens the model picker on readiness before a pending save rejects', async () => {
+    const onSend = vi.fn()
+    const onModelSelectorOpen = vi.fn()
+    const view = renderComposer(onSend, {
+      sendAvailability: 'loading',
+      onModelSelectorOpen,
+      models: [
+        {
+          key: 'codex:model',
+          provider: 'codex',
+          sourceName: 'Codex',
+          mark: 'openai',
+          model: {
+            id: 'model',
+            displayName: 'Test model',
+            isDefault: true,
+            reasoningEfforts: [],
+            serviceTiers: [],
+          },
+        },
+      ],
+    })
+    await screen.findByRole('button', { name: 'Model and reasoning' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    let rejectSave!: (reason: Error) => void
+    bridge.savePastedFile.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectSave = reject
+      }),
+    )
+    fireEvent.paste(composer, { clipboardData: { files: [new File(['notes'], 'pending.txt')] } })
+    expect(bridge.savePastedFile).toHaveBeenCalledOnce()
+    fireEvent.change(composer, { target: { value: '/model' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onModelSelectorOpen).not.toHaveBeenCalled()
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onModelSelectorOpen).toHaveBeenCalledTimes(1)
+    expect(onSend).not.toHaveBeenCalled()
+    await act(async () => rejectSave(new Error('save failed')))
+    expect(onModelSelectorOpen).toHaveBeenCalledTimes(1)
+    expect(composer.value).toBe('')
+  })
+
   it.each([
     ['/resume', 'resume'],
     ['/continue', 'resume'],
