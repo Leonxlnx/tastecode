@@ -239,6 +239,36 @@ describe('Import chats settings', () => {
     await screen.findByText(/Imported 2 chats\. 1 chat could not be read/)
   })
 
+  it('selects the chats an import could not bring in, to try them again', async () => {
+    let imported = false
+    const { transport, push, request } = client(() => ({
+      sources: [codex],
+      chats: [chat('good', { imported }), chat('bad'), chat('untouched')],
+      folders,
+    }))
+    page(transport)
+    await filter()
+    fireEvent.click(screen.getByRole('button', { name: /site/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'good' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'bad' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Import 2 chats' }))
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('chatImport.start', { chats: ['good', 'bad'] }),
+    )
+
+    imported = true
+    act(() => push({ state: 'finished', done: 2, total: 2, imported: 1, failed: 1, projects: [] }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Select the failed chat' }))
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'bad' }).checked).toBe(true)
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'untouched' }).checked).toBe(
+      false,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Import 1 chat' }))
+    await waitFor(() =>
+      expect(request).toHaveBeenLastCalledWith('chatImport.start', { chats: ['bad'] }),
+    )
+  })
+
   it('says so when nothing at all could be read, with no chat to open', async () => {
     const { transport, push } = client([{ sources: [codex], chats: [chat('one')], folders }])
     page(transport)
