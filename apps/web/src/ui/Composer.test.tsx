@@ -730,6 +730,41 @@ describe('Composer media attachments', () => {
     ).toBe(true)
   })
 
+  it.each(['text/uri-list', 'text/html', 'disabled'])('consumes uneditable drops (%s)', (type) => {
+    renderComposer(vi.fn(), { disabled: type === 'disabled' })
+    const area = screen.getByRole('textbox') as HTMLTextAreaElement
+    expect(
+      fireEvent.drop(area, {
+        dataTransfer: {
+          files: [],
+          types: [type === 'disabled' ? 'text/plain' : type],
+          getData: () => 'content',
+        },
+      }),
+    ).toBe(false)
+    expect(area.value).toBe('')
+  })
+
+  it.each(['C:/work/my notes.txt', 'file:///C:/work/my%20notes.txt'])(
+    'excludes redundant mixed-drop text (%s)',
+    (text) => {
+      const send = vi.fn()
+      vi.stubGlobal('harness', { droppedFilePath: () => 'C:/work/my notes.txt' })
+      renderComposer(send)
+      const area = screen.getByPlaceholderText('Do anything')
+      fireEvent.change(area, { target: { value: 'draft' } })
+      fireEvent.drop(area, {
+        dataTransfer: {
+          files: [new File(['notes'], 'my notes.txt')],
+          types: ['Files', 'text/plain'],
+          getData: () => text,
+        },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      expect(send).toHaveBeenCalledWith('draft', ['C:/work/my notes.txt'])
+    },
+  )
+
   it('keeps the text and file of a mixed drop at the caret', () => {
     const send = vi.fn()
     vi.stubGlobal('harness', { droppedFilePath: () => '/work/notes.txt' })
