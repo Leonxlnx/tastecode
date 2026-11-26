@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 /**
  * Claude Code takes images as blocks of the message, but any other attached
  * file only by its path. Those paths go at the end of the prompt text, and a
@@ -18,7 +20,8 @@ export type SavedPromptParts = { text: string; files: string[] }
 
 /**
  * The words and the file paths of a saved prompt. Text that does not end in
- * exactly the list `withAttachedFilePaths` writes is returned whole.
+ * exactly the list `withAttachedFilePaths` writes is returned whole. Attached
+ * files go by absolute path, so a list of other text is the user's own.
  */
 export function splitAttachedFilePaths(text: string): SavedPromptParts {
   const whole: SavedPromptParts = { text, files: [] }
@@ -36,7 +39,8 @@ export function splitAttachedFilePaths(text: string): SavedPromptParts {
     } catch {
       return whole
     }
-    if (typeof file !== 'string' || file === '') return whole
+    if (typeof file !== 'string' || !(path.posix.isAbsolute(file) || path.win32.isAbsolute(file)))
+      return whole
     files.push(file)
   }
   return { text: text.slice(0, at), files }
