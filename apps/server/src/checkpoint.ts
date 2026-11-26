@@ -37,6 +37,9 @@ export type Snapshot = {
   clean: boolean
 }
 
+type SnapshotBase = { head: string | undefined; tree: string }
+type SnapshotOptions = { retainIn?: string; ignoredFiles?: readonly string[] }
+
 export class NotARepositoryForCheckpoint extends Error {
   constructor(repoPath: string) {
     super(`${repoPath} is not a git repository, so there is nothing to snapshot`)
@@ -74,8 +77,16 @@ export class RestoreSnapshotError extends AggregateError {
  */
 export async function takeSnapshot(
   repoPath: string,
-  options: { retainIn?: string; ignoredFiles?: readonly string[] } = {},
+  options: SnapshotOptions = {},
 ): Promise<Snapshot> {
+  return (await takeSnapshotWithBase(repoPath, options)).snapshot
+}
+
+/** Review needs the exact base observed while the snapshot was taken. */
+export async function takeSnapshotWithBase(
+  repoPath: string,
+  options: SnapshotOptions = {},
+): Promise<{ snapshot: Snapshot; base: SnapshotBase }> {
   const retainIn = options.retainIn
   const ignoredFiles = options.ignoredFiles ?? []
   if (retainIn !== undefined && !/^[a-zA-Z0-9-]+$/.test(retainIn))
@@ -95,7 +106,7 @@ export async function takeSnapshot(
     (await indexTrustsWorkingTree(repoPath))
   ) {
     await protectSnapshot(repoPath, head, retainIn)
-    return { commit: head, clean: true }
+    return { snapshot: { commit: head, clean: true }, base }
   }
 
   const indexDir = await mkdtemp(path.join(os.tmpdir(), 'harness-index-'))
@@ -182,7 +193,7 @@ export async function takeSnapshot(
     const clean = tree.trim() === base.tree
     if (clean && head) {
       await protectSnapshot(repoPath, head, retainIn)
-      return { commit: head, clean: true }
+      return { snapshot: { commit: head, clean: true }, base }
     }
 
     // Identical working state must reuse its snapshot commit: commit objects
@@ -192,7 +203,7 @@ export async function takeSnapshot(
     const cached = snapshotCommits.get(cacheKey)
     if (cached && (await git(repoPath, ['cat-file', '-e', `${cached}^{commit}`])) !== undefined) {
       await protectSnapshot(repoPath, cached, retainIn)
-      return { commit: cached, clean }
+      return { snapshot: { commit: cached, clean }, base }
     }
 
     const { stdout: commit } = await run(
@@ -212,7 +223,7 @@ export async function takeSnapshot(
       const oldest = snapshotCommits.keys().next().value
       if (oldest !== undefined) snapshotCommits.delete(oldest)
     }
-    return { commit: commit.trim(), clean }
+    return { snapshot: { commit: commit.trim(), clean }, base }
   } finally {
     await rm(indexDir, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -332,9 +343,7 @@ const SNAPSHOT_IDENTITY = {
  * What a working tree is compared against: HEAD and its tree, or only the empty
  * tree in a repository whose first commit does not exist yet.
  */
-export async function snapshotBase(
-  repoPath: string,
-): Promise<{ head: string | undefined; tree: string }> {
+export async function snapshotBase(repoPath: string): Promise<SnapshotBase> {
   const head = await git(repoPath, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])
   if (head) {
     const tree = await git(repoPath, ['rev-parse', `${head}^{tree}`])

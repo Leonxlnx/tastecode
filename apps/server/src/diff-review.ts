@@ -7,7 +7,7 @@ import { realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { z } from 'zod'
-import { snapshotBase, takeSnapshot } from './checkpoint.js'
+import { takeSnapshotWithBase } from './checkpoint.js'
 import { canonicalCheckoutRoot } from './checkout-access.js'
 import type { Store } from './store.js'
 
@@ -95,11 +95,13 @@ async function parseDiff(
   const root = canonicalCheckoutRoot(repoPath)
   const scope = path.relative(root, realpathSync(repoPath)) || '.'
   // Before the first commit, changes are shown against the empty tree.
-  const snapshotFrom = await snapshotBase(root)
+  const { snapshot, base: snapshotFrom } = await takeSnapshotWithBase(repoPath)
   const base = snapshotFrom.head ?? snapshotFrom.tree
-  const snapshot = await takeSnapshot(repoPath)
   repoPath = root
-  const tree = (await git(repoPath, ['rev-parse', `${snapshot.commit}^{tree}`])).trim()
+  const tree =
+    snapshot.commit === snapshotFrom.head
+      ? snapshotFrom.tree
+      : (await git(repoPath, ['rev-parse', `${snapshot.commit}^{tree}`])).trim()
   const version = digest(`${base}\0${tree}`)
   const files = await changedFiles(repoPath, base, snapshot.commit, scope)
   // Bounded fan-out: a formatter sweep can touch thousands of files, and one
