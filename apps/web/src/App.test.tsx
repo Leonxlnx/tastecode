@@ -17859,6 +17859,44 @@ describe('feedback entry points', () => {
     expect(composer).toBeTruthy()
   })
 
+  it('keeps a later feedback draft focused after an earlier submission succeeds', async () => {
+    enableFeedback()
+    let finish!: (result: { ok: true }) => void
+    const pending = new Promise((resolve) => {
+      finish = resolve
+    })
+    const base = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'feedback.submit' ? pending : base(method, params),
+    )
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    const search = await screen.findByRole(
+      'textbox',
+      { name: 'Search commands' },
+      { timeout: 10_000 },
+    )
+    fireEvent.change(search, { target: { value: 'send feedback' } })
+    await screen.findByText('Send feedback…')
+    fireEvent.keyDown(search, { key: 'Enter' })
+    const first = await screen.findByRole('dialog', { name: 'Send feedback' })
+    fireEvent.change(within(first).getByLabelText('Message'), { target: { value: 'First draft' } })
+    fireEvent.click(within(first).getByRole('button', { name: 'Send' }))
+    expect(rpcCount('feedback.submit')).toBe(1)
+    fireEvent.click(within(first).getByRole('button', { name: 'Cancel' }))
+    submitTurn('/feedback Second draft')
+    const second = await screen.findByRole('dialog', { name: 'Send feedback' })
+    const field = within(second).getByLabelText('Message')
+    fireEvent.change(field, { target: { value: 'Second draft with edits' } })
+    await act(async () => finish({ ok: true }))
+    expect(screen.getByDisplayValue('Second draft with edits')).toBe(field)
+    expect(document.activeElement).toBe(field)
+    fireEvent.click(within(second).getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Send feedback' })).toBeNull())
+    expect(rpcCount('feedback.submit')).toBe(2)
+  })
+
   it('opens the dialog from the palette and from /feedback without sending anything', async () => {
     enableFeedback()
     render(<App />)
