@@ -1285,8 +1285,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     [openFeedback],
   )
   const closeFeedback = useCallback(() => setFeedbackRequest(undefined), [])
-  const finishFeedback = useCallback(() => {
-    setFeedbackRequest(undefined)
+  const finishFeedback = useCallback((id: FeedbackRequest['id']) => {
+    setFeedbackRequest((current) => (current?.id === id ? undefined : current))
     setNotice(FEEDBACK_SENT_NOTICE)
   }, [])
   const [archiveToastDismissed, setArchiveToastDismissed] = useState(false)
@@ -8898,7 +8898,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
             transport={transport}
             request={feedbackRequest}
             status={feedback.status}
-            onSent={finishFeedback}
+            onSent={() => finishFeedback(feedbackRequest.id)}
             onStatusChange={feedback.refresh}
             onClose={closeFeedback}
           />
