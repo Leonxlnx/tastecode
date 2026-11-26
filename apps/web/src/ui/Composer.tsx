@@ -724,6 +724,7 @@ function ComposerComponent(props: {
   const heldSubmit = useRef<
     | {
         text: string
+        attachmentIds: Set<string>
         submission: RunningSubmission
         threadId: string | undefined
         request: number | undefined
@@ -877,7 +878,6 @@ function ComposerComponent(props: {
   useEffect(() => {
     const held = heldSubmit.current
     if (!held || props.sendAvailability === 'loading') return
-    heldSubmit.current = undefined
     // A check that ends in setup or sign-in keeps the draft, and the composer
     // says why. Changed words or another chat mean the Enter no longer stands.
     if (
@@ -885,11 +885,16 @@ function ComposerComponent(props: {
       textRef.current !== held.text ||
       props.threadId !== held.threadId ||
       draftRequestRef.current?.request !== held.request
-    )
+    ) {
+      heldSubmit.current = undefined
       return
-    submit(held.submission)
-    // Runs only when availability changes; submit reads the current render.
-  }, [props.sendAvailability])
+    }
+    const captured = attachments.filter((file) => held.attachmentIds.has(file.id))
+    if (captured.length === held.attachmentIds.size && captured.some((file) => !file.path)) return
+    heldSubmit.current = undefined
+    if (captured.length === held.attachmentIds.size && voiceState === 'idle')
+      sendContent(held.text, held.submission, captured)
+  }, [props.sendAvailability, attachments])
 
   useEffect(() => {
     mounted.current = true
@@ -1480,6 +1485,7 @@ function ComposerComponent(props: {
   }
 
   const removeAttachment = (id: string, previewUrl?: string) => {
+    if (heldSubmit.current?.attachmentIds.has(id)) heldSubmit.current = undefined
     pendingAttachments.current.delete(id)
     // Side effects stay outside the updater — updaters run during render and
     // replay under StrictMode. Only renderer-created blob previews are revoked;
@@ -1489,12 +1495,6 @@ function ComposerComponent(props: {
     }
     releasePreview(previewUrl)
     setAttachments((current) => current.filter((attachment) => attachment.id !== id))
-  }
-
-  const clearAttachments = () => {
-    for (const attachment of attachments) releasePreview(attachment.previewUrl)
-    setViewingMedia(undefined)
-    setAttachments([])
   }
 
   const addDroppedFiles = (files: File[]) => {
@@ -1543,7 +1543,11 @@ function ComposerComponent(props: {
     props.onAttachmentsChange?.(paths)
   }, [attachments, props.onAttachmentsChange])
 
-  const sendContent = (content: string, submission: RunningSubmission = 'queue') => {
+  const sendContent = (
+    content: string,
+    submission: RunningSubmission = 'queue',
+    files = attachments,
+  ) => {
     // Chips are only how the draft looks: the provider and TasteCode's own
     // commands read the tokens they stand for.
     const prompt = composerWireText(content, { images: props.attachmentsSupported })
@@ -1579,7 +1583,7 @@ function ComposerComponent(props: {
       return true
     }
     const trimmed = prompt.trim()
-    const pickedPaths = attachments.flatMap((attachment) => attachment.path ?? [])
+    const pickedPaths = files.flatMap((attachment) => attachment.path ?? [])
     const paths = [
       ...new Set([
         ...pickedPaths,
@@ -1588,10 +1592,10 @@ function ComposerComponent(props: {
     ]
     if (
       (trimmed === '' && paths.length === 0) ||
-      pickedPaths.length !== attachments.length ||
+      pickedPaths.length !== files.length ||
       props.disabled ||
       sendAvailabilityRef.current !== 'ready' ||
-      (!props.attachmentsSupported && attachments.length > 0)
+      (!props.attachmentsSupported && files.length > 0)
     )
       return false
     if (!props.projectPath && !props.withoutProject) {
@@ -1611,7 +1615,13 @@ function ComposerComponent(props: {
     else props.onSend(trimmed, paths)
     composerAtMaximumHeight.current = false
     setResourceTrigger(undefined)
-    clearAttachments()
+    for (const file of files) releasePreview(file.previewUrl)
+    setViewingMedia(undefined)
+    setAttachments(
+      files.length === attachments.length
+        ? []
+        : attachments.filter((file) => !files.includes(file)),
+    )
     if (el) {
       if (resizeFrame.current !== undefined) window.cancelAnimationFrame(resizeFrame.current)
       el.style.height = `${currentHeight}px`
@@ -1631,9 +1641,13 @@ function ComposerComponent(props: {
     // Send is still loading (the model list or the account check has not
     // answered): keep the Enter and send once Send is ready, instead of
     // ignoring it while the words stay in the box.
-    if (sendAvailabilityRef.current === 'loading') {
+    if (
+      sendAvailabilityRef.current === 'loading' ||
+      (sendAvailabilityRef.current === 'ready' && attachments.some((file) => !file.path))
+    ) {
       heldSubmit.current = {
         text: textRef.current,
+        attachmentIds: new Set(attachments.map((file) => file.id)),
         submission,
         threadId: props.threadId,
         request: draftRequestRef.current?.request,

@@ -3697,6 +3697,57 @@ describe('Composer error dismissal', () => {
 })
 
 describe('Composer Enter while Send is loading', () => {
+  it.each(['ready', 'loading'] as const)(
+    'sends only the files present at Enter when %s',
+    async (availability) => {
+      let finish!: (picked: { path: string; name: string }) => void
+      bridge.savePastedFile.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+      )
+      vi.stubGlobal('harness', {
+        droppedFilePath: (file: File) =>
+          file.name === 'pending.txt' ? undefined : '/work/' + file.name,
+      })
+      const send = vi.fn()
+      const view = renderComposer(send, { sendAvailability: availability })
+      const area = screen.getByPlaceholderText('Do anything')
+      const drop = (name: string) =>
+        fireEvent.drop(area, {
+          dataTransfer: { types: ['Files'], files: [new File(['notes'], name)] },
+        })
+      fireEvent.change(area, { target: { value: 'First' } })
+      drop('before.txt')
+      fireEvent.paste(area, { clipboardData: { files: [new File(['notes'], 'pending.txt')] } })
+      expect(bridge.savePastedFile).toHaveBeenCalledOnce()
+      fireEvent.keyDown(area, { key: 'Enter' })
+      drop('later.txt')
+      view.rerenderComposer({ sendAvailability: 'ready' })
+      expect(send).not.toHaveBeenCalled()
+      await act(async () => finish({ path: '/saved/pending.txt', name: 'pending.txt' }))
+      expect(send.mock.calls).toEqual([['First', ['/work/before.txt', '/saved/pending.txt']]])
+      fireEvent.keyDown(area, { key: 'Enter' })
+      expect(send.mock.calls[1]).toEqual(['', ['/work/later.txt']])
+    },
+  )
+
+  it('keeps a later file for the next Enter while readiness is pending', () => {
+    const send = vi.fn()
+    const view = renderComposer(send, { sendAvailability: 'loading' })
+    vi.stubGlobal('harness', { droppedFilePath: () => '/work/later.txt' })
+    const area = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(area, { target: { value: 'First' } })
+    fireEvent.keyDown(area, { key: 'Enter' })
+    fireEvent.drop(area, {
+      dataTransfer: { types: ['Files'], files: [new File(['notes'], 'later.txt')] },
+    })
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(send.mock.calls).toEqual([['First', []]])
+    fireEvent.keyDown(area, { key: 'Enter' })
+    expect(send.mock.calls[1]).toEqual(['', ['/work/later.txt']])
+  })
+
   it('sends the words once Send is ready', () => {
     const onSend = vi.fn()
     const view = renderComposer(onSend, { sendAvailability: 'loading' })
