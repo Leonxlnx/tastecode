@@ -120,7 +120,7 @@ export function parseComposerDrafts(saved: string | null): Map<string, ComposerD
   }
 }
 
-export function serializeComposerDrafts(
+function serializeComposerDrafts(
   drafts: ReadonlyMap<string, ComposerDraft>,
 ): string | undefined {
   const restorable = [...drafts].filter(([key]) => !key.startsWith('pending:'))
