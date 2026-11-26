@@ -3109,6 +3109,14 @@ export class Store {
       // A chat's sub-agents go with it, as in `deleteThread`. They are never
       // closed themselves, so left behind nothing could reach or remove them.
       ids = [...new Set(candidates.flatMap((id) => [id, ...this.ownedThreadIds(id)]))]
+      // Their provider sessions stay on disk. Like a deleted chat's, they are kept out of
+      // provider history, which would otherwise import them as new chats.
+      const sessions = candidates.flatMap((id) => {
+        const thread = this.thread(id)
+        return thread && !thread.ephemeral
+          ? [{ id, provider: thread.provider, session: thread.providerSessionId ?? thread.id }]
+          : []
+      })
       // The archive is flushed to disk while the transaction still holds the
       // selected state. A failed write cannot erase even one conversation.
       this.#writeHistoryArchive(archive, ids)
@@ -3128,6 +3136,16 @@ export class Store {
         this.subagents.deleteFor(id)
         this.#db.prepare('DELETE FROM threads WHERE id = ?').run(id)
       }
+      // After the deletes: a session another remaining chat runs on is still that chat's.
+      const leave = this.#db.prepare(
+        `INSERT INTO left_provider_sessions (provider, session_id, thread_id, left_at)
+         SELECT ?, ?, ?, ? WHERE NOT EXISTS (
+           SELECT 1 FROM threads WHERE provider = ? AND COALESCE(provider_session_id, id) = ?)
+         ON CONFLICT(provider, session_id) DO NOTHING`,
+      )
+      const now = Date.now()
+      for (const { id, provider, session } of sessions)
+        leave.run(provider, session, id, now, provider, session)
     })
     for (const id of ids) {
       this.#ephemeralThreads.delete(id)
@@ -3246,6 +3264,25 @@ export class Store {
           for (const row of this.#db.prepare(`SELECT * FROM ${table}`).iterate())
             write({ table, row })
         }
+      }
+      // A sub-agent run keeps its full task and result here, and the parent's transcript
+      // only a shortened card. The rows a prune deletes with a chat, as subagents.deleteFor
+      // finds them, go in once each.
+      if (ids) {
+        const query = this.#db.prepare(
+          'SELECT * FROM subagent_runs WHERE parent_thread_id = ? OR thread_id = ?',
+        )
+        const written = new Set<string>()
+        for (const id of ids)
+          for (const row of query.iterate(id, id)) {
+            const itemId = String((row as { item_id: unknown }).item_id)
+            if (written.has(itemId)) continue
+            written.add(itemId)
+            write({ table: 'subagent_runs', row })
+          }
+      } else {
+        for (const row of this.#db.prepare('SELECT * FROM subagent_runs').iterate())
+          write({ table: 'subagent_runs', row })
       }
       fsyncSync(descriptor)
       complete = true

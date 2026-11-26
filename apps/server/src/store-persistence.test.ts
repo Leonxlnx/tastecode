@@ -283,6 +283,56 @@ describe('durable history ownership', () => {
     expect(store.providerHistories()).toHaveLength(1)
   })
 
+  it("archives a pruned chat's sub-agent runs before deleting them", () => {
+    const { store, root } = setup()
+    // A declined run never started a chat; its full task is only in this row.
+    store.subagents.add({
+      itemId: 'declined-run',
+      parentThreadId: 'thread',
+      shortId: 'a1',
+      turnId: 'turn',
+      provider: 'codex',
+      task: 'The whole task, which the transcript card shortens',
+      state: 'declined',
+      snapshot: { id: 'a1', state: 'declined', provider: 'codex' },
+      createdAt: 1,
+    } as Parameters<typeof store.subagents.add>[0])
+    store.closeThread('thread')
+    const archive = path.join(root, 'archive.ndjson')
+    expect(store.pruneHistory(Date.now() + 1_000, archive)).toBe(1)
+
+    const runs = readFileSync(archive, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .filter((entry) => entry.table === 'subagent_runs')
+    expect(runs).toEqual([
+      expect.objectContaining({
+        row: expect.objectContaining({
+          item_id: 'declined-run',
+          task: 'The whole task, which the transcript card shortens',
+        }),
+      }),
+    ])
+    expect(store.subagents.get('declined-run')).toBeUndefined()
+  })
+
+  it("keeps a pruned chat's provider session out of provider history", () => {
+    const { store, root } = setup()
+    store.addThread({
+      id: 'grok-chat',
+      projectPath: root,
+      provider: 'grok',
+      title: 'Pruned',
+      providerSessionId: 'native-session',
+    } as Parameters<typeof store.addThread>[0])
+    store.closeThread('grok-chat')
+    expect(store.pruneHistory(Date.now() + 1_000, path.join(root, 'archive.ndjson'))).toBe(1)
+
+    expect(store.leftProviderSessions('grok')).toEqual(['native-session'])
+    expect(store.leftProviderSessions('codex')).toEqual([])
+  })
+
   it('retains checkpoints and undo tails for providers absent from this build', () => {
     const { store, root, location } = setup()
     const seq = store.append('thread', message('first'))
