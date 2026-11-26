@@ -1166,6 +1166,7 @@ describe('a database written by a newer build', () => {
       // still stored for a build that understands it.
       expect(reopened.claimQueuedTurn('weird', 'q2', 'normal')).toBeUndefined()
       expect(reopened.diffDecision('weird', 'hunk:1')).toBeUndefined()
+      expect(reopened.diffDecisions('weird', ['hunk:1', 'hunk:missing'])).toEqual(new Map())
     } finally {
       reopened.close()
       rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })

@@ -15,7 +15,14 @@ const git = (args: string[], input?: string) =>
 const write = (file: string, value: string | Buffer) => writeFileSync(path.join(repo, file), value)
 async function compare(base: string, commit: string, scope = '.') {
   const read = () =>
-    parseReviewFiles(repo, 'thread', { diffDecision: () => 'accept' }, base, commit, scope)
+    parseReviewFiles(
+      repo,
+      'thread',
+      { diffDecisions: (_threadId, targets) => new Map(targets.map((id) => [id, 'accept'])) },
+      base,
+      commit,
+      scope,
+    )
   vi.spyOn(patches, 'readReviewPatches').mockResolvedValueOnce(new Map())
   const legacy = await read()
   const current = await read()
@@ -185,7 +192,7 @@ it('recovers all files when the combined patch exceeds the real 64 MiB buffer', 
   const base = git(['mktree'], '')
   const names = Array.from({ length: 16 }, (_, i) => `large-${i}`)
   const tree = git(['mktree', '-z'], names.map((name) => `100644 blob ${blob}\t${name}\0`).join(''))
-  const decisions = { diffDecision: () => undefined }
+  const decisions = { diffDecisions: () => new Map() }
   const bulk = patches.readReviewPatches
   let failure: unknown
   vi.spyOn(patches, 'readReviewPatches').mockImplementation((runGit, ...args) =>
