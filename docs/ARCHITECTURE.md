@@ -816,14 +816,23 @@ The rules that solve it:
    Retry. Closing find only drops that read's reply: a transport request cannot be aborted, so
    the server still sends the whole history and the renderer still parses and validates it
    (about 133 ms for a 4.76 MB chat in the browser) before discarding it.
-8. **Partial background caches do not grow a second transcript.** Eligible partial running states compact immediately.
-   At most eight other inactive workers keep a hot transcript, limited to 256 items and
-   262,144 UTF-16 code units per worker and 512 items and 524,288 code units across workers.
-   Compacted workers retain lifecycle and attention state and reload history when selected.
+8. **Partial background caches do not grow a second transcript.** Pruning skips the active and
+   beside chats and any chat with a pending submission, buffered deltas, a history buffer or
+   history owner, queued items, pending approvals or unanswered input requests. Pending start
+   tokens, tracked submission starts, queued starts, queue actions and unknown queues also
+   protect a chat. Of the remaining inactive running workers, those without a durable sequence
+   compact immediately. At most eight others keep rows, with limits of 256 items and 262,144
+   counted UTF-16 code units per worker and 512 items and 524,288 counted units in total.
+   Compaction clears the rows and retains lifecycle and blocking state.
 9. **Completed inactive histories have a shared text budget.** The 16-entry / 24,000-item LRU
-   also caps the counted strings (item ids, text, commands, paths, attachments) at 24 Mi
-   characters (up to 48 MiB of UTF-16 payload); nested payloads such as subagent summaries and
-   object overhead are not counted. An oversized completed transcript leaves the cache and
+   also caps counted text at 24 × 1,048,576 UTF-16 code units. Both running and completed
+   budgets count each item's id, turn id, text, command, path and attachment strings, using
+   the live item when present. Metadata contributes the active turn id, timing-map keys, plan
+   step text, usage model, diff and diff turn id. Approval ids, reasons, commands, working
+   directories and paths count, as do input request and turn ids, question ids, headers and
+   question text, option labels and descriptions, and review keys, ids, turn ids, descriptions
+   and rationales. Other fields (including nested subagent payloads) and object overhead are
+   outside the character count. An oversized eligible completed transcript leaves the cache and
    reloads from the local event log when selected. One exception sits outside these limits: the
    finished chat the focused column showed last (the chat just left) is kept whole, whatever its
    size, so switching back to it is instant. It stops being kept when another chat becomes the
