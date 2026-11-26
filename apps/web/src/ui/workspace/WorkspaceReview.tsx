@@ -145,6 +145,9 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   const checkoutGeneration = useRef(0)
   const draftGeneration = useRef(0)
   const actionGeneration = useRef(0)
+  const commitBranch = useRef(props.branch)
+  const committing = useRef(false)
+  committing.current = busy === 'commit'
   /** The message is a generated draft nobody edited, so other changes make it stale. */
   const untouchedDraft = useRef(false)
   const diffVersion = useRef<string>(undefined)
@@ -171,12 +174,28 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
     setBusy(undefined)
   }, [dropStaleDraft])
 
+  const observeCommitBranch = useCallback(
+    (branch: string | undefined) => {
+      if (!branch) return
+      const previous = commitBranch.current
+      commitBranch.current = branch
+      if (!previous || previous === branch) return
+      if (committing.current) resetActions()
+      else {
+        dropStaleDraft()
+        setCommitMessage('')
+      }
+    },
+    [dropStaleDraft, resetActions],
+  )
+
   /** Branch, upstream and pull request, shared with the header chip. */
   const readCheckout = useCallback(
     async (refresh: boolean) => {
       const projectPath = props.projectPath
       if (!projectPath) return
       const mine = ++checkoutGeneration.current
+      const branchAtRequest = commitBranch.current
       try {
         const result = await props.transport.request('pullRequests.forCheckout', {
           projectPath,
@@ -184,6 +203,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
           ...(refresh ? { refresh } : {}),
         })
         if (checkoutGeneration.current !== mine) return
+        if (commitBranch.current === branchAtRequest) observeCommitBranch(result.branch)
         setCheckout(result)
         publishCheckoutPullRequest(projectPath, threadId, result)
       } catch {
@@ -191,7 +211,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         if (checkoutGeneration.current === mine) setCheckout(undefined)
       }
     },
-    [props.projectPath, threadId, props.transport],
+    [observeCommitBranch, props.projectPath, threadId, props.transport],
   )
 
   /** The checkout's uncommitted changes. A quiet read, during a turn, shows no spinner. */
@@ -373,6 +393,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   )
 
   useEffect(() => {
+    commitBranch.current = undefined
     setDiff(undefined)
     setCheckout(undefined)
     diffVersion.current = undefined
@@ -385,6 +406,10 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
       actionGeneration.current += 1
     }
   }, [resetActions, props.projectPath, threadId, refresh])
+
+  useEffect(() => {
+    observeCommitBranch(props.branch)
+  }, [props.projectPath, threadId, props.branch, observeCommitBranch])
 
   const refreshAfterChange = useCallback(() => void refresh(), [refresh])
   const followTurn = useCallback(() => readDiff(true), [readDiff])

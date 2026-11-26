@@ -441,6 +441,62 @@ function renderReview(
 }
 
 describe('WorkspaceReview git actions', () => {
+  it.each([
+    [true, false],
+    [false, false],
+    [false, true],
+  ])(
+    'discards edits when switching branch (commit pending: %s, discovered on refresh: %s)',
+    async (pending, refreshed) => {
+      const { state, transport, answers, calls } = gitCheckout({
+        diff: changed,
+        checkout: lookup({ branch: 'feature/a' }),
+      })
+      let finish!: () => void
+      const gate = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      answers['workspace.commit'] = async () => {
+        await gate
+        return { commit: 'c'.repeat(40) }
+      }
+      const review = (branch: string) => (
+        <WorkspaceReview
+          transport={transport}
+          projectPath="/repo"
+          threadId="thread-1"
+          branch={branch}
+          theme="dark"
+        />
+      )
+      const view = render(review('feature/a'))
+      await screen.findByText('src/index.ts, src/new.ts')
+      fireEvent.click(screen.getByRole('button', { name: 'Commit changes' }))
+      const field = screen.getByRole('textbox', { name: 'Commit message' })
+      fireEvent.change(field, { target: { value: 'Submitted' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Commit 2 files' }))
+      fireEvent.change(field, { target: { value: 'Only for A' } })
+      const switchBranch = async () => {
+        state.checkout = lookup({ branch: 'feature/b' })
+        if (refreshed) {
+          fireEvent.click(screen.getByRole('button', { name: 'Refresh diff' }))
+          await screen.findByRole('button', { name: 'Publish feature/b to origin' })
+        } else {
+          view.rerender(review('feature/b'))
+        }
+      }
+      if (pending) await switchBranch()
+      await act(async () => finish())
+      expect(calls('workspace.commit')[0]).toMatchObject({ message: 'Submitted' })
+      if (!pending) await switchBranch()
+      await screen.findByText('src/index.ts, src/new.ts')
+      fireEvent.click(screen.getByRole('button', { name: 'Commit changes' }))
+      expect(
+        (screen.getByRole('textbox', { name: 'Commit message' }) as HTMLTextAreaElement).value,
+      ).toBe('')
+    },
+  )
+
   it.each([true, false])(
     'keeps the commit message edited during submission (clean: %s)',
     async (cleanAfterCommit) => {
