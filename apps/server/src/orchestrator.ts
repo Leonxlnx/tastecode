@@ -2181,13 +2181,21 @@ export class Orchestrator {
       throw new Error('This chat is already moving to another provider.')
     }
     this.#assertCanChangeProvider(threadId)
-    const approvalChange = this.#approvalChanges.get(threadId)
-    if (approvalChange) await approvalChange.catch(() => undefined)
-
+    // Taken before the first wait: a second move that came in meanwhile passed the check
+    // above, then stopped this one's new session and took the chat.
     this.#changingProvider.add(threadId)
     const panicGeneration = this.#panicGeneration
     const disposeGeneration = this.#disposeGeneration
     try {
+      const approvalChange = this.#approvalChanges.get(threadId)
+      if (approvalChange) {
+        await approvalChange.catch(() => undefined)
+        // The chat may have been closed, or started a turn, while the mode changed.
+        const current = this.#store.thread(threadId)
+        if (!current || current.closedAt !== undefined)
+          throw new Error(`no such thread: ${threadId}`)
+        this.#assertCanChangeProvider(threadId)
+      }
       // A resume already under way would attach the session the chat leaves.
       await this.#resumingThreads.get(threadId)?.catch(() => undefined)
       if (stored.worktreePath && !existsSync(stored.worktreePath)) {

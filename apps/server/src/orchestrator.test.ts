@@ -5747,6 +5747,27 @@ describe('several sessions at once', () => {
       }
     })
 
+    it('lets only one of two moves go that both came during an access mode change', async () => {
+      const { orchestrator, store, open } = resumingChat(1)
+      try {
+        const changing = orchestrator.setThreadApproval('persisted-thread', 'ask')
+        const first = orchestrator.changeProvider('persisted-thread', { provider: 'grok' })
+        const second = orchestrator.changeProvider('persisted-thread', { provider: 'grok' })
+        open[0]!()
+        await changing.catch(() => undefined)
+        const [moved, refused] = await Promise.allSettled([first, second])
+
+        expect(moved).toMatchObject({ status: 'fulfilled', value: { provider: 'grok' } })
+        expect(refused).toMatchObject({ status: 'rejected' })
+        expect((refused as PromiseRejectedResult).reason.message).toMatch(
+          'already moving to another provider',
+        )
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
     it('starts no resume for a prompt whose chat moves to another provider meanwhile', async () => {
       const { orchestrator, store, resumedIds, open } = resumingChat(2)
       try {
