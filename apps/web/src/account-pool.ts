@@ -28,7 +28,7 @@ import type { UsageSummaryState } from './usage-summary-state.js'
  */
 
 /** The 5-hour session window and the weekly window, told apart by their length. */
-export type PoolWindowKind = PoolWindow['kind']
+type PoolWindowKind = PoolWindow['kind']
 
 const WINDOW_MINUTES = { session: 300, weekly: 10_080 } as const satisfies Record<
   PoolWindowKind,
@@ -41,7 +41,7 @@ const WINDOW_LABELS = { session: 'Session', weekly: 'Weekly' } as const satisfie
 const KINDS: readonly PoolWindowKind[] = ['session', 'weekly']
 
 /** A plan's size per window, in units of the provider's cheapest plan. Absent: not known. */
-export type PoolWeights = NonNullable<PoolAccount['weights']>
+type PoolWeights = NonNullable<PoolAccount['weights']>
 
 export type ProviderPool = ResultOf<'accounts.pool'> & {
   /** The cheapest plan the weights count in, such as "Pro"; absent when no plan is known. */
@@ -297,7 +297,7 @@ export function poolsOf(
 }
 
 /** Per provider, the account its pool recommends for new chats. */
-export type RecommendedAccounts = Partial<Record<ProviderId, AccountId>>
+type RecommendedAccounts = Partial<Record<ProviderId, AccountId>>
 
 /** The account each provider with several accounts recommends for new chats. */
 export function recommendedAccounts(pools: readonly ProviderPool[]) {
@@ -311,7 +311,7 @@ export function recommendedAccounts(pools: readonly ProviderPool[]) {
 }
 
 /** One account's part of a window's bar. */
-export type PoolSegment = {
+type PoolSegment = {
   accountId: AccountId
   label: string
   weight: number
