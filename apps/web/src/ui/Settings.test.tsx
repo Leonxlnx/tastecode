@@ -326,6 +326,7 @@ describe('phone access in settings', () => {
   }
 
   it('shows Phone once the server says this build offers it, and hides it until then', async () => {
+    await import('./PhoneSettings.js')
     let answer: (status: typeof phoneStatus & { available?: boolean }) => void = () => {}
     const transport = new TestTransport((method) => {
       if (method !== 'phone.status') return new Promise(() => {})
