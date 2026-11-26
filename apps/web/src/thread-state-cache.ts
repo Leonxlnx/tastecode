@@ -83,8 +83,7 @@ export function touchThreadState(
 /**
  * Bound complete inactive histories while retaining anything that still has
  * live or unsaved work. The durable cursor leaves with an evicted history so
- * selecting it later performs one safe full reload instead of extending a
- * missing prefix.
+ * selecting it later requests the newest page from the event log.
  */
 export function pruneInactiveThreadStates(
   states: Map<string, ThreadState>,
