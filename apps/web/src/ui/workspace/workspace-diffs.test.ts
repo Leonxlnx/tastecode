@@ -1,10 +1,14 @@
+import { parsePatchFiles } from '@pierre/diffs'
 import type { DiffFile } from '@harness/contracts'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   workspaceDiffCollection,
   workspaceDiffFilePatch,
+  workspaceDiffFilterCache,
   workspaceDiffItemId,
 } from './workspace-diffs.js'
+
+vi.mock('@pierre/diffs', { spy: true })
 
 const modifiedFile = {
   path: 'src/index.ts',
@@ -28,6 +32,37 @@ const modifiedFile = {
 } satisfies DiffFile
 
 describe('workspace diffs', () => {
+  it('filters without reparsing previously visible files', () => {
+    const files: DiffFile[] = [
+      modifiedFile,
+      { ...modifiedFile, path: 'docs/index.md', previousPath: 'old.md', status: 'renamed' },
+      { ...modifiedFile, path: 'assets/icon', binary: true },
+    ]
+    const matches = ['', 'i', 'index', 'docs', 'none', ''].map((query) =>
+      files.filter((file) => file.path.includes(query)),
+    )
+    const parse = vi.mocked(parsePatchFiles)
+    parse.mockClear()
+    const expected = matches.map((selection) => workspaceDiffCollection('v', selection))
+    expect(parse).toHaveBeenCalledTimes(9)
+    parse.mockClear()
+    const cached = workspaceDiffFilterCache('v')
+    expect(matches.map(cached)).toEqual(expected)
+    expect(parse).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps parse-error fallbacks when a file becomes visible again', () => {
+    const parse = vi.mocked(parsePatchFiles)
+    parse.mockClear()
+    parse.mockReturnValueOnce([])
+    const cached = workspaceDiffFilterCache('v')
+    const expected = { items: [], fallbacks: [{ file: modifiedFile, reason: 'parse-error' }] }
+    expect(cached([modifiedFile])).toEqual(expected)
+    expect(cached([])).toEqual({ items: [], fallbacks: [] })
+    expect(cached([modifiedFile])).toEqual(expected)
+    expect(parse).toHaveBeenCalledTimes(1)
+  })
+
   it('reconstructs a unified patch from the workspace diff contract', () => {
     expect(workspaceDiffFilePatch(modifiedFile)).toBe(
       [

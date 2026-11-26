@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
+import { parsePatchFiles } from '@pierre/diffs'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { CheckoutPullRequestResult, PullRequestTarget, SessionDiff } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TestTransport } from '../../test-transport.js'
 import { WorkspaceReview } from './WorkspaceReview.js'
 
+vi.mock('@pierre/diffs', { spy: true })
 vi.mock('@pierre/diffs/react', () => ({
   CodeView: ({ items }: { items: Array<{ fileDiff: { name: string } }> }) => (
     <div>{items.map((item) => item.fileDiff.name).join(', ')}</div>
@@ -17,6 +19,42 @@ afterEach(() => {
 })
 
 describe('WorkspaceReview', () => {
+  it('reuses parsed files across filter edits until the next diff arrives', async () => {
+    const files = ['src/a.ts', 'docs/b.md'].map((path) => ({
+      path,
+      status: 'added' as const,
+      binary: false,
+      hunks: [],
+    }))
+    let diff: SessionDiff = { threadId: 'w', version: 'first', files }
+    const parse = vi.mocked(parsePatchFiles)
+    parse.mockClear()
+    render(
+      <WorkspaceReview
+        transport={
+          new TestTransport(async (method: string) => {
+            if (method === 'workspace.diff') return diff
+            throw new Error(method)
+          })
+        }
+        projectPath="/repo"
+        branch="main"
+        theme="dark"
+      />,
+    )
+    const input = await screen.findByRole('textbox', { name: 'Filter changed files' })
+    expect(parse).toHaveBeenCalledTimes(2)
+    for (const value of ['s', ' SRC ', 'missing', 'd', '']) {
+      fireEvent.change(input, { target: { value } })
+    }
+    expect(screen.getByText('src/a.ts, docs/b.md')).toBeTruthy()
+    expect(parse).toHaveBeenCalledTimes(2)
+    diff = { ...diff, version: 'second', files: [files[0]!] }
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh diff' }))
+    await screen.findByText('src/a.ts')
+    expect(parse).toHaveBeenCalledTimes(3)
+  })
+
   it('loads the active checkout diff without requiring an isolated thread', async () => {
     const diff = {
       threadId: 'workspace-checkout',
