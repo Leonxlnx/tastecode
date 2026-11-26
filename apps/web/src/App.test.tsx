@@ -314,7 +314,6 @@ vi.mock('./ui/TerminalPane.js', async (importOriginal) => {
 
 vi.mock('./bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./bridge.js')>()),
-  savePastedFile: vi.fn(),
   canDropProjectFolders: true,
   droppedProjectFolderPaths,
   get isDesktop() {
@@ -1541,6 +1540,32 @@ describe('web client', () => {
       '/work/later.png',
       '/work/first.png',
     ])
+  })
+
+  it('restores a held send to its original chat after the attachment finishes elsewhere', async () => {
+    let finish!: (file: { path: string; name: string }) => void
+    const save = vi.spyOn(await import('./bridge.js'), 'savePastedFile')
+    save.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    const area = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.paste(area(), { clipboardData: { files: [new File(['notes'], 'held.txt')] } })
+    expect(save).toHaveBeenCalledOnce()
+    submitTurn('Belongs in the existing chat')
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    fireEvent.change(area(), { target: { value: 'Other draft' } })
+    await act(async () => finish({ path: '/saved/held.txt', name: 'held.txt' }))
+    expect(rpcCount('thread.start')).toBe(0)
+    expect(rpcCount('thread.sendTurn')).toBe(0)
+    expect(area().value).toBe('Other draft')
+    expect(screen.queryByRole('button', { name: 'Remove held.txt' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    expect(area().value).toBe('Belongs in the existing chat')
+    expect(screen.getByRole('button', { name: 'Remove held.txt' })).toBeTruthy()
   })
 
   it('brings back every unsent draft after a restart', async () => {
@@ -11721,8 +11746,20 @@ describe('new chats', () => {
       serverProjects = [
         { path: '/work/project', name: 'TasteCode', pinned: false, createdAt: 0, sessions: [] },
       ]
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method, params) =>
+        method === 'projects.createChatFolder'
+          ? Promise.resolve({
+              path: '/generated/chat',
+              name: 'chat',
+              pinned: false,
+              createdAt: 1,
+              chat: true,
+            })
+          : request(method, params),
+      )
       let finish!: (file: { path: string; name: string }) => void
-      const save = vi.mocked((await import('./bridge.js')).savePastedFile)
+      const save = vi.spyOn(await import('./bridge.js'), 'savePastedFile')
       save.mockReturnValueOnce(
         new Promise((resolve) => {
           finish = resolve
