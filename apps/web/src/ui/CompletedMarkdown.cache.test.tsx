@@ -4,13 +4,24 @@ import { expect, it, vi } from 'vitest'
 import { CompletedMarkdown } from './CompletedMarkdown.js'
 import { createFinishedBlockCache } from './finished-block-cache.js'
 
-const controls = vi.hoisted(() => ({ bypass: false, split: vi.fn() }))
+const controls = vi.hoisted(() => ({
+  bypass: false,
+  observe: undefined as ((local: string[], resident: string[]) => void) | undefined,
+  split: vi.fn(),
+}))
 vi.mock('./finished-block-cache.js', async (original) => {
   const actual = await original<typeof import('./finished-block-cache.js')>()
   return {
     ...actual,
     finishedBlocks: (text: string, split: (text: string) => string[]) =>
-      controls.bypass ? split(text) : actual.finishedBlocks(text, split),
+      controls.bypass
+        ? split(text)
+        : actual.finishedBlocks(text, (input) => {
+            const local = split(input)
+            if (controls.observe)
+              queueMicrotask(() => controls.observe?.(local, actual.finishedBlocks(input, split)))
+            return local
+          }),
   }
 })
 vi.mock('./markdown-blocks.js', async (original) => {
@@ -69,4 +80,27 @@ it('evicts least recently used entries by byte charge and skips oversized inputs
   const split = vi.fn((s: string) => [s])
   for (const key of ['a', 'b', 'a', 'x'.repeat(200), 'c', 'a', 'b']) cache(key, split)
   expect(split.mock.calls.flat()).toEqual(['a', 'b', 'x'.repeat(200), 'c', 'b'])
+})
+
+it('keeps a finished entry independent of the unmounted streaming row', async () => {
+  const view = render(<CompletedMarkdown text="" growing />)
+  let text = ''
+  for (let i = 0; i < 20; i++) {
+    text += `Paragraph ${i} ${'long prose '.repeat(30)}\n\n`
+    view.rerender(<CompletedMarkdown text={text} growing />)
+  }
+  const observe = vi.fn()
+  controls.observe = observe
+  try {
+    view.rerender(<CompletedMarkdown text={text} />)
+    view.unmount()
+    await Promise.resolve()
+    expect(observe).toHaveBeenCalled()
+    for (const [local, resident] of observe.mock.calls) {
+      expect(resident).toEqual(local)
+      expect(resident).not.toBe(local)
+    }
+  } finally {
+    controls.observe = undefined
+  }
 })
