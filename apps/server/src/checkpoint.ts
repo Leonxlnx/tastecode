@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
+import { indexTrustsWorkingTree } from './checkpoint-index.js'
 import { canonicalCheckoutRoot } from './checkout-access.js'
 import { ownershipRefusal } from './git-ownership.js'
 
@@ -290,19 +291,6 @@ async function cleanStatus(repoPath: string, scope: string): Promise<string | un
     '--',
     `:(literal)${scope}`,
   ])
-}
-
-/**
- * Whether git compares every tracked file with the working tree. Status skips
- * files marked assume-unchanged or skip-worktree, so an edit to one of them
- * would look clean although the full snapshot records it.
- */
-async function indexTrustsWorkingTree(repoPath: string): Promise<boolean> {
-  const entries = await git(repoPath, ['ls-files', '-v', '-z'])
-  return (
-    entries !== undefined &&
-    entries.split('\0').every((entry) => entry === '' || entry.startsWith('H '))
-  )
 }
 
 /**
