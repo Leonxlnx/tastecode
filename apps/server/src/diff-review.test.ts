@@ -416,6 +416,23 @@ describe('structured diff review', () => {
       expect(existsSync(path.join(nested, 'created.txt'))).toBe(false)
     })
 
+    it('undoes a checkpoint turn diff in the project when the same path exists from the root', async () => {
+      // `nested project/nested project/twin.txt` is the agent's file. From the repository root,
+      // the same relative path names `nested project/twin.txt`, which holds the same text.
+      const inner = path.join(nested, 'nested project')
+      mkdirSync(inner)
+      writeFileSync(path.join(inner, 'twin.txt'), 'before\n')
+      writeFileSync(path.join(nested, 'twin.txt'), 'after\n')
+      const start = await takeSnapshot(nested)
+      writeFileSync(path.join(inner, 'twin.txt'), 'after\n')
+      const patch = await patchSince(nested, start.commit, ['nested project/twin.txt'])
+
+      await reverseUnifiedDiff(nested, patch!)
+
+      expect(readFileSync(path.join(inner, 'twin.txt'), 'utf8')).toBe('before\n')
+      expect(readFileSync(path.join(nested, 'twin.txt'), 'utf8')).toBe('after\n')
+    })
+
     it('reverses a patch with paths relative to the repository', async () => {
       const patch = git('diff', '--binary', '--no-color')
 

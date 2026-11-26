@@ -277,6 +277,9 @@ export async function reverseUnifiedDiff(repoPath: string, patch: string): Promi
   let oldLeft = 0
   let newLeft = 0
   const lines = patch.split('\n')
+  // How many file paths the patch names, and how many of them were absolute
+  // paths inside the project folder.
+  const named = { paths: 0, inProject: 0 }
   const relative = lines
     .flatMap((line, index) => {
       if (line.startsWith('diff --git ')) {
@@ -284,7 +287,7 @@ export async function reverseUnifiedDiff(repoPath: string, patch: string): Promi
         binary = false
         missingMode = true
         oldLeft = newLeft = 0
-        return relativePatchPath(line, roots)
+        return relativePatchPath(line, roots, named)
       }
       // Older imported Codex turns joined files with a blank line, which
       // `--recount` would read as one more context line of the previous hunk.
@@ -329,7 +332,7 @@ export async function reverseUnifiedDiff(repoPath: string, patch: string): Promi
         line.startsWith('copy to ') ||
         line.startsWith('Binary files ')
       ) {
-        return relativePatchPath(line, roots)
+        return relativePatchPath(line, roots, named)
       }
       return line
     })
@@ -360,7 +363,11 @@ export async function reverseUnifiedDiff(repoPath: string, patch: string): Promi
   // which reading applies before changing anything.
   const scope = gitPath(path.relative(canonicalCheckoutRoot(repoPath), realpathSync(repoPath)))
   let extra: string[] = []
-  if (scope !== '') {
+  // Absolute paths in the project folder say which reading is meant; relative ones
+  // can match files from either, so they are checked first.
+  if (scope !== '' && named.paths > 0 && named.inProject === named.paths)
+    extra = [`--directory=${scope}`]
+  else if (scope !== '') {
     const applies = (result: { code: number | null; stderr: string }) =>
       result.code === 0 && !/^Skipped patch /m.test(result.stderr)
     const fromRoot = await apply(['--check', '--verbose'])
@@ -382,8 +389,14 @@ function gitPath(value: string): string {
   return normalized.length > 1 ? normalized.replace(/\/+$/, '') : normalized
 }
 
-function relativePatchPath(line: string, roots: ReadonlySet<string>): string {
+function relativePatchPath(
+  line: string,
+  roots: ReadonlySet<string>,
+  named: { paths: number; inProject: number },
+): string {
   const relative = (value: string): string => {
+    if (/^"?(?:[ab]\/)?\/dev\/null"?$/.test(value)) return value
+    named.paths += 1
     const quoted = value.startsWith('"')
     const start = quoted ? '"' : ''
     for (const root of roots) {
@@ -394,7 +407,10 @@ function relativePatchPath(line: string, roots: ReadonlySet<string>): string {
       for (const spelling of spellings) {
         for (const prefix of ['a/', 'b/', '']) {
           const absolute = `${start}${prefix}${spelling}/`
-          if (value.startsWith(absolute)) return `${start}${prefix}${value.slice(absolute.length)}`
+          if (value.startsWith(absolute)) {
+            named.inProject += 1
+            return `${start}${prefix}${value.slice(absolute.length)}`
+          }
         }
       }
     }
