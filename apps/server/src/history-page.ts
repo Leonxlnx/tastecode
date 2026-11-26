@@ -1,3 +1,4 @@
+import { carriesContextWindow } from './history-replay.js'
 import { createHash } from 'node:crypto'
 import type { DomainEvent } from '@harness/contracts'
 
@@ -6,6 +7,8 @@ type HistoryEntry = { seq: number; event: DomainEvent }
 /** What the rows before a cut still hold open: the latest usage and unanswered requests. */
 export type HistoryCarry = {
   usage?: HistoryEntry | undefined
+  /** The latest usage with a context window, when the latest usage has none. */
+  contextUsage?: HistoryEntry | undefined
   approvals: ReadonlyMap<string, HistoryEntry>
   userInputs: ReadonlyMap<string, HistoryEntry>
 }
@@ -142,12 +145,14 @@ export function readNewestHistoryPageFromTail(
   if (first <= 0) return undefined
   const block = blocks[first]!
   const snapshotSeq = tail.at(-1)!.seq
-  // Compaction keeps only the latest usage report; an older one counts only
-  // while the tail has none.
+  // Compaction keeps only the latest usage report, and the latest with a context
+  // window; an older one counts only while the tail has none of its kind.
   const carry = prior()
-  const earlier = tail.some(({ event }) => event.type === 'usage.updated')
-    ? { ...carry, usage: undefined }
-    : carry
+  const earlier = {
+    ...carry,
+    ...(tail.some(({ event }) => event.type === 'usage.updated') ? { usage: undefined } : {}),
+    ...(tail.some(({ event }) => carriesContextWindow(event)) ? { contextUsage: undefined } : {}),
+  }
   return {
     events: [...carriedState(tail, block.start, earlier), ...tail.slice(block.start)],
     page: {
@@ -225,16 +230,20 @@ function carriedState(
 ): HistoryEntry[] {
   const earlier = [...prior.approvals.values(), ...prior.userInputs.values()]
   if (prior.usage) earlier.push(prior.usage)
+  if (prior.contextUsage && prior.contextUsage !== prior.usage) earlier.push(prior.contextUsage)
   earlier.sort((left, right) => left.seq - right.seq)
   const ranks = new Map(earlier.map((entry, index) => [entry, index - earlier.length]))
   const rank = (entry: HistoryEntry) => ranks.get(entry)!
   let usage = prior.usage ? rank(prior.usage) : undefined
+  let contextUsage = prior.contextUsage ? rank(prior.contextUsage) : undefined
   const approvals = new Map([...prior.approvals].map(([id, entry]) => [id, rank(entry)]))
   const userInputs = new Map([...prior.userInputs].map(([id, entry]) => [id, rank(entry)]))
   for (let index = 0; index < end; index += 1) {
     const event = entries[index]!.event
-    if (event.type === 'usage.updated') usage = index
-    else if (event.type === 'approval.requested') approvals.set(event.request.id, index)
+    if (event.type === 'usage.updated') {
+      usage = index
+      if (carriesContextWindow(event)) contextUsage = index
+    } else if (event.type === 'approval.requested') approvals.set(event.request.id, index)
     else if (event.type === 'approval.resolved') approvals.delete(event.id)
     else if (event.type === 'turn.completed') approvals.clear()
     else if (event.type === 'user_input.requested') userInputs.set(event.request.id, index)
@@ -247,6 +256,7 @@ function carriedState(
   }
   const carried = [...approvals.values(), ...userInputs.values()]
   if (usage !== undefined) carried.push(usage)
+  if (contextUsage !== undefined && contextUsage !== usage) carried.push(contextUsage)
   return carried
     .sort((left, right) => left - right)
     .map((index) => (index < 0 ? earlier[index + earlier.length]! : entries[index]!))

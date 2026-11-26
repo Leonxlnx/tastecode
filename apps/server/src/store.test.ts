@@ -3076,6 +3076,21 @@ describe('diff review decisions', () => {
 })
 
 describe('usage totals', () => {
+  it('carries the last context reading from before a page when later usage has none', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'one', projectPath: '/repo', provider: 'acp', title: 'One' })
+    const reading = store.append('one', {
+      type: 'usage.updated',
+      usage: { ...usage(40_000).usage, contextWindow: 200_000 },
+    } as DomainEvent)
+    store.append('one', usage(12))
+    const page = store.append('one', usage(13))
+
+    const carry = store.historyCarryBefore('one', page + 1)
+    expect(carry.usage?.event).toMatchObject({ usage: { totalTokens: 13 } })
+    expect(carry.contextUsage?.seq).toBe(reading)
+  })
+
   it('turns cumulative Codex updates into session and daily increments', () => {
     vi.useFakeTimers()
     try {

@@ -23,6 +23,9 @@ export function compactHistoryReplay(entries: readonly HistoryEntry[]): HistoryE
   const finalItems = new Map(projectHistoryItems(entries).map((item) => [item.id, item]))
   const firstItemEvent = new Map<string, { index: number; type: DomainEvent['type'] }>()
   let lastUsage = -1
+  // A report without a context window leaves the meter on the last one that had it, as the
+  // renderer's reducer does, so that one stays too.
+  let lastContextUsage = -1
   let lastDiff = -1
   let lastPlan = -1
 
@@ -31,8 +34,10 @@ export function compactHistoryReplay(entries: readonly HistoryEntry[]): HistoryE
     if (event.type === 'turn.started') {
       lastDiff = -1
       lastPlan = -1
-    } else if (event.type === 'usage.updated') lastUsage = index
-    else if (event.type === 'diff.updated') lastDiff = index
+    } else if (event.type === 'usage.updated') {
+      lastUsage = index
+      if (carriesContextWindow(event)) lastContextUsage = index
+    } else if (event.type === 'diff.updated') lastDiff = index
     else if (event.type === 'plan.updated') lastPlan = index
 
     const itemId = historyItemId(event)
@@ -41,7 +46,7 @@ export function compactHistoryReplay(entries: readonly HistoryEntry[]): HistoryE
     }
   }
 
-  const retainedState = new Set([lastUsage, lastDiff, lastPlan])
+  const retainedState = new Set([lastUsage, lastContextUsage, lastDiff, lastPlan])
   const compacted: HistoryEntry[] = []
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index]!
@@ -75,6 +80,11 @@ export function compactHistoryReplay(entries: readonly HistoryEntry[]): HistoryE
     compacted[compacted.length - 1] = { ...compactedTail, seq: sourceTailSeq }
   }
   return compacted
+}
+
+/** A usage report that sets the context meter, not only the token counts. */
+export function carriesContextWindow(event: DomainEvent): boolean {
+  return event.type === 'usage.updated' && event.usage.contextWindow !== undefined
 }
 
 /** Whether compaction would change the replay at all. */
