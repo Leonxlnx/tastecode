@@ -399,11 +399,12 @@ describe('cross-session search', () => {
             resolveRefresh = resolve
           }),
       )
+    const onSelect = vi.fn()
     render(
       <SessionSearch
         transport={new TestTransport((method, params) => request(method, params))}
         projects={PROJECTS}
-        onSelect={() => undefined}
+        onSelect={onSelect}
         onClose={() => undefined}
       />,
     )
@@ -420,6 +421,9 @@ describe('cross-session search', () => {
     fireEvent.change(search, { target: { value: 'second' } })
     expect(screen.getByText('Messages and output')).toBeTruthy()
     expect(screen.getByRole('option', { name: /Fix regression/ })).toBeTruthy()
+    fireEvent.keyDown(search, { key: 'Enter' })
+    fireEvent.click(screen.getByRole('option', { name: /Fix regression/ }))
+    expect(onSelect).not.toHaveBeenCalled()
     await act(async () => vi.advanceTimersByTime(80))
     expect(screen.getByText('Messages and output')).toBeTruthy()
 
@@ -428,6 +432,7 @@ describe('cross-session search', () => {
         results: [
           {
             ...RESULT,
+            threadId: 'second-thread',
             threadTitle: 'Second result',
             snippet: [{ text: 'second', highlighted: true }],
           },
@@ -438,6 +443,8 @@ describe('cross-session search', () => {
     })
     expect(screen.queryByRole('option', { name: /Fix regression/ })).toBeNull()
     expect(screen.getByRole('option', { name: /Second result/ })).toBeTruthy()
+    fireEvent.keyDown(search, { key: 'Enter' })
+    expect(onSelect).toHaveBeenCalledWith('second-thread', RESULT.turnId)
   })
 
   it('shows ACP title and content matches with their source product name', async () => {

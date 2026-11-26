@@ -88,6 +88,11 @@ function SessionSearchComponent(props: {
   const [projectPath, setProjectPath] = useState(props.initialProjectPath ?? '')
   const [provider, setProvider] = useState<ProviderId | ''>('')
   const [results, setResults] = useState<SessionSearchResult[]>([])
+  const [resultScope, setResultScope] = useState<{
+    term: string
+    projectPath: string
+    provider: string
+  }>()
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [searching, setSearching] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -221,6 +226,7 @@ function SessionSearchComponent(props: {
         })
         .then((page) => {
           if (revision.current !== current) return
+          setResultScope({ term, projectPath, provider })
           setResults(page.results)
           setNextCursor(page.nextCursor)
         })
@@ -279,7 +285,15 @@ function SessionSearchComponent(props: {
   }
 
   const choose = (result: DisplaySearchResult | undefined) => {
-    if (result) props.onSelect(result.threadId, result.turnId)
+    if (!result) return
+    if (
+      result.kind === 'content' &&
+      (resultScope?.term !== term ||
+        resultScope.projectPath !== projectPath ||
+        resultScope.provider !== provider)
+    )
+      return
+    props.onSelect(result.threadId, result.turnId)
   }
 
   return (
