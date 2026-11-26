@@ -805,6 +805,23 @@ describe('Composer media attachments', () => {
     },
   )
 
+  it('removes metadata lines while keeping distinct prose in a file drop', () => {
+    const send = vi.fn()
+    vi.stubGlobal('harness', { droppedFilePath: () => 'C:/work/notes.txt' })
+    renderComposer(send)
+    fireEvent.drop(screen.getByPlaceholderText('Do anything'), {
+      dataTransfer: {
+        files: [new File(['notes'], 'notes.txt')],
+        types: ['Files', 'text/plain'],
+        getData: () => 'c:/work/notes.txt\nsummarize this\n\n  see notes.txt for details',
+      },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(send).toHaveBeenCalledWith('summarize this\n\n  see notes.txt for details', [
+      'C:/work/notes.txt',
+    ])
+  })
+
   it('opens the resource picker for fallback mixed-drop text and sends its selected chip', async () => {
     const send = vi.fn()
     vi.stubGlobal('harness', { droppedFilePath: () => '/work/notes.txt' })
