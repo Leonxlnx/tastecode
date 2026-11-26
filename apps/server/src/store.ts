@@ -3150,8 +3150,8 @@ export class Store {
    */
   foldCompletedItemDeltas(): number {
     let removed = 0
-    // No derived table references a stream fragment, but every deleted event
-    // would still scan the child tables whose event columns have no index.
+    // The DELETE excludes fragments retained by provider history. The remaining
+    // fragments have no child references, so skip per-event foreign-key checks.
     // The setting cannot change inside a transaction, so it wraps this one.
     this.#db.exec('PRAGMA foreign_keys = OFF')
     try {

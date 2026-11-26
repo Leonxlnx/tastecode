@@ -314,6 +314,12 @@ export function resolveWorkspacePath(workspacePath: string): string {
   return workspacePath
 }
 
+/** One key per file whichever way an agent named it; Windows paths ignore case. */
+function checkoutPathKey(folder: string, file: string): string {
+  const resolved = path.resolve(folder, file)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
+
 /**
  * The private checkout a chat's stored folder belongs to.
  *
@@ -324,12 +330,6 @@ export function resolveWorkspacePath(workspacePath: string): string {
  * checkout is gone, the walk up can reach an unrelated repository above the
  * worktree directory.
  */
-/** One key per file whichever way an agent named it; Windows paths ignore case. */
-function checkoutPathKey(folder: string, file: string): string {
-  const resolved = path.resolve(folder, file)
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
-}
-
 function privateCheckoutPath(worktreePath: string): string {
   const root = canonicalCheckoutRoot(worktreePath)
   const marker = statSync(path.join(root, '.git'), { throwIfNoEntry: false })

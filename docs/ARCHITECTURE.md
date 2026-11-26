@@ -816,10 +816,10 @@ The rules that solve it:
    Retry. Closing find only drops that read's reply: a transport request cannot be aborted, so
    the server still sends the whole history and the renderer still parses and validates it
    (about 133 ms for a 4.76 MB chat in the browser) before discarding it.
-8. **Partial background caches do not grow a second transcript.** At most eight inactive
-   workers keep a hot transcript, with 256 items or 256 KiB per worker and 512 items or 512 KiB
-   in total. Older or larger workers retain only lifecycle and attention state. Their transcript
-   reloads from the local event log when selected.
+8. **Partial background caches do not grow a second transcript.** Eligible partial running states compact immediately.
+   At most eight other inactive workers keep a hot transcript, limited to 256 items and
+   262,144 UTF-16 code units per worker and 512 items and 524,288 code units across workers.
+   Compacted workers retain lifecycle and attention state and reload history when selected.
 9. **Completed inactive histories have a shared text budget.** The 16-entry / 24,000-item LRU
    also caps the counted strings (item ids, text, commands, paths, attachments) at 24 Mi
    characters (up to 48 MiB of UTF-16 payload); nested payloads such as subagent summaries and
