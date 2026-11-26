@@ -41,6 +41,7 @@ import {
   MarkdownImageContext,
 } from './MarkdownImage.js'
 import { MarkdownBlock, MarkdownCode, MarkdownPre } from './LargeCodeBlock.js'
+import { finishedBlocks } from './finished-block-cache.js'
 import { closedBlockCount, createBlockSplitter } from './markdown-blocks.js'
 import { normalizeMathDelimiters } from './math-delimiters.js'
 
@@ -435,16 +436,20 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
   const source = closed ? closed.source : renderedText
   // Streamdown asks for the blocks of exactly the source it is given.
   const parseBlocks = useCallback(
-    (markdown: string) => (closed?.source === markdown ? closed.blocks : splitBlocks(markdown)),
-    [closed, splitBlocks],
+    (markdown: string) => {
+      if (closed?.source === markdown) return closed.blocks
+      if (!growing && markdown === renderedText) return finishedBlocks(markdown, splitBlocks)
+      return splitBlocks(markdown)
+    },
+    [closed, growing, renderedText, splitBlocks],
   )
   const [commits] = useState(() => new BlockCommits())
   // After the blocks' own layout effects: a commit that already shows every
   // block reports at once.
   useLayoutEffect(() => {
     if (!onRendered || growing) commits.stop()
-    else commits.expect(text, splitBlocks(renderedText), onRendered)
-  }, [commits, growing, onRendered, renderedText, splitBlocks, text])
+    else commits.expect(text, parseBlocks(renderedText), onRendered)
+  }, [commits, growing, onRendered, parseBlocks, renderedText, text])
   const imageSource = useContext(MarkdownImageContext)
   const chatImages = useContext(ChatImageContext)
   const rehypePlugins = useMemo(() => {
