@@ -1059,6 +1059,10 @@ describe('a database written by a newer build', () => {
 
     const raw = new DatabaseSync(file)
     raw.prepare(`UPDATE threads SET provider = ? WHERE id = ?`).run('provider-warned-once', 'alien')
+    // The build with that provider names it on the chat's usage rows too.
+    raw
+      .prepare(`UPDATE usage_events SET provider = ? WHERE thread_id = ?`)
+      .run('provider-warned-once', 'alien')
     raw.close()
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -1076,6 +1080,27 @@ describe('a database written by a newer build', () => {
       warn.mockRestore()
       rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
+  })
+
+  it('keeps usage with the provider and account that spent it after the chat moves', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    store.append('one', usage(100))
+    store.moveThreadToProvider('one', {
+      provider: 'claude-code',
+      accountId: 'work',
+      providerSessionId: 'moved-session',
+    })
+    store.append('one', usage(40))
+
+    expect(
+      store
+        .usageEvents()
+        .map(({ provider, accountId, usage }) => [provider, accountId, usage.totalTokens]),
+    ).toEqual([
+      ['codex', undefined, 100],
+      ['claude-code', 'work', 40],
+    ])
   })
 
   it('degrades rows a schema-divergent build could leave behind', () => {
