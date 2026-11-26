@@ -4837,6 +4837,33 @@ describe('several sessions at once', () => {
     await expect(later).resolves.toMatchObject({ queued: true })
   })
 
+  it('leaves alone a turn that a prompt sent after the Stop started', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    session.turnIds = ['t1', 't2', 't3']
+    await orchestrator.submitTurn(thread.id, 'running')
+    let prepared!: () => void
+    const preparing = new Promise<void>((resolve) => (prepared = resolve))
+    const onItsWay = orchestrator.trackSubmission(thread.id, async () => {
+      await preparing
+      return orchestrator.submitTurn(thread.id, 'on its way')
+    })
+
+    const stopping = orchestrator.interrupt(thread.id)
+    // The stopped turn ends by itself, and the user sends a new prompt after the click.
+    session.emit({ type: 'turn.completed', turnId: 't1', status: 'completed' })
+    await expect(orchestrator.submitTurn(thread.id, 'after the Stop')).resolves.toMatchObject({
+      queued: false,
+    })
+    prepared()
+    await expect(onItsWay).resolves.toMatchObject({ queued: true })
+    await expect(stopping).resolves.toBeUndefined()
+
+    expect(session.interrupted).toBe(false)
+    expect(orchestrator.isTurnRunning(thread.id)).toBe(true)
+  })
+
   it('starts no queued prompt while a Stop waits for a prompt on its way', async () => {
     const { sessions, orchestrator } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
