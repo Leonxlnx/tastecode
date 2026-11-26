@@ -127,7 +127,10 @@ export class OpenCodeEventMapper {
     if (event.type === 'session.tool.failed') return this.#v2Tool(data, 'failed')
     // v2 emits both `session.step.ended` and a cumulative
     // `session.usage.updated` for the same step. The latter is the stable
-    // turn-level value; mapping both would publish every usage update twice.
+    // value; mapping both would publish every usage update twice. It carries
+    // the session's totals so far, so it is marked cumulative: the server adds
+    // only what grew since the last one, where adding each would count every
+    // earlier step again.
     if (event.type === 'session.usage.updated') return [v2Usage(data, this.#model)]
     return []
   }
@@ -384,6 +387,7 @@ function v2Usage(data: Record<string, JsonRpcValue>, model?: string): DomainEven
       totalTokens: input + number(cache['read']) + number(cache['write']) + normalizedOutput,
       costUsd: number(data['cost']),
       inputIncludesCached: false,
+      cumulative: true,
     },
   }
 }
