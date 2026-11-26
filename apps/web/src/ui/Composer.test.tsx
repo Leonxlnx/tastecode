@@ -720,6 +720,38 @@ describe('Composer docking from the prompt box', () => {
 })
 
 describe('Composer media attachments', () => {
+  it('allows native text insertion when selected prose is dropped on the textarea', () => {
+    renderComposer(vi.fn())
+    const area = screen.getByPlaceholderText('Do anything')
+    expect(
+      fireEvent.drop(area, {
+        dataTransfer: { files: [], types: ['text/plain'], getData: () => 'selected prose' },
+      }),
+    ).toBe(true)
+  })
+
+  it('keeps the text and file of a mixed drop at the caret', () => {
+    const send = vi.fn()
+    vi.stubGlobal('harness', { droppedFilePath: () => '/work/notes.txt' })
+    renderComposer(send)
+    const area = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(area, { target: { value: 'ab' } })
+    area.setSelectionRange(1, 1)
+    expect(
+      fireEvent.drop(area, {
+        dataTransfer: {
+          files: [new File(['notes'], 'notes.txt')],
+          types: ['Files', 'text/plain'],
+          getData: () => 'XYZ',
+        },
+      }),
+    ).toBe(false)
+    expect(area.value).toBe('aXYZb')
+    expect(area.selectionStart).toBe(4)
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(send).toHaveBeenCalledWith('aXYZb', ['/work/notes.txt'])
+  })
+
   it('attaches native drops larger than 25 MiB without copying them', () => {
     const onSend = vi.fn()
     const nativeLookup = vi.fn(() => '/work/large.zip')

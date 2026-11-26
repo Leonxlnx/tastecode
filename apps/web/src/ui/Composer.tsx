@@ -1961,14 +1961,32 @@ function ComposerComponent(props: {
           ref={composerAnchor}
           className={`composer__box ${dragging ? 'is-dropping' : ''}`}
           onDragOver={(e) => {
-            e.preventDefault()
+            if (draggedQueueId || hasDroppedFiles(e)) e.preventDefault()
             if (props.attachmentsSupported && hasDroppedFiles(e)) setDragging(true)
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => {
-            e.preventDefault()
             setDragging(false)
-            if (hasDroppedFiles(e)) addDroppedFiles(Array.from(e.dataTransfer.files))
+            const el = area.current
+            if (!draggedQueueId && el && e.target === el && !hasDroppedFiles(e)) return
+            e.preventDefault()
+            if (!hasDroppedFiles(e)) return
+            addDroppedFiles(Array.from(e.dataTransfer.files))
+            if (
+              el &&
+              e.target === el &&
+              !el.disabled &&
+              Array.from(e.dataTransfer.types).includes('text/plain')
+            ) {
+              const text = e.dataTransfer.getData('text/plain')
+              if (!text) return
+              el.focus()
+              if (document.execCommand?.('insertText', false, text)) return
+              const start = el.selectionStart
+              updateText(el.value.slice(0, start) + text + el.value.slice(el.selectionEnd))
+              el.setSelectionRange(start + text.length, start + text.length)
+              grow()
+            }
           }}
         >
           {/* First child: the panel tucks its lower band behind the top of the box,
