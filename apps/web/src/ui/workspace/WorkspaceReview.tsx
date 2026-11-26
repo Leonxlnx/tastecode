@@ -333,7 +333,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         return `Pushed ${result.branch} to ${result.remote}`
       } finally {
         // Even a refused push may have set the upstream or moved the remote branch.
-        void readCheckout(true)
+        if (actionGeneration.current === mine) void readCheckout(true)
       }
     })
   }, [checkoutParams, props.transport, readCheckout, runAction])
@@ -365,7 +365,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
           }
           return `Opened pull request #${result.number}`
         } finally {
-          void readCheckout(true)
+          if (actionGeneration.current === mine) void readCheckout(true)
         }
       })
     },

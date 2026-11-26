@@ -533,6 +533,91 @@ describe('WorkspaceReview git actions', () => {
     expect(await screen.findByText('Committed ccccccc')).toBeTruthy()
     expect(calls('workspace.commit')).toHaveLength(1)
   })
+  it.each([
+    ['push', 'success'],
+    ['push', 'failure'],
+    ['create', 'success'],
+    ['create', 'failure'],
+  ])('keeps the shown checkout after an old %s settles (%s)', async (operation, outcome) => {
+    let finishAction!: () => void
+    let finishB!: () => void
+    const pendingAction = new Promise<void>((resolve) => {
+      finishAction = resolve
+    })
+    const pendingB = new Promise<void>((resolve) => {
+      finishB = resolve
+    })
+    let readsA = 0
+    let readsB = 0
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'workspace.diff') return clean
+      if (method === 'workspace.push' || method === 'pullRequests.create') {
+        await pendingAction
+        if (outcome === 'failure') throw new Error('rejected')
+        return method === 'workspace.push'
+          ? { branch: 'feature/a', remote: 'origin' }
+          : { repository: 'owner/repo', number: 7, url: 'https://github.com/owner/repo/pull/7' }
+      }
+      if (method === 'pullRequests.forCheckout') {
+        if ((params as { threadId: string }).threadId === 'thread-2') {
+          readsB++
+          await pendingB
+          return lookup({ branch: 'feature/b' })
+        }
+        readsA++
+        return lookup({
+          branch: 'feature/a',
+          ...(operation === 'create' ? { upstream: 'origin/feature/a', ahead: 0 } : {}),
+        })
+      }
+      throw new Error(method)
+    })
+    const view = renderReview(transport)
+    if (operation === 'push') {
+      fireEvent.click(await screen.findByRole('button', { name: 'Publish feature/a to origin' }))
+    } else {
+      fireEvent.click(await screen.findByRole('button', { name: 'Create pull request' }))
+      const form = screen.getByRole('form', { name: 'Create pull request' })
+      fireEvent.change(within(form).getByRole('textbox', { name: 'Pull request title' }), {
+        target: { value: 'New PR' },
+      })
+      fireEvent.submit(form)
+    }
+    view.rerender(
+      <WorkspaceReview
+        transport={transport}
+        projectPath="/repo"
+        threadId="thread-2"
+        branch="feature/b"
+        theme="dark"
+      />,
+    )
+    await waitFor(() => expect(readsB).toBe(1))
+    await act(async () => finishB())
+    expect(screen.getByRole('button', { name: 'Publish feature/b to origin' })).toBeTruthy()
+    await act(async () => finishAction())
+    expect(screen.getByRole('button', { name: 'Publish feature/b to origin' })).toBeTruthy()
+    expect(readsA).toBe(1)
+  })
+
+  it('still refreshes a refused push in the shown checkout', async () => {
+    const { answers, calls, transport } = gitCheckout({ diff: clean, checkout: lookup() })
+    let refuse!: (error: Error) => void
+    answers['workspace.push'] = () =>
+      new Promise((_resolve, reject) => {
+        refuse = reject
+      })
+    renderReview(transport)
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish feature/review to origin' }))
+    await act(async () => refuse(new Error('push refused')))
+    expect((await screen.findByRole('alert')).textContent).toBe('push refused')
+    expect(calls('pullRequests.forCheckout').at(-1)).toEqual({
+      projectPath: '/repo',
+      threadId: 'thread-1',
+      refresh: true,
+    })
+  })
+
   it('publishes a branch that was never pushed and pushes new commits later', async () => {
     const { state, answers, transport, calls } = gitCheckout({ diff: clean, checkout: lookup() })
     answers['workspace.push'] = () => {
