@@ -177,13 +177,31 @@ it('gives up on a page that stops answering and takes the next click', async () 
 })
 
 it('keeps one read waiting on a hung page with pins instead of starting more', async () => {
-  const { view } = setup()
-  await pin()
-  vi.mocked(view.executeJavaScript).mockReturnValue(new Promise(() => undefined))
-  const before = vi.mocked(view.executeJavaScript).mock.calls.length
-  // Past the 2 s answer limit: before, every tracking tick after it started another read.
-  await act(() => new Promise((resolve) => setTimeout(resolve, 2_600)))
-  expect(vi.mocked(view.executeJavaScript).mock.calls.length - before).toBe(1)
+  vi.useFakeTimers({
+    toFake: [
+      'setTimeout',
+      'clearTimeout',
+      'setInterval',
+      'clearInterval',
+      'requestAnimationFrame',
+      'cancelAnimationFrame',
+    ],
+  })
+  try {
+    const { view } = setup()
+    await act(async () => clickPage())
+    const input = screen.getByLabelText('Comment 1')
+    fireEvent.change(input, { target: { value: 'Make this smaller' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(screen.getByRole('button', { name: 'Add to chat' })).toBeTruthy()
+    vi.mocked(view.executeJavaScript).mockReturnValue(new Promise(() => undefined))
+    const before = vi.mocked(view.executeJavaScript).mock.calls.length
+    // Past the 2 s answer limit: before, every tracking tick after it started another read.
+    await act(() => vi.advanceTimersByTimeAsync(2_600))
+    expect(vi.mocked(view.executeJavaScript).mock.calls.length - before).toBe(1)
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 it('opens the box on a page whose screenshot never arrives, and takes the next click', async () => {
