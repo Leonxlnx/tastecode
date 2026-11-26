@@ -68,15 +68,31 @@ it.each(['true', 'false'])('matches individual patches with core.quotePath=%s', 
   write('large', 'x'.repeat(1024 * 1024 + 100))
   const base = git(['rev-parse', 'HEAD'])
   const { commit } = await takeSnapshot(repo)
+  const individual = vi.spyOn(patches, 'readFilePatch')
+  // The oracle read sends every file through readFilePatch; whatever the second read sends
+  // there is a fallback. Everything else must have come from the combined patch.
+  const fallbacks = (skip: number) =>
+    individual.mock.calls
+      .slice(skip)
+      .map((args) => args[4].path)
+      .sort()
   const result = await compare(base, commit)
   expect(result).toHaveLength(17)
+  expect(individual).toHaveBeenCalledTimes(17 + fallbacks(17).length)
+  expect(fallbacks(17)).toEqual(
+    quote === 'true'
+      ? ['new pure name', 'renamed file', '新 file']
+      : ['new pure name', 'renamed file'],
+  )
   expect(result.find((file) => file.value.path === 'new pure name')?.value).toMatchObject({
     previousPath: 'old pure name',
     status: 'renamed',
     hunks: [],
   })
+  const callsBeforeNested = individual.mock.calls.length
   const nested = await compare(base, commit, 'space b')
   expect(nested.map((f) => f.value.path)).toEqual(['space b/after', 'space b/second'])
+  expect(individual).toHaveBeenCalledTimes(callsBeforeNested + 2)
   expect(result.find((file) => file.value.path === 'renamed file')?.value).toMatchObject({
     previousPath: 'rename me',
     status: 'renamed',
