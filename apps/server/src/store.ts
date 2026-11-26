@@ -3470,9 +3470,35 @@ export class Store {
       targetId,
     )
     if (!row) return undefined
-    const parsed = DiffDecisionSchema.safeParse(row.decision)
+    return this.#parseDiffDecision(row.decision)
+  }
+
+  diffDecisions(threadId: string, targetIds: readonly string[]): Map<string, DiffDecision> {
+    const decisions = new Map<string, DiffDecision>()
+    // Leave room for the thread ID even on SQLite builds with a 999-variable limit.
+    const batchSize = 500
+    for (let offset = 0; offset < targetIds.length; offset += batchSize) {
+      const keys = targetIds.slice(offset, offset + batchSize)
+      const rows = sqliteRows<DiffDecisionRow & { target_id: string }>(
+        this.#db.prepare(
+          `SELECT target_id, decision FROM diff_decisions
+           WHERE thread_id = ? AND target_id IN (${keys.map(() => '?').join(',')})`,
+        ),
+        threadId,
+        ...keys,
+      )
+      for (const row of rows) {
+        const decision = this.#parseDiffDecision(row.decision)
+        if (decision) decisions.set(row.target_id, decision)
+      }
+    }
+    return decisions
+  }
+
+  #parseDiffDecision(value: string): DiffDecision | undefined {
+    const parsed = DiffDecisionSchema.safeParse(value)
     if (parsed.success) return parsed.data
-    console.warn(`[store] unknown diff decision '${row.decision}', treating as undecided`)
+    console.warn(`[store] unknown diff decision '${value}', treating as undecided`)
     return undefined
   }
 

@@ -16,9 +16,7 @@ const run = promisify(execFile)
 type ParsedHunk = { value: DiffHunk; patch: string }
 type ParsedFile = { value: DiffFile; patch: string; targetId: string; hunks: ParsedHunk[] }
 type ParsedDiff = { value: SessionDiff; files: ParsedFile[] }
-type DecisionReader = Pick<Store, 'diffDecision'>
-
-const NO_DECISIONS: DecisionReader = { diffDecision: () => undefined }
+type DecisionReader = Pick<Store, 'diffDecisions'>
 
 export class StaleDiffSnapshotError extends Error {
   constructor() {
@@ -37,7 +35,7 @@ export async function readSessionDiff(
 
 /** Read the current checkout against HEAD without enabling destructive review actions. */
 export async function readWorkspaceDiff(repoPath: string): Promise<SessionDiff> {
-  return (await parseDiff(repoPath, `workspace-${digest(repoPath)}`, NO_DECISIONS)).value
+  return (await parseDiff(repoPath, `workspace-${digest(repoPath)}`)).value
 }
 
 export async function reviewDiffHunk(
@@ -90,7 +88,7 @@ async function currentDiff(
 async function parseDiff(
   repoPath: string,
   threadId: string,
-  store: DecisionReader,
+  store?: DecisionReader,
 ): Promise<ParsedDiff> {
   const root = canonicalCheckoutRoot(repoPath)
   const scope = path.relative(root, realpathSync(repoPath)) || '.'
@@ -133,19 +131,30 @@ async function parseDiff(
     ])
     const hunks = parseHunks(file.path, patch, file.status === 'renamed')
     const targetId = digest(`file\0${file.path}\0${patch}`)
-    const fileDecision = store.diffDecision(threadId, fileTarget(targetId))
     const value: DiffFile = {
       path: file.path,
       ...(file.previousPath ? { previousPath: file.previousPath } : {}),
       status: file.status,
       binary: isBinaryPatch(patch),
-      hunks: hunks.map((hunk) => {
-        const decision = store.diffDecision(threadId, hunkTarget(hunk.value.id))
-        return { ...hunk.value, ...(decision ? { decision } : {}) }
-      }),
-      ...(fileDecision ? { decision: fileDecision } : {}),
+      hunks: hunks.map((hunk) => hunk.value),
     }
     return { value, patch, targetId, hunks }
+  }
+
+  if (store) {
+    const targets = parsed.flatMap((file) => [
+      fileTarget(file.targetId),
+      ...file.hunks.map((hunk) => hunkTarget(hunk.value.id)),
+    ])
+    const decisions = store.diffDecisions(threadId, targets)
+    for (const file of parsed) {
+      const decision = decisions.get(fileTarget(file.targetId))
+      if (decision) file.value.decision = decision
+      for (const hunk of file.value.hunks) {
+        const decision = decisions.get(hunkTarget(hunk.id))
+        if (decision) hunk.decision = decision
+      }
+    }
   }
 
   return {

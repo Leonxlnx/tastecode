@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { StatementSync } from 'node:sqlite'
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
@@ -10,7 +12,7 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   readSessionDiff,
   readWorkspaceDiff,
@@ -72,6 +74,72 @@ afterEach(() => {
 })
 
 describe('structured diff review', () => {
+  it('batches decisions while preserving the complete actionable diff', async () => {
+    const names = Array.from({ length: 100 }, (_, i) => `text-${i}.txt`)
+    const body = Array.from({ length: 100 }, (_, i) => `line ${i}\n`)
+    for (const name of names) writeFileSync(path.join(repo, name), body.join(''))
+    git('add', '.')
+    git('commit', '-qm', 'baseline')
+    for (const name of names)
+      writeFileSync(
+        path.join(repo, name),
+        body.map((line, i) => (i % 10 ? line : 'edited\n')).join(''),
+      )
+    writeFileSync(path.join(repo, 'binary.bin'), Buffer.from([0, 1]))
+    const expected = await readWorkspaceDiff(repo)
+    expected.threadId = 'thread-1'
+    expect(expected.files).toHaveLength(101)
+    expect(expected.files.flatMap((file) => file.hunks)).toHaveLength(1000)
+    const snapshot = await takeSnapshot(repo)
+    store.setDiffDecision('thread-1', 'hunk:stale', 'reject')
+    store.addThread({ id: 'other', projectPath: repo, provider: 'codex', title: 'Other' })
+    const reads = vi.spyOn(StatementSync.prototype, 'get')
+    const batches = vi.spyOn(StatementSync.prototype, 'all')
+    try {
+      for (const [i, file] of expected.files.entries()) {
+        const patch = git(
+          'diff',
+          '--binary',
+          '--no-color',
+          '--no-ext-diff',
+          '--no-textconv',
+          '--src-prefix=a/',
+          '--dst-prefix=b/',
+          '--find-renames',
+          '--unified=3',
+          'HEAD',
+          snapshot.commit,
+          '--',
+          `:(top,literal)${file.path}`,
+          `:(top,literal,exclude)${file.path}/`,
+        )
+        const id =
+          'file:' +
+          createHash('sha256')
+            .update(`file\0${file.path}\0${patch}`)
+            .digest('base64url')
+            .slice(0, 22)
+        if (i % 3 === 0) store.setDiffDecision('thread-1', id, 'accept')
+        const decision = store.diffDecision('thread-1', id)
+        if (decision) file.decision = decision
+        for (const [j, hunk] of file.hunks.entries()) {
+          const key = `hunk:${hunk.id}`
+          if (j % 3 !== 0) store.setDiffDecision('thread-1', key, j % 3 === 1 ? 'accept' : 'reject')
+          else store.setDiffDecision('other', key, 'reject')
+          const stored = store.diffDecision('thread-1', key)
+          if (stored) hunk.decision = stored
+        }
+      }
+      expect(reads.mock.calls).toHaveLength(1101)
+      reads.mockClear()
+      expect(await readSessionDiff(repo, 'thread-1', store)).toStrictEqual(expected)
+      expect(reads.mock.calls).toHaveLength(0)
+      expect(batches.mock.calls.map((args) => args.length)).toEqual([501, 501, 102])
+    } finally {
+      reads.mockRestore()
+      batches.mockRestore()
+    }
+  }, 180_000)
   it('shows real hunks for a nested project and excludes sibling changes', async () => {
     const nested = path.join(repo, 'nested project')
     mkdirSync(nested)
