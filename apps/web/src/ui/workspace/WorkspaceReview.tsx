@@ -309,7 +309,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
       }
       if (actionGeneration.current === mine) {
         untouchedDraft.current = false
-        setCommitMessage('')
+        setCommitMessage((current) => (current === message ? '' : current))
         setLastCommitMessage(message)
         setComposer(undefined)
       }

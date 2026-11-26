@@ -441,6 +441,65 @@ function renderReview(
 }
 
 describe('WorkspaceReview git actions', () => {
+  it.each([true, false])(
+    'keeps the commit message edited during submission (clean: %s)',
+    async (cleanAfterCommit) => {
+      const { state, answers, transport, calls } = gitCheckout({
+        diff: changed,
+        checkout: lookup(),
+      })
+      let finish!: () => void
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      answers['workspace.commit'] = async () => {
+        await pending
+        state.diff = cleanAfterCommit ? clean : { ...changed, version: 'tree-next' }
+        return { commit: 'c'.repeat(40) }
+      }
+      renderReview(transport)
+      await screen.findByText('src/index.ts, src/new.ts')
+      fireEvent.click(screen.getByRole('button', { name: 'Commit changes' }))
+      const field = screen.getByRole('textbox', { name: 'Commit message' })
+      fireEvent.change(field, { target: { value: 'First message' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Commit 2 files' }))
+      fireEvent.change(field, { target: { value: 'Next message' } })
+      await act(async () => finish())
+      await screen.findByText('Committed ccccccc')
+      expect(calls('workspace.commit')[0]).toMatchObject({ message: 'First message' })
+      expect(screen.queryByRole('form', { name: 'Commit changes' })).toBeNull()
+      if (cleanAfterCommit) {
+        state.diff = { ...changed, version: 'new-work' }
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh diff' }))
+        await screen.findByText('src/index.ts, src/new.ts')
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Commit changes' }))
+      expect(screen.getByDisplayValue('Next message')).toBeTruthy()
+    },
+  )
+
+  it('clears only the submitted commit draft after an unchanged submission', async () => {
+    const { answers, transport } = gitCheckout({ diff: changed, checkout: lookup() })
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    answers['workspace.commit'] = async () => {
+      await pending
+      return { commit: 'd'.repeat(40) }
+    }
+    renderReview(transport)
+    await screen.findByText('src/index.ts, src/new.ts')
+    fireEvent.click(screen.getByRole('button', { name: 'Commit changes' }))
+    const field = screen.getByRole('textbox', { name: 'Commit message' })
+    fireEvent.change(field, { target: { value: 'Submitted' } })
+    fireEvent.submit(screen.getByRole('form', { name: 'Commit changes' }))
+    await act(async () => finish())
+    await screen.findByText('Committed ddddddd')
+    fireEvent.click(screen.getByRole('button', { name: 'Commit changes' }))
+    expect(screen.getByRole('textbox', { name: 'Commit message' })).toHaveProperty('value', '')
+  })
+
   it('commits the written message with untracked files, then shows the push', async () => {
     const { state, answers, transport, calls } = gitCheckout({
       diff: changed,
