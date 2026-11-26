@@ -2014,17 +2014,15 @@ function ComposerComponent(props: {
               !el.disabled &&
               Array.from(e.dataTransfer.types).includes('text/plain')
             ) {
-              const text = e.dataTransfer.getData('text/plain')
-              if (
-                !text ||
-                text
-                  .trim()
-                  .split(/\r?\n/)
-                  .every((line) =>
-                    files.some(({ file, path }) => representsDroppedFile(line, file.name, path)),
-                  )
+              const lines = e.dataTransfer.getData('text/plain').split(/\r?\n/)
+              const prose = lines.filter(
+                (line) =>
+                  !files.some(({ file, path }) =>
+                    representsDroppedFile(line.trim(), file.name, path),
+                  ),
               )
-                return
+              const text = prose.join('\n')
+              if (!text || (prose.length < lines.length && !text.trim())) return
               el.focus()
               if (document.execCommand?.('insertText', false, text)) return
               const caret = el.selectionStart + text.length
@@ -2867,7 +2865,9 @@ function representsDroppedFile(text: string, name: string, path: string | undefi
       return false
     }
   }
-  return candidate.replaceAll('\\', '/') === path.replaceAll('\\', '/')
+  const normalize = (value: string) =>
+    value.replaceAll('\\', '/').replace(/^[a-z](?=:\/)/i, (drive) => drive.toUpperCase())
+  return normalize(candidate) === normalize(path)
 }
 
 function hasDroppedFiles(event: DragEvent<HTMLElement>): boolean {
