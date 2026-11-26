@@ -8,7 +8,7 @@ import {
   IconSparkles as Sparkles,
 } from '@tabler/icons-react'
 import { isMacOS } from '../../bridge.js'
-import { shortcutLabel } from '../../shortcuts.js'
+import { isComposingKey, shortcutLabel } from '../../shortcuts.js'
 import { IconMorph } from '../IconMorph.js'
 
 const SUBMIT_KEY = shortcutLabel({ key: 'enter', primary: true }, isMacOS())
@@ -16,6 +16,7 @@ const SUBMIT_KEY = shortcutLabel({ key: 'enter', primary: true }, isMacOS())
 /** Ctrl or Cmd+Enter submits, Escape closes; everything else is typing. */
 function composerKeys(onSubmit: () => void, onCancel: () => void) {
   return (event: KeyboardEvent) => {
+    if (isComposingKey(event)) return
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault()
       onSubmit()
@@ -140,12 +141,28 @@ export function ReviewPullRequestBox(props: {
   const submit = () => {
     if (ready) props.onCreate({ title: title.trim(), body, draft })
   }
-  const keys = composerKeys(submit, props.onCancel)
+  const composing = useRef(false)
+  const endTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(endTimer.current), [])
+  const shortcuts = composerKeys(submit, props.onCancel)
+  const keys = (event: KeyboardEvent) => {
+    if (!composing.current) shortcuts(event)
+  }
 
   return (
     <form
       className="workspace-review__composer"
       aria-label="Create pull request"
+      onCompositionStart={() => {
+        clearTimeout(endTimer.current)
+        composing.current = true
+      }}
+      onCompositionEnd={() => {
+        clearTimeout(endTimer.current)
+        endTimer.current = setTimeout(() => {
+          composing.current = false
+        }, 0)
+      }}
       onSubmit={(event: FormEvent) => {
         event.preventDefault()
         submit()
