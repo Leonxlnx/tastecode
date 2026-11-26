@@ -141,12 +141,28 @@ export function ReviewPullRequestBox(props: {
   const submit = () => {
     if (ready) props.onCreate({ title: title.trim(), body, draft })
   }
-  const keys = composerKeys(submit, props.onCancel)
+  const composing = useRef(false)
+  const endTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(endTimer.current), [])
+  const shortcuts = composerKeys(submit, props.onCancel)
+  const keys = (event: KeyboardEvent) => {
+    if (!composing.current) shortcuts(event)
+  }
 
   return (
     <form
       className="workspace-review__composer"
       aria-label="Create pull request"
+      onCompositionStart={() => {
+        clearTimeout(endTimer.current)
+        composing.current = true
+      }}
+      onCompositionEnd={() => {
+        clearTimeout(endTimer.current)
+        endTimer.current = setTimeout(() => {
+          composing.current = false
+        }, 0)
+      }}
       onSubmit={(event: FormEvent) => {
         event.preventDefault()
         submit()

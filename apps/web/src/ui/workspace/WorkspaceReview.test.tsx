@@ -565,9 +565,12 @@ describe('WorkspaceReview git actions', () => {
     expect(screen.queryByRole('button', { name: 'Create pull request' })).toBeNull()
   })
 
-  it.each([{ isComposing: true }, { keyCode: 229 }])(
-    'keeps PR candidate keys inside the input method (%j)',
-    async (ime) => {
+  it.each([
+    ['Windows', { isComposing: true }, { ctrlKey: true }],
+    ['macOS', { keyCode: 229 }, { metaKey: true }],
+  ] as const)(
+    'keeps PR candidate keys inside the input method on %s',
+    async (_platform, ime, modifier) => {
       const { transport, calls, answers } = gitCheckout({
         diff: clean,
         checkout: lookup({ upstream: 'origin/feature/review', ahead: 0 }),
@@ -590,16 +593,23 @@ describe('WorkspaceReview git actions', () => {
       const body = screen.getByRole('textbox', { name: 'Pull request description' })
       fireEvent.change(title, { target: { value: 'My title' } })
       fireEvent.change(body, { target: { value: 'My candidate' } })
+      fireEvent.compositionStart(body)
       fireEvent.keyDown(body, { key: 'Escape', ...ime })
       expect(screen.getByDisplayValue('My candidate')).toBe(body)
-      fireEvent.keyDown(title, { key: 'Enter', ctrlKey: true, ...ime })
+      fireEvent.keyDown(title, { key: 'Enter', ...modifier, ...ime })
       expect(calls('pullRequests.create')).toHaveLength(0)
+      fireEvent.compositionEnd(body)
+      fireEvent.keyDown(body, { key: 'Escape', isComposing: false, keyCode: 27 })
+      expect(screen.getByDisplayValue('My candidate')).toBe(body)
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
       fireEvent.keyDown(body, { key: 'Escape' })
       expect(screen.queryByRole('form', { name: 'Create pull request' })).toBeNull()
       fireEvent.click(screen.getByRole('button', { name: 'Create pull request' }))
       const freshTitle = screen.getByRole('textbox', { name: 'Pull request title' })
       fireEvent.change(freshTitle, { target: { value: 'Ready' } })
-      fireEvent.keyDown(freshTitle, { key: 'Enter', metaKey: true })
+      fireEvent.keyDown(freshTitle, { key: 'Enter', ...modifier })
       expect(calls('pullRequests.create')).toHaveLength(1)
       await act(async () => finish())
       expect(await screen.findByText('Opened pull request #42')).toBeTruthy()
