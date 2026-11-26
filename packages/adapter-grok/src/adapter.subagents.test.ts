@@ -2,7 +2,7 @@ import { ChildProcess } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { PassThrough } from 'node:stream'
 import type { DomainEvent, Item } from '@harness/contracts'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { GROK_CAPABILITIES, GrokAdapter } from './adapter.js'
 
 class FakeChild extends ChildProcess {
@@ -165,8 +165,21 @@ describe('Grok subagents', () => {
     const childList = captured.filter(
       (frame) => frame.type === 'tool_call' && frame.toolName === 'list_dir',
     )
-    write(child, [...spawn, ...childList])
-    await new Promise((resolve) => setTimeout(resolve, 1_100))
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    try {
+      write(child, [...spawn, ...childList])
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const progressCount = () =>
+        events.filter(
+          (event) => event.type === 'item.started' && event.item.subagent?.id === FOREGROUND,
+        ).length
+      expect(progressCount()).toBe(1)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(progressCount()).toBe(1)
+      await vi.advanceTimersByTimeAsync(1)
+    } finally {
+      vi.useRealTimers()
+    }
 
     const progress = events.filter(
       (event) => event.type === 'item.started' && event.item.subagent?.id === FOREGROUND,
