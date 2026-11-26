@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import { z } from 'zod'
 import { snapshotBase, takeSnapshot } from './checkpoint.js'
 import { canonicalCheckoutRoot } from './checkout-access.js'
+import { readFilePatch, readReviewPatches } from './review-patches.js'
 import type { Store } from './store.js'
 
 const run = promisify(execFile)
@@ -99,9 +100,28 @@ async function parseDiff(
   repoPath = root
   const tree = (await git(repoPath, ['rev-parse', `${snapshot.commit}^{tree}`])).trim()
   const version = digest(`${base}\0${tree}`)
-  const files = await changedFiles(repoPath, base, snapshot.commit, scope)
-  // Bounded fan-out: a formatter sweep can touch thousands of files, and one
-  // git process per file all at once hits Windows process-creation limits.
+  const parsed = await parseReviewFiles(repoPath, threadId, store, base, snapshot.commit, scope)
+  return {
+    value: { threadId, version, files: parsed.map((file) => file.value) },
+    files: parsed,
+  }
+}
+
+/** Parse the immutable trees captured for this refresh, including patches used by reject. */
+export async function parseReviewFiles(
+  repoPath: string,
+  threadId: string,
+  store: DecisionReader | undefined,
+  base: string,
+  commit: string,
+  scope = '.',
+): Promise<ParsedFile[]> {
+  const files = await changedFiles(repoPath, base, commit, scope)
+  const patches =
+    files.length > 1
+      ? await readReviewPatches(git, repoPath, base, commit, scope)
+      : new Map<string, string>()
+  // Bound concurrent Git processes when several paths require the individual reader.
   const parsed: ParsedFile[] = []
   const batch = 8
   for (let offset = 0; offset < files.length; offset += batch) {
@@ -111,24 +131,7 @@ async function parseDiff(
   async function parseFile(
     file: Awaited<ReturnType<typeof changedFiles>>[number],
   ): Promise<ParsedFile> {
-    const paths = file.previousPath ? [file.previousPath, file.path] : [file.path]
-    const patch = await git(repoPath, [
-      'diff',
-      '--binary',
-      '--no-color',
-      '--no-ext-diff',
-      '--no-textconv',
-      '--src-prefix=a/',
-      '--dst-prefix=b/',
-      '--find-renames',
-      '--unified=3',
-      base,
-      snapshot.commit,
-      '--',
-      // A pathspec also matches everything below a folder of the same name,
-      // such as foo/bar.ts added where the file foo was deleted.
-      ...paths.flatMap((file) => [`:(top,literal)${file}`, `:(top,literal,exclude)${file}/`]),
-    ])
+    const patch = patches.get(file.path) ?? (await readFilePatch(git, repoPath, base, commit, file))
     const hunks = parseHunks(file.path, patch, file.status === 'renamed')
     const targetId = digest(`file\0${file.path}\0${patch}`)
     const value: DiffFile = {
@@ -157,10 +160,7 @@ async function parseDiff(
     }
   }
 
-  return {
-    value: { threadId, version, files: parsed.map((file) => file.value) },
-    files: parsed,
-  }
+  return parsed
 }
 
 /** Only the header can say a file is binary; its own text may quote these markers. */

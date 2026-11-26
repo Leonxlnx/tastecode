@@ -40,7 +40,7 @@ import {
 } from './review-file-tree.js'
 import { useWorkspaceRefresh } from './useWorkspaceRefresh.js'
 import {
-  workspaceDiffCollection,
+  workspaceDiffFilterCache,
   workspaceDiffItemId,
   type WorkspaceDiffFallback,
 } from './workspace-diffs.js'
@@ -416,10 +416,10 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
       diff?.files.filter((file) => !query || file.path.toLocaleLowerCase().includes(query)) ?? []
     )
   }, [diff, filter])
+  const cachedCollection = useMemo(() => diff && workspaceDiffFilterCache(diff.version), [diff])
   const renderedDiff = useMemo(
-    () =>
-      diff ? workspaceDiffCollection(diff.version, matchingFiles) : { items: [], fallbacks: [] },
-    [diff, matchingFiles],
+    () => cachedCollection?.(matchingFiles) ?? { items: [], fallbacks: [] },
+    [cachedCollection, matchingFiles],
   )
   const diffOptions = useMemo<CodeViewReactOptions<undefined>>(
     () => ({

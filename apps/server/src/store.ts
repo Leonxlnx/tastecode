@@ -495,6 +495,7 @@ CREATE TABLE IF NOT EXISTS user_submission_items (
   event_seq INTEGER NOT NULL REFERENCES events(seq) ON DELETE CASCADE,
   PRIMARY KEY (thread_id, item_id)
 );
+CREATE INDEX IF NOT EXISTS user_submission_items_event_seq ON user_submission_items (event_seq);
 
 CREATE TABLE IF NOT EXISTS turn_diff_events (
   event_seq INTEGER PRIMARY KEY REFERENCES events(seq) ON DELETE CASCADE,
@@ -519,10 +520,17 @@ CREATE INDEX IF NOT EXISTS recovery_lifecycles_open
   ON recovery_lifecycles (started_seq)
   WHERE started_seq IS NOT NULL AND terminal_seq IS NULL;
 
+-- Deleting an events row checks every table that references it. Without an
+-- index on the referencing column that check scans the whole table once per
+-- deleted row, which made deleting a long chat take minutes.
+CREATE INDEX IF NOT EXISTS recovery_lifecycles_started_seq ON recovery_lifecycles (started_seq);
+CREATE INDEX IF NOT EXISTS recovery_lifecycles_terminal_seq ON recovery_lifecycles (terminal_seq);
+
 CREATE TABLE IF NOT EXISTS recovery_errors (
   thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
   event_seq INTEGER NOT NULL REFERENCES events(seq) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS recovery_errors_event_seq ON recovery_errors (event_seq);
 
 CREATE TABLE IF NOT EXISTS queued_turn_events (
   seq       INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -58,6 +58,24 @@ export function workspaceDiffCollection(
   return { items, fallbacks }
 }
 
+/** One entry per matching file in the current Review snapshot. */
+export function workspaceDiffFilterCache(version: string) {
+  const entries = new WeakMap<DiffFile, WorkspaceDiffCollection>()
+  return (files: readonly DiffFile[]): WorkspaceDiffCollection => {
+    const result: WorkspaceDiffCollection = { items: [], fallbacks: [] }
+    for (const file of files) {
+      let entry = entries.get(file)
+      if (!entry) {
+        entry = workspaceDiffCollection(version, [file])
+        entries.set(file, entry)
+      }
+      result.items.push(...entry.items)
+      result.fallbacks.push(...entry.fallbacks)
+    }
+    return result
+  }
+}
+
 export function workspaceDiffFilePatch(file: DiffFile): string {
   const previousPath = file.previousPath ?? file.path
   const lines = [`diff --git ${gitPath(`a/${previousPath}`)} ${gitPath(`b/${file.path}`)}`]
