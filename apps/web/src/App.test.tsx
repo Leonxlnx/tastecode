@@ -314,6 +314,7 @@ vi.mock('./ui/TerminalPane.js', async (importOriginal) => {
 
 vi.mock('./bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./bridge.js')>()),
+  savePastedFile: vi.fn(),
   canDropProjectFolders: true,
   droppedProjectFolderPaths,
   get isDesktop() {
@@ -11713,6 +11714,40 @@ describe('new chats', () => {
       'Another Project',
     )
   })
+
+  it.each([false, true])(
+    'cancels a pending Enter after selecting No project (return: %s)',
+    async (back) => {
+      serverProjects = [
+        { path: '/work/project', name: 'TasteCode', pinned: false, createdAt: 0, sessions: [] },
+      ]
+      let finish!: (file: { path: string; name: string }) => void
+      const save = vi.mocked((await import('./bridge.js')).savePastedFile)
+      save.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+      )
+      render(<App />)
+      expect((await screen.findByRole('heading')).textContent).toContain(
+        'What should we build in TasteCode?',
+      )
+      const area = screen.getByPlaceholderText('Do anything')
+      fireEvent.paste(area, { clipboardData: { files: [new File(['notes'], 'pending.txt')] } })
+      expect(save).toHaveBeenCalled()
+      submitTurn('Keep this draft')
+      fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: /No project/ }))
+      if (back) {
+        fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: /TasteCode/ }))
+      }
+      await act(async () => finish({ path: '/saved/pending.txt', name: 'pending.txt' }))
+      expect(rpcCount('projects.createChatFolder')).toBe(0)
+      expect(rpcCount('thread.start')).toBe(0)
+      expect(rpcCount('thread.sendTurn')).toBe(0)
+    },
+  )
 
   it('starts a chat without a project in a folder of its own', async () => {
     serverProjects = [

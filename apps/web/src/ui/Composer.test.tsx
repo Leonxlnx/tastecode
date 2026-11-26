@@ -536,6 +536,46 @@ describe('Composer draft state', () => {
     expect(composer.value).toBe('')
   })
 
+  it('opens the model picker while an attachment is saving', async () => {
+    const onSend = vi.fn()
+    const onModelSelectorOpen = vi.fn()
+    renderComposer(onSend, {
+      onModelSelectorOpen,
+      models: [
+        {
+          key: 'codex:model',
+          provider: 'codex',
+          sourceName: 'Codex',
+          mark: 'openai',
+          model: {
+            id: 'model',
+            displayName: 'Test model',
+            isDefault: true,
+            reasoningEfforts: [],
+            serviceTiers: [],
+          },
+        },
+      ],
+    })
+    await screen.findByRole('button', { name: 'Model and reasoning' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    let finish!: (value: undefined) => void
+    bridge.savePastedFile.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+    )
+    fireEvent.paste(composer, { clipboardData: { files: [new File(['notes'], 'pending.txt')] } })
+    expect(bridge.savePastedFile).toHaveBeenCalledOnce()
+    fireEvent.change(composer, { target: { value: '/model' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onModelSelectorOpen).toHaveBeenCalledTimes(1)
+    expect(onSend).not.toHaveBeenCalled()
+    await act(async () => finish(undefined))
+    expect(onModelSelectorOpen).toHaveBeenCalledTimes(1)
+    expect(composer.value).toBe('')
+  })
+
   it.each([
     ['/resume', 'resume'],
     ['/continue', 'resume'],
@@ -3729,6 +3769,32 @@ describe('Composer Enter while Send is loading', () => {
       expect(send.mock.calls).toEqual([['First', ['/work/before.txt', '/saved/pending.txt']]])
       fireEvent.keyDown(area, { key: 'Enter' })
       expect(send.mock.calls[1]).toEqual(['', ['/work/later.txt']])
+    },
+  )
+
+  it.each([{ projectPath: '/another/project' }, { threadId: 'another-chat' }])(
+    'cancels a pending Enter even after returning from %j',
+    async (destination) => {
+      const send = vi.fn()
+      let finish!: (file: { path: string; name: string }) => void
+      bridge.savePastedFile.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+      )
+      const original = { projectPath: '/work/harness', threadId: 'original-chat' }
+      const view = renderComposer(send, original)
+      const area = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      fireEvent.change(area, { target: { value: 'Original draft' } })
+      fireEvent.paste(area, { clipboardData: { files: [new File(['notes'], 'pending.txt')] } })
+      fireEvent.keyDown(area, { key: 'Enter' })
+      view.rerenderComposer(destination)
+      view.rerenderComposer(original)
+      await act(async () => finish({ path: '/saved/pending.txt', name: 'pending.txt' }))
+      expect(send).not.toHaveBeenCalled()
+      expect(area.value).toBe('Original draft')
+      fireEvent.keyDown(area, { key: 'Enter' })
+      expect(send.mock.calls).toEqual([['Original draft', ['/saved/pending.txt']]])
     },
   )
 

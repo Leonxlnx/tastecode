@@ -875,6 +875,10 @@ function ComposerComponent(props: {
     if (props.attachmentsSupported) setAttachmentError(undefined)
   }, [props.attachmentsSupported])
 
+  useLayoutEffect(() => {
+    heldSubmit.current = undefined
+  }, [props.threadId, props.projectPath, props.withoutProject, props.draftRequest?.request])
+
   useEffect(() => {
     const held = heldSubmit.current
     if (!held || props.sendAvailability === 'loading') return
@@ -1641,10 +1645,11 @@ function ComposerComponent(props: {
     // Send is still loading (the model list or the account check has not
     // answered): keep the Enter and send once Send is ready, instead of
     // ignoring it while the words stay in the box.
-    if (
-      sendAvailabilityRef.current === 'loading' ||
-      (sendAvailabilityRef.current === 'ready' && attachments.some((file) => !file.path))
-    ) {
+    const waitingForFiles =
+      sendAvailabilityRef.current === 'ready' && attachments.some((file) => !file.path)
+    // Local commands can finish now. A normal message with unsaved files cannot.
+    if (waitingForFiles && sendContent(textRef.current, submission)) return
+    if (sendAvailabilityRef.current === 'loading' || waitingForFiles) {
       heldSubmit.current = {
         text: textRef.current,
         attachmentIds: new Set(attachments.map((file) => file.id)),
