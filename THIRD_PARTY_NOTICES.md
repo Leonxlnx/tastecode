@@ -44,7 +44,6 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | `semver` | Desktop release version ordering | ISC | [source](https://github.com/npm/node-semver) |
 | `shiki` | Syntax highlighting | MIT | [source](https://github.com/shikijs/shiki) |
 | `streamdown` | Streaming Markdown rendering | Apache-2.0 | [source](https://github.com/vercel/streamdown) |
-| `thinking-orbs` | Agent activity indicators | MIT | [source](https://github.com/Jakubantalik/thinking-orbs) |
 | `ws` | WebSocket runtime | MIT | [source](https://github.com/websockets/ws) |
 | `zod` | Runtime schema validation | MIT | [source](https://github.com/colinhacks/zod) |
 

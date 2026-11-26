@@ -226,13 +226,6 @@
       "source": "https://github.com/vercel/streamdown"
     },
     {
-      "name": "thinking-orbs",
-      "use": "Agent activity indicators",
-      "license": "MIT",
-      "metadataLicenses": ["MIT"],
-      "source": "https://github.com/Jakubantalik/thinking-orbs"
-    },
-    {
       "name": "ws",
       "use": "WebSocket runtime",
       "license": "MIT",
