@@ -897,10 +897,11 @@ function ComposerComponent(props: {
       return
     }
     const captured = attachments.filter((file) => held.attachmentIds.has(file.id))
-    if (captured.length === held.attachmentIds.size && voiceState === 'idle') {
-      // sendContent handles local commands before requiring a saved path for each file.
-      const sent = sendContent(held.text, held.submission, captured)
-      if (!sent && captured.some((file) => !file.path)) return
+    if (voiceState === 'idle') {
+      // A failed save invalidates the message payload. Local commands use only the text.
+      const files = captured.length === held.attachmentIds.size ? captured : null
+      const sent = sendContent(held.text, held.submission, files)
+      if (!sent && files?.some((file) => !file.path)) return
     }
     heldSubmit.current = undefined
   }, [props.sendAvailability, attachments])
@@ -1494,7 +1495,6 @@ function ComposerComponent(props: {
   }
 
   const removeAttachment = (id: string, previewUrl?: string) => {
-    if (heldSubmit.current?.attachmentIds.has(id)) heldSubmit.current = undefined
     pendingAttachments.current.delete(id)
     // Side effects stay outside the updater — updaters run during render and
     // replay under StrictMode. Only renderer-created blob previews are revoked;
@@ -1504,6 +1504,11 @@ function ComposerComponent(props: {
     }
     releasePreview(previewUrl)
     setAttachments((current) => current.filter((attachment) => attachment.id !== id))
+  }
+
+  const discardAttachment = (attachment: ComposerAttachment) => {
+    if (heldSubmit.current?.attachmentIds.has(attachment.id)) heldSubmit.current = undefined
+    removeAttachment(attachment.id, attachment.previewUrl)
   }
 
   const addDroppedFiles = (files: { file: File; path: string | undefined }[]) => {
@@ -1554,7 +1559,7 @@ function ComposerComponent(props: {
   const sendContent = (
     content: string,
     submission: RunningSubmission = 'queue',
-    files = attachments,
+    files: ComposerAttachment[] | null = attachments,
   ) => {
     // Chips are only how the draft looks: the provider and TasteCode's own
     // commands read the tokens they stand for.
@@ -1590,6 +1595,7 @@ function ComposerComponent(props: {
       pickerTrigger.click()
       return true
     }
+    if (files === null) return false
     const trimmed = prompt.trim()
     const pickedPaths = files.flatMap((attachment) => attachment.path ?? [])
     const paths = [
@@ -2416,7 +2422,7 @@ function ComposerComponent(props: {
                       </button>
                       <button
                         className="attachment-preview__remove"
-                        onClick={() => removeAttachment(attachment.id, attachment.previewUrl)}
+                        onClick={() => discardAttachment(attachment)}
                         title="Remove"
                         aria-label={`Remove ${attachment.name}`}
                       >
@@ -2436,7 +2442,7 @@ function ComposerComponent(props: {
                       <span className="chip__label">{attachment.name}</span>
                       <button
                         className="chip__x"
-                        onClick={() => removeAttachment(attachment.id, attachment.previewUrl)}
+                        onClick={() => discardAttachment(attachment)}
                         title="Remove"
                         aria-label={`Remove ${attachment.name}`}
                       >
