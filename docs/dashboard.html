@@ -291,12 +291,26 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-25 dev ecce9e04 · nightly 8a60342f · main dd8f4264</span>
+        <span class="meta">2026-11-26 dev 031e93e9 · nightly 8a60342f · main dd8f4264</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 26 on dev (031e93e9, not on nightly or main): deleting a chat no longer blocks
+          the server for up to minutes: four columns that reference events got indexes, so a small
+          chat deletes in 0.3 s instead of 40 to 50 s on a large library (#2531). The Review pane
+          reads one combined patch instead of one git process per changed file, 4.5 s instead of
+          19.4 s for 200 files, and reuses parsed files while filtering (#2529, #2530). Session
+          diffs read their decisions in batches (#2532), the clean-checkout check before a turn no
+          longer builds a list of every tracked path (#2533), and the block split of finished
+          Markdown answers is cached (#2539). Fixed: Enter in chat search could open a result of the
+          previous query (#2540), a late feedback acknowledgement closed a newer feedback draft
+          (#2541), and Escape for an input-method candidate discarded a pull request draft (#2542).
+          Cleanup: two unused dependencies removed, stale comments corrected, module-local exports,
+          four tests without real sleeps (#2534 to #2538).
+        </p>
         <p>
           November 25 on dev (ecce9e04, not on nightly or main): performance with large libraries
           and long turns. While a tool's output streams, the other rows of its work group no longer
