@@ -8141,9 +8141,8 @@ describe('rolling a session back', () => {
     sessions[0]!.emit({ type: 'diff.updated', turnId: 'turn-1', diff: 'agent patch' })
     sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
 
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-    expect(store.turnDiff(thread.id, 'turn-1')).toBe('agent patch')
     await orchestrator.disposeAll()
+    expect(store.turnDiff(thread.id, 'turn-1')).toBe('agent patch')
   })
 
   it('takes no second snapshot after a turn that ran no command and changed no file', async () => {
@@ -8156,9 +8155,8 @@ describe('rolling a session back', () => {
     sessions[0]!.emit(message('An answer.', 'turn-1'))
     sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
 
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-    expect(store.turnDiff(thread.id, 'turn-1')).toBeUndefined()
     await orchestrator.disposeAll()
+    expect(store.turnDiff(thread.id, 'turn-1')).toBeUndefined()
   })
 
   it('takes no second snapshot for an agent that reports its turn diffs itself', async () => {
@@ -8171,9 +8169,8 @@ describe('rolling a session back', () => {
     sessions[0]!.emit(fileEdit('unrelated.txt', 'turn-1'))
     sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
 
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-    expect(store.turnDiff(thread.id, 'turn-1')).toBeUndefined()
     await orchestrator.disposeAll()
+    expect(store.turnDiff(thread.id, 'turn-1')).toBeUndefined()
   })
 
   it('builds no turn diff when another chat worked in the same checkout', async () => {
@@ -8193,10 +8190,9 @@ describe('rolling a session back', () => {
     sessions[1]!.emit({ type: 'turn.completed', turnId: 'turn-2', status: 'completed' })
     sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
 
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    await orchestrator.disposeAll()
     expect(store.turnDiff(first.id, 'turn-1')).toBeUndefined()
     expect(store.turnDiff(second.id, 'turn-2')).toBeUndefined()
-    await orchestrator.disposeAll()
   })
 
   it('undoes only the patch from an edit block and keeps the conversation', async () => {
