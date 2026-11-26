@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { LocalUsageRecord, ProviderId } from '@harness/contracts'
@@ -23,8 +23,9 @@ const LONG_CONTEXT_TOKENS = 200_000
  * The Grok CLI keeps each session's token counts, turn by turn, in
  * `<GROK_HOME>/sessions/<folder>/<session>/usage.json`. CLIs before those files
  * appended them to `<GROK_HOME>/logs/unified.jsonl` instead; 1.0.70 and later
- * no longer do at the default log level. A home whose sessions have usage files
- * is read from them alone, since a debug-level log can hold the same turns again.
+ * no longer do at the default log level. Once sessions have usage files, the log
+ * still holds the turns from before them, so it is read too, up to the day the
+ * first usage file was made: a debug-level log can hold the later turns again.
  */
 export const GROK_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord> = {
   provider: 'grok',
@@ -35,12 +36,27 @@ export const GROK_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord
 
 async function discoverGrokUsageHistory(home: string): Promise<UsageArchive<LocalUsageRecord>> {
   const sessions = await sessionUsageFiles(path.join(home, 'sessions'))
-  if (sessions.length > 0) return { available: true, files: sessions }
-  return discoverFileArchive(
-    path.join(home, 'logs', 'unified.jsonl'),
-    readGrokUsageHistory,
-    resumeGrokUsageHistory,
+  const logPath = path.join(home, 'logs', 'unified.jsonl')
+  if (sessions.length === 0)
+    return discoverFileArchive(logPath, readGrokUsageHistory, resumeGrokUsageHistory)
+  // The log names Grok processes, not sessions, so a day is where it hands over.
+  const made = await Promise.all(
+    sessions.map(async (file) => {
+      const created = (await stat(file.path).catch(() => undefined))?.birthtimeMs ?? 0
+      return created > 0 ? created : file.mtimeMs
+    }),
   )
+  const firstDay = localDateKey(new Date(Math.min(...made)))
+  const log = await usageArchiveFile(logPath, async () =>
+    (await readGrokUsageHistory(logPath)).filter((entry) => entry.date < firstDay),
+  ).catch(() => undefined)
+  if (!log) return { available: true, files: sessions }
+  // The day it stops at changes what the log yields, so it names a new reading;
+  // the index would otherwise keep the whole log from before the first usage file.
+  return {
+    available: true,
+    files: [...sessions, { ...log, path: `${logPath}#before-${firstDay}` }],
+  }
 }
 
 /** Every `usage.json` one level below a working-folder directory of the session store. */

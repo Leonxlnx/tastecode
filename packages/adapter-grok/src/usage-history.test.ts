@@ -44,10 +44,10 @@ describe('Grok usage history source', () => {
     ])
   })
 
-  it('lists the sessions’ usage files instead of the log once sessions have them', async () => {
+  it('lists the sessions’ usage files, and the log for the days before them', async () => {
     const home = temporaryDirectory()
     mkdirSync(path.join(home, 'logs'))
-    logFile(path.join(home, 'logs'), 'unified.jsonl', ['{}'])
+    const log = logFile(path.join(home, 'logs'), 'unified.jsonl', ['{}'])
     const first = sessionUsage(home, 'E%3A%5Csite', 'a1', { sessionId: 'a1', turns: [] })
     const second = sessionUsage(home, 'E%3A%5Cother', 'b2', { sessionId: 'b2', turns: [] })
     mkdirSync(path.join(home, 'sessions', 'E%3A%5Csite', 'never-written'))
@@ -56,8 +56,51 @@ describe('Grok usage history source', () => {
     const archive = await GROK_USAGE_HISTORY.discover(home)
 
     expect(archive.available).toBe(true)
-    expect(archive.files.map((entry) => entry.path).sort()).toEqual([first, second].sort())
-    expect(archive.files.every((entry) => entry.read === readGrokSessionUsage)).toBe(true)
+    const sessions = archive.files.filter((entry) => entry.read === readGrokSessionUsage)
+    expect(sessions.map((entry) => entry.path).sort()).toEqual([first, second].sort())
+    const older = archive.files.filter((entry) => entry.read !== readGrokSessionUsage)
+    expect(older.map((entry) => entry.path)).toEqual([`${log}#before-${today()}`])
+    expect(older[0]!.readFrom).toBeUndefined()
+  })
+
+  it('keeps the log’s usage from before the first usage file, and not after', async () => {
+    const home = temporaryDirectory()
+    mkdirSync(path.join(home, 'logs'))
+    logFile(path.join(home, 'logs'), 'unified.jsonl', [
+      row('2026-08-07T12:00:00.000Z', 42, 'model catalog: notifying clients', {
+        current_model_id: 'grok-4.5',
+      }),
+      row('2026-08-07T12:01:00.000Z', 42, 'shell.turn.inference_done', {
+        prompt_tokens: 1_000,
+        completion_tokens: 100,
+      }),
+      // A debug-level log goes on recording what the usage files hold too.
+      row(new Date().toISOString(), 42, 'shell.turn.inference_done', {
+        prompt_tokens: 500,
+        completion_tokens: 50,
+      }),
+    ])
+    sessionUsage(home, 'site', 'a1', {
+      sessionId: 'a1',
+      turns: [
+        {
+          endedAt: new Date().toISOString(),
+          primaryModelId: 'grok-4.7',
+          inputTokens: 500,
+          outputTokens: 50,
+        },
+      ],
+    })
+
+    const archive = await GROK_USAGE_HISTORY.discover(home)
+    const entries = (await Promise.all(archive.files.map((file) => file.read(file.path)))).flat()
+
+    expect(entries.map((entry) => [entry.date, entry.tokens.uncachedInputTokens]).sort()).toEqual(
+      [
+        ['2026-08-07', 1_000],
+        [today(), 500],
+      ].sort(),
+    )
   })
 
   it('has no archive in a home with neither', async () => {
@@ -341,4 +384,10 @@ function row(
   context: Record<string, unknown>,
 ): string {
   return JSON.stringify({ ts: timestamp, pid: processId, msg: message, ctx: context })
+}
+
+/** Today's local calendar day, as the usage index names days. */
+function today(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
