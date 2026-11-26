@@ -5,7 +5,13 @@ import type { Transport } from '../../transport.js'
 /** Recently seen checkouts, so switching back to a chat shows its chip at once. */
 const KNOWN_LIMIT = 32
 
-type Listener = (key: string, result: CheckoutPullRequestResult) => void
+let checkoutRead = 0
+/** Header and Review reads share a clock so late results cannot replace newer ones. */
+export function nextCheckoutRead(): number {
+  return ++checkoutRead
+}
+
+type Listener = (key: string, result: CheckoutPullRequestResult, order: number) => void
 const listeners = new Set<Listener>()
 
 /**
@@ -16,9 +22,10 @@ export function publishCheckoutPullRequest(
   projectPath: string,
   sessionId: string | undefined,
   result: CheckoutPullRequestResult,
+  order = nextCheckoutRead(),
 ): void {
   const key = checkoutKey(projectPath, checkoutThreadId(sessionId))
-  for (const listener of listeners) listener(key, result)
+  for (const listener of listeners) listener(key, result, order)
 }
 
 /** A chat that has not started yet works in the project folder. */
@@ -51,9 +58,9 @@ export function useCheckoutPullRequest(
   const sequence = useRef(new Map<string, number>())
 
   useEffect(() => {
-    const listener: Listener = (publishedKey, result) => {
-      // A request already on its way read GitHub before this answer did.
-      sequence.current.set(publishedKey, (sequence.current.get(publishedKey) ?? 0) + 1)
+    const listener: Listener = (publishedKey, result, order) => {
+      if ((sequence.current.get(publishedKey) ?? 0) > order) return
+      sequence.current.set(publishedKey, order)
       setKnown((current) => remember(current, publishedKey, result))
     }
     listeners.add(listener)
@@ -65,7 +72,7 @@ export function useCheckoutPullRequest(
   const load = useCallback(() => {
     if (projectPath === undefined) return
     const loadKey = checkoutKey(projectPath, threadId)
-    const id = (sequence.current.get(loadKey) ?? 0) + 1
+    const id = nextCheckoutRead()
     sequence.current.set(loadKey, id)
     transport
       .request('pullRequests.forCheckout', { projectPath, ...(threadId ? { threadId } : {}) })

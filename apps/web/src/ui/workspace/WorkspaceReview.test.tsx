@@ -597,7 +597,7 @@ describe('WorkspaceReview git actions', () => {
     expect(screen.getByRole('button', { name: 'Publish feature/b to origin' })).toBeTruthy()
     await act(async () => finishAction())
     expect(screen.getByRole('button', { name: 'Publish feature/b to origin' })).toBeTruthy()
-    expect(readsA).toBe(1)
+    expect(readsA).toBe(2)
   })
 
   it('still refreshes a refused push in the shown checkout', async () => {

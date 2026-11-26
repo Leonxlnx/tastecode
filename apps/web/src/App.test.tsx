@@ -1,6 +1,15 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import {
   methods,
   type DomainEvent,
@@ -27,6 +36,7 @@ import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS, ThreadController } from './thread-controller.js'
 import { MAX_INACTIVE_THREAD_CHARACTERS, MAX_INACTIVE_THREAD_STATES } from './thread-state-cache.js'
 import { composerWireText } from './ui/composer-chips.js'
+import { useCheckoutPullRequest } from './ui/pull-requests/useCheckoutPullRequest.js'
 
 const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
 const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
@@ -17519,6 +17529,121 @@ describe('split view', () => {
     await waitFor(() => expect(isFocused('Left chat')).toBe(true))
     expect(composerIn('Left chat').value).toBe('Words for the left chat')
   })
+  it.each([
+    ['push', 'success'],
+    ['push', 'failure'],
+    ['create', 'success'],
+    ['create', 'failure'],
+  ])(
+    'publishes the split checkout after a background %s settles with %s',
+    async (operation, outcome) => {
+      const request = transport.request.getMockImplementation()!
+      let finish!: () => void
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      let releaseLookup!: () => void
+      const lookupGate = new Promise<void>((resolve) => {
+        releaseLookup = resolve
+      })
+      const pr = {
+        repository: 'owner/repo',
+        number: 42,
+        title: 'Origin PR',
+        state: 'OPEN',
+        isDraft: false,
+        headRefName: 'feature/a',
+        url: 'https://github.com/owner/repo/pull/42',
+      }
+      let settled = false
+      transport.request.mockImplementation(async (method, params) => {
+        if (method === 'workspace.diff')
+          return { threadId: 'checkout', version: 'clean', files: [] }
+        if (method === 'workspace.push' || method === 'pullRequests.create') {
+          await pending
+          settled = true
+          if (outcome === 'failure') throw new Error('Origin action failed')
+          return operation === 'push' ? { branch: 'feature/a', remote: 'origin' } : pr
+        }
+        if (method !== 'pullRequests.forCheckout') return request(method, params)
+        const { threadId, refresh } = methods['pullRequests.forCheckout'].params.parse(params)
+        const origin = threadId === 'right-thread'
+        if (origin && refresh && settled) await lookupGate
+        // On refocus the header can only show what was published while A lacked focus.
+        if (origin && settled && !refresh) return new Promise(() => {})
+        return {
+          available: true,
+          branch: origin ? 'feature/a' : 'feature/b',
+          defaultBranch: 'main',
+          repository: 'owner/repo',
+          fetchedAt: 1,
+          ...(origin && operation === 'create' ? { upstream: 'origin/feature/a', ahead: 0 } : {}),
+          ...(origin && refresh && settled ? { pullRequest: { ...pr, checks: 'passing' } } : {}),
+        }
+      })
+      await import('./ui/workspace/WorkspacePanel.js')
+      await import('./ui/workspace/WorkspaceReview.js')
+      await openSplit()
+      // Keep a header subscribed to A without letting it initiate a new lookup on focus.
+      const header = renderHook(() =>
+        useCheckoutPullRequest(
+          transport.instance as Transport,
+          '/work/project',
+          'right-thread',
+          false,
+          false,
+        ),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Show workspace tools' }))
+      const panel = await waitFor(() => {
+        const element = document.querySelector<HTMLElement>(
+          '.workspace-panel:not(.workspace-panel--bottom)',
+        )
+        expect(element).toBeTruthy()
+        return element!
+      })
+      fireEvent.click(within(panel).getByRole('button', { name: 'Add workspace tab' }))
+      fireEvent.click(await screen.findByRole('menuitem', { name: /^Review/ }))
+      if (operation === 'push') {
+        fireEvent.click(await screen.findByRole('button', { name: 'Publish feature/a to origin' }))
+      } else {
+        fireEvent.click(await screen.findByRole('button', { name: 'Create pull request' }))
+        const form = screen.getByRole('form', { name: 'Create pull request' })
+        fireEvent.change(within(form).getByRole('textbox', { name: 'Pull request title' }), {
+          target: { value: pr.title },
+        })
+        fireEvent.submit(form)
+        // GitHub still has no PR when a refresh races the pending create.
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: 'Refresh diff' }))
+        })
+      }
+      fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+      const publishB = await screen.findByRole('button', { name: 'Publish feature/b to origin' })
+      await act(async () => finish())
+      expect(screen.getByRole('button', { name: 'Publish feature/b to origin' })).toBe(publishB)
+      expect(
+        screen.queryByText(/Origin action failed|Pushed feature\/a|Opened pull request #42/),
+      ).toBeNull()
+      expect(transport.request).toHaveBeenCalledWith('pullRequests.forCheckout', {
+        projectPath: '/work/project',
+        threadId: 'right-thread',
+        refresh: true,
+      })
+      if (operation === 'create' && outcome === 'success')
+        expect(header.result.current?.number).toBe(42)
+      await act(async () => releaseLookup())
+      expect(header.result.current).toMatchObject({ number: 42, checks: 'passing' })
+      expect(screen.getByRole('button', { name: 'Publish feature/b to origin' })).toBe(publishB)
+      fireEvent.pointerDown(transcriptIn('Right chat'), { button: 0 })
+      expect(
+        await within(pane('Right chat')).findByRole('button', {
+          name: /Pull request #42: Open, Checks passing/,
+        }),
+      ).toBeTruthy()
+    },
+  )
+
   it('answers an approval in the unfocused pane on that pane’s chat', async () => {
     await openSplit()
     act(() => threadPropsById.get('left-thread')!.onDecide('approval-1', 'approve'))

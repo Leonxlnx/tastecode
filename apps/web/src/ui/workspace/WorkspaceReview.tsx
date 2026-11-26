@@ -27,7 +27,10 @@ import { FileTypeIcon } from '../FileTypeIcon.js'
 import { IconMorph } from '../IconMorph.js'
 import { SkeletonCode, SkeletonStatus } from '../Skeleton.js'
 import { StagePullRequestChip } from '../StagePullRequestChip.js'
-import { publishCheckoutPullRequest } from '../pull-requests/useCheckoutPullRequest.js'
+import {
+  nextCheckoutRead,
+  publishCheckoutPullRequest,
+} from '../pull-requests/useCheckoutPullRequest.js'
 import { ReviewCommitBox, ReviewPullRequestBox } from './ReviewComposer.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import { pullRequestFromCommit, reviewGitState } from './review-git.js'
@@ -173,19 +176,22 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
 
   /** Branch, upstream and pull request, shared with the header chip. */
   const readCheckout = useCallback(
-    async (refresh: boolean) => {
+    async (refresh: boolean, action?: number) => {
       const projectPath = props.projectPath
       if (!projectPath) return
-      const mine = ++checkoutGeneration.current
+      const order = nextCheckoutRead()
+      const shown = action === undefined || action === actionGeneration.current
+      const mine = shown ? ++checkoutGeneration.current : undefined
       try {
         const result = await props.transport.request('pullRequests.forCheckout', {
           projectPath,
           ...(threadId ? { threadId } : {}),
           ...(refresh ? { refresh } : {}),
         })
-        if (checkoutGeneration.current !== mine) return
-        setCheckout(result)
-        publishCheckoutPullRequest(projectPath, threadId, result)
+        if (checkoutGeneration.current === mine) setCheckout(result)
+        else if (action === undefined) return
+        // A completed git action also updates the originating chat's header cache.
+        publishCheckoutPullRequest(projectPath, threadId, result, order)
       } catch {
         // A server without the lookup still commits; it just offers no push.
         if (checkoutGeneration.current === mine) setCheckout(undefined)
@@ -333,7 +339,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         return `Pushed ${result.branch} to ${result.remote}`
       } finally {
         // Even a refused push may have set the upstream or moved the remote branch.
-        if (actionGeneration.current === mine) void readCheckout(true)
+        void readCheckout(true, mine)
       }
     })
   }, [checkoutParams, props.transport, readCheckout, runAction])
@@ -350,22 +356,21 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
             ...checkoutParams,
             ...input,
           })
+          const opened = withPullRequest(before, {
+            ...result,
+            title: input.title,
+            state: 'OPEN',
+            isDraft: input.draft,
+            headRefName: branch,
+          })
           if (actionGeneration.current === mine) {
             setComposer(undefined)
-            // Show the chip now; the lookup adds its checks.
-            const opened = withPullRequest(before, {
-              ...result,
-              title: input.title,
-              state: 'OPEN',
-              isDraft: input.draft,
-              headRefName: branch,
-            })
             setCheckout(opened)
-            publishCheckoutPullRequest(checkoutParams.projectPath, threadId, opened)
           }
+          publishCheckoutPullRequest(checkoutParams.projectPath, threadId, opened)
           return `Opened pull request #${result.number}`
         } finally {
-          if (actionGeneration.current === mine) void readCheckout(true)
+          void readCheckout(true, mine)
         }
       })
     },

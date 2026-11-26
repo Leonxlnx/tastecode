@@ -3,7 +3,11 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { CheckoutPullRequest, CheckoutPullRequestResult } from '@harness/contracts'
 import { TestTransport } from '../../test-transport.js'
-import { publishCheckoutPullRequest, useCheckoutPullRequest } from './useCheckoutPullRequest.js'
+import {
+  nextCheckoutRead,
+  publishCheckoutPullRequest,
+  useCheckoutPullRequest,
+} from './useCheckoutPullRequest.js'
 
 afterEach(cleanup)
 
@@ -192,6 +196,23 @@ describe('the chat checkout pull request', () => {
     await waitFor(() => expect(asked()).toHaveLength(1))
     act(() => transport.emitState('open'))
     await waitFor(() => expect(asked()).toHaveLength(2))
+  })
+
+  it('keeps the newer header result when an older Review read finally publishes', async () => {
+    const older = nextCheckoutRead()
+    let reply!: (value: CheckoutPullRequestResult) => void
+    const { hook } = setup(
+      () =>
+        new Promise<CheckoutPullRequestResult>((resolve) => {
+          reply = resolve
+        }),
+    )
+    await waitFor(() => expect(reply).toBeDefined())
+    await act(async () => reply(found({ state: 'MERGED' })))
+    act(() =>
+      publishCheckoutPullRequest('/work/project', 'thread-1', found({ state: 'OPEN' }), older),
+    )
+    expect(hook.result.current?.state).toBe('MERGED')
   })
 
   it('shows what the Review tab published over an answer still on its way', async () => {
