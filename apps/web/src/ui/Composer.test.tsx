@@ -760,6 +760,91 @@ describe('Composer docking from the prompt box', () => {
 })
 
 describe('Composer media attachments', () => {
+  it('allows native text insertion when selected prose is dropped on the textarea', () => {
+    renderComposer(vi.fn())
+    const area = screen.getByPlaceholderText('Do anything')
+    expect(
+      fireEvent.drop(area, {
+        dataTransfer: { files: [], types: ['text/plain'], getData: () => 'selected prose' },
+      }),
+    ).toBe(true)
+  })
+
+  it.each(['text/uri-list', 'text/html', 'disabled'])('consumes uneditable drops (%s)', (type) => {
+    renderComposer(vi.fn(), { disabled: type === 'disabled' })
+    const area = screen.getByRole('textbox') as HTMLTextAreaElement
+    expect(
+      fireEvent.drop(area, {
+        dataTransfer: {
+          files: [],
+          types: [type === 'disabled' ? 'text/plain' : type],
+          getData: () => 'content',
+        },
+      }),
+    ).toBe(false)
+    expect(area.value).toBe('')
+  })
+
+  it.each(['C:/work/my notes.txt', 'file:///C:/work/my%20notes.txt'])(
+    'excludes redundant mixed-drop text (%s)',
+    (text) => {
+      const send = vi.fn()
+      vi.stubGlobal('harness', { droppedFilePath: () => 'C:/work/my notes.txt' })
+      renderComposer(send)
+      const area = screen.getByPlaceholderText('Do anything')
+      fireEvent.change(area, { target: { value: 'draft' } })
+      fireEvent.drop(area, {
+        dataTransfer: {
+          files: [new File(['notes'], 'my notes.txt')],
+          types: ['Files', 'text/plain'],
+          getData: () => text,
+        },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      expect(send).toHaveBeenCalledWith('draft', ['C:/work/my notes.txt'])
+    },
+  )
+
+  it('opens the resource picker for fallback mixed-drop text and sends its selected chip', async () => {
+    const send = vi.fn()
+    vi.stubGlobal('harness', { droppedFilePath: () => '/work/notes.txt' })
+    renderComposer(send, { transport: populatedResourceTransport() })
+    const area = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.drop(area, {
+      dataTransfer: {
+        types: ['Files', 'text/plain'],
+        files: [new File(['notes'], 'notes.txt')],
+        getData: () => '@off',
+      },
+    })
+    fireEvent.click(await screen.findByRole('option', { name: /Official Docs/ }))
+    await findChip('mcp')
+    fireEvent.keyDown(area, { key: 'Enter' })
+    expect(send).toHaveBeenCalledWith('@officialDocs', ['/work/notes.txt'])
+  })
+
+  it('keeps the text and file of a mixed drop at the caret', () => {
+    const send = vi.fn()
+    vi.stubGlobal('harness', { droppedFilePath: () => '/work/notes.txt' })
+    renderComposer(send)
+    const area = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(area, { target: { value: 'ab' } })
+    area.setSelectionRange(1, 1)
+    expect(
+      fireEvent.drop(area, {
+        dataTransfer: {
+          files: [new File(['notes'], 'notes.txt')],
+          types: ['Files', 'text/plain'],
+          getData: () => 'XYZ',
+        },
+      }),
+    ).toBe(false)
+    expect(area.value).toBe('aXYZb')
+    expect(area.selectionStart).toBe(4)
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(send).toHaveBeenCalledWith('aXYZb', ['/work/notes.txt'])
+  })
+
   it('attaches native drops larger than 25 MiB without copying them', () => {
     const onSend = vi.fn()
     const nativeLookup = vi.fn(() => '/work/large.zip')

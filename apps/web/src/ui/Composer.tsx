@@ -1501,7 +1501,7 @@ function ComposerComponent(props: {
     setAttachments((current) => current.filter((attachment) => attachment.id !== id))
   }
 
-  const addDroppedFiles = (files: File[]) => {
+  const addDroppedFiles = (files: { file: File; path: string | undefined }[]) => {
     if (!attachmentsSupportedRef.current) {
       setAttachmentError(ATTACHMENTS_UNSUPPORTED)
       return
@@ -1510,8 +1510,7 @@ function ComposerComponent(props: {
     const attachedPaths = new Set(attachments.flatMap((attachment) => attachment.path ?? []))
     const picked: PickedAttachment[] = []
     const materialized: File[] = []
-    for (const file of files) {
-      const filePath = droppedFilePath(file)
+    for (const { file, path: filePath } of files) {
       if (!filePath) {
         materialized.push(file)
         continue
@@ -1969,6 +1968,31 @@ function ComposerComponent(props: {
     grow()
   }
 
+  const applyInput = (field: HTMLTextAreaElement, input: InputEvent) => {
+    let value = field.value
+    // An edit that cut through a chip leaves no invisible mark
+    // behind. Undo and redo only put back what the editor held,
+    // so Ctrl+Z can step back past the repair to the whole chip.
+    const repaired =
+      chipStore.get() !== '' &&
+      !input.isComposing &&
+      !repairingChips.current &&
+      !HISTORY_INPUT_TYPES.has(input.inputType)
+        ? repairComposerChips(value, field.selectionStart ?? value.length)
+        : undefined
+    if (repaired) {
+      removeChipFragments(field, value)
+      if (field.value !== repaired.text) field.value = repaired.text
+      field.setSelectionRange(repaired.caret, repaired.caret)
+      value = repaired.text
+    }
+    const onlyInserts =
+      composerAtMaximumHeight.current && composerInputOnlyInserts(textRef.current, value, input)
+    updateText(value, false)
+    updateResourceTrigger(composerResourceTriggerAt(value, field.selectionStart ?? value.length))
+    if (!onlyInserts) grow()
+  }
+
   return (
     <>
       <div
@@ -1980,14 +2004,53 @@ function ComposerComponent(props: {
           ref={composerAnchor}
           className={`composer__box ${dragging ? 'is-dropping' : ''}`}
           onDragOver={(e) => {
-            e.preventDefault()
+            if (draggedQueueId || hasDroppedFiles(e)) e.preventDefault()
             if (props.attachmentsSupported && hasDroppedFiles(e)) setDragging(true)
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => {
-            e.preventDefault()
             setDragging(false)
-            if (hasDroppedFiles(e)) addDroppedFiles(Array.from(e.dataTransfer.files))
+            const el = area.current
+            if (
+              !draggedQueueId &&
+              el &&
+              e.target === el &&
+              !el.disabled &&
+              !hasDroppedFiles(e) &&
+              Array.from(e.dataTransfer.types).includes('text/plain')
+            )
+              return
+            e.preventDefault()
+            if (!hasDroppedFiles(e)) return
+            const files = Array.from(e.dataTransfer.files).map((file) => ({
+              file,
+              path: droppedFilePath(file),
+            }))
+            addDroppedFiles(files)
+            if (
+              el &&
+              e.target === el &&
+              !el.disabled &&
+              Array.from(e.dataTransfer.types).includes('text/plain')
+            ) {
+              const text = e.dataTransfer.getData('text/plain')
+              if (
+                !text ||
+                text
+                  .trim()
+                  .split(/\r?\n/)
+                  .every((line) =>
+                    files.some(({ file, path }) => representsDroppedFile(line, file.name, path)),
+                  )
+              )
+                return
+              el.focus()
+              if (document.execCommand?.('insertText', false, text)) return
+              const caret = el.selectionStart + text.length
+              el.setRangeText(text, el.selectionStart, el.selectionEnd, 'end')
+              el.setSelectionRange(caret, caret)
+              applyInput(el, new InputEvent('input', { inputType: 'insertFromDrop', data: text }))
+            }
           }}
         >
           {/* First child: the panel tucks its lower band behind the top of the box,
@@ -2399,34 +2462,7 @@ function ComposerComponent(props: {
                   aria-autocomplete="list"
                   onFocus={warmUpComposer}
                   onPointerEnter={warmUpComposer}
-                  onChange={(e) => {
-                    const input = e.nativeEvent as InputEvent
-                    let value = e.target.value
-                    // An edit that cut through a chip leaves no invisible mark
-                    // behind. Undo and redo only put back what the editor held,
-                    // so Ctrl+Z can step back past the repair to the whole chip.
-                    const repaired =
-                      chipStore.get() !== '' &&
-                      !input.isComposing &&
-                      !repairingChips.current &&
-                      !HISTORY_INPUT_TYPES.has(input.inputType)
-                        ? repairComposerChips(value, e.target.selectionStart ?? value.length)
-                        : undefined
-                    if (repaired) {
-                      removeChipFragments(e.target, value)
-                      if (e.target.value !== repaired.text) e.target.value = repaired.text
-                      e.target.setSelectionRange(repaired.caret, repaired.caret)
-                      value = repaired.text
-                    }
-                    const onlyInserts =
-                      composerAtMaximumHeight.current &&
-                      composerInputOnlyInserts(textRef.current, value, e.nativeEvent as InputEvent)
-                    updateText(value, false)
-                    updateResourceTrigger(
-                      composerResourceTriggerAt(value, e.target.selectionStart ?? value.length),
-                    )
-                    if (!onlyInserts) grow()
-                  }}
+                  onChange={(e) => applyInput(e.target, e.nativeEvent as InputEvent)}
                   onKeyDown={(e) => {
                     // IME users press Escape to dismiss the candidate window;
                     // that must never reach the shortcuts below (interrupt!).
@@ -2836,6 +2872,23 @@ function basename(path: string): string {
 }
 
 /** Queued-prompt reorders bubble up here too; only real file drags attach. */
+function representsDroppedFile(text: string, name: string, path: string | undefined): boolean {
+  if (text === name || text === path) return true
+  if (!path) return false
+  let candidate = text
+  if (/^file:\/\//i.test(text)) {
+    try {
+      const url = new URL(text)
+      if (url.search || url.hash) return false
+      candidate = (url.hostname ? '//' + url.hostname : '') + decodeURIComponent(url.pathname)
+      candidate = candidate.replace(/^\/(?=[a-z]:\/)/i, '')
+    } catch {
+      return false
+    }
+  }
+  return candidate.replaceAll('\\', '/') === path.replaceAll('\\', '/')
+}
+
 function hasDroppedFiles(event: DragEvent<HTMLElement>): boolean {
   return Array.from(event.dataTransfer.types ?? []).includes('Files')
 }
