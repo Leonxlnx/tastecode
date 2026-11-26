@@ -178,6 +178,78 @@ describe('OpenCode adapter', () => {
     }
   })
 
+  it('speaks v2 to opencode 2.4.0, whose v1 probe serves the web UI', async () => {
+    // 2.4.0 answers `/session/status` with the UI's HTML and dropped `/api/health`,
+    // so only `/api/model` proves the protocol. Reading the status code alone
+    // picked v1, whose client then parsed that HTML as a providers payload.
+    const mock = await serveOpenCodeV2(0, false, false, 0, true)
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      await expect(adapter.listModels()).resolves.toMatchObject([
+        { id: 'provider-1/model-1', displayName: 'Model One' },
+        { id: 'provider-1/model-2', displayName: 'Model Two' },
+      ])
+      // v1's client is never used: its session route answers nothing here.
+      expect(mock.requests.some((request) => request.url.startsWith('/config/providers'))).toBe(
+        true,
+      )
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('lists models from /api/provider and /api/model when /config/providers is the UI', async () => {
+    const mock = await serveOpenCodeV2(0, false, false, 0, true)
+    mock.serveUiForConfigProviders = true
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      await expect(adapter.listModels()).resolves.toMatchObject([
+        { id: 'provider-1/model-1', displayName: 'Model One' },
+        { id: 'provider-1/model-2', displayName: 'Model Two' },
+      ])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('waits for a catalog that grows as configured providers load', async () => {
+    // A configured provider such as commandcode is resolved after the bundled
+    // ones, so `/api/model` first answers with a partial list. Returning that
+    // first non-empty answer hid those models from the picker.
+    const mock = await serveOpenCodeV2(0, false, false, 0, true)
+    mock.serveUiForConfigProviders = true
+    mock.extraProviders = [{ id: 'provider-2', name: 'Provider Two' }]
+    mock.catalogStages = [[1], [1, 1]]
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const models = await adapter.listModels()
+      expect(models.map((model) => model.id).sort()).toEqual([
+        'provider-1/staged-0-0',
+        'provider-2/staged-1-0',
+      ])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('keeps reasoning efforts when the catalog arrives in stages', async () => {
+    // `/api/model` is read twice: once for the model list and once for the
+    // variants. The second read must see the settled catalog too, or every
+    // model loses its reasoning effort even though the list looks complete.
+    const mock = await serveOpenCodeV2(0, false, false, 0, true)
+    mock.serveUiForConfigProviders = true
+    mock.catalogStages = [[1, 1]]
+    mock.catalogVariants = { 'provider-1/staged-0-0': ['low', 'high', 'max'] }
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const models = await adapter.listModels()
+      const model = models.find((entry) => entry.id === 'provider-1/staged-0-0')
+      expect(model?.reasoningEfforts).toEqual(['default', 'low', 'high', 'max'])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it.each(['v1', 'v2'] as const)(
     'fails the active turn when a %s SSE event exceeds the bound',
     async (protocol) => {
@@ -1542,6 +1614,8 @@ async function serveOpenCodeV2(
   holdFirstPermissionReply = false,
   refusePrompts = false,
   statusRefusalDelayMs = 0,
+  /** opencode 2.4.0: v1's probe answers with the web UI, and `/api/health` is gone. */
+  servesWebUiOnly = false,
 ): Promise<{
   baseUrl: string
   requests: RequestRecord[]
@@ -1549,11 +1623,26 @@ async function serveOpenCodeV2(
   endStreams(): void
   waitFor(url: string): Promise<RequestRecord>
   releaseHeldPermissionReply(): Promise<void>
+  /** Serve the web UI at `/config/providers`, as opencode 2.4.0 does. */
+  serveUiForConfigProviders: boolean
+  /** Successive `/api/model` answers, oldest first; the last repeats forever. */
+  catalogStages: number[][]
+  /** Extra providers `/api/provider` names, for staged catalogs. */
+  extraProviders: { id: string; name: string }[]
+  /** Variants by `providerID/modelID` for staged rows, which carry none otherwise. */
+  catalogVariants: Record<string, string[]>
 }> {
   const requests: RequestRecord[] = []
   const streams = new Set<ServerResponse>()
   const waiters: { url: string; resolve: (request: RequestRecord) => void }[] = []
   let heldPermissionReply: ServerResponse | undefined
+  let serveUiForConfigProviders = false
+  /** Successive `/api/model` answers, oldest first; the last repeats forever. */
+  let catalogStages: number[][] = []
+  /** Extra providers `/api/provider` names, for staged catalogs. */
+  const extraProviders: { id: string; name: string }[] = []
+  /** Variants by `providerID/modelID` for staged rows, which carry none otherwise. */
+  let catalogVariants: Record<string, string[]> = {}
   const session = {
     id: 'session-v2',
     title: 'TasteCode v2 session',
@@ -1586,11 +1675,25 @@ async function serveOpenCodeV2(
     if (request.url?.startsWith('/session/status')) {
       if (statusRefusalDelayMs)
         await new Promise((resolve) => setTimeout(resolve, statusRefusalDelayMs))
+      // 2.4.0 answers the web UI here, so the status code no longer says v1.
+      if (servesWebUiOnly) {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        return response.end('<!doctype html><html><head><title>OpenCode</title></head></html>')
+      }
       response.writeHead(404)
       return response.end()
     }
+    // 2.4.0 dropped the health check while keeping the rest of v2.
+    if (request.url === '/api/health' && servesWebUiOnly) {
+      response.writeHead(404, { 'content-type': 'application/json' })
+      return response.end(JSON.stringify({ _tag: 'NotFoundError' }))
+    }
     if (request.url === '/api/health') return json(response, { healthy: true })
     if (request.url?.startsWith('/config/providers')) {
+      if (serveUiForConfigProviders) {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        return response.end('<!doctype html><html><head><title>OpenCode</title></head></html>')
+      }
       return json(response, {
         providers: [
           {
@@ -1605,7 +1708,36 @@ async function serveOpenCodeV2(
         default: { 'provider-1': 'model-2' },
       })
     }
+    if (request.url?.startsWith('/api/provider')) {
+      return json(response, {
+        data: [{ id: 'provider-1', name: 'Provider One' }, ...extraProviders],
+      })
+    }
     if (request.url?.startsWith('/api/model')) {
+      // A configured provider's models land after the bundled ones, so the
+      // catalog keeps growing; the read waits until it stops.
+      if (catalogStages.length > 0) {
+        const stage = catalogStages.length > 1 ? catalogStages.shift()! : catalogStages[0]!
+        return json(response, {
+          data: stage.map((count, index) =>
+            Array.from({ length: count }, (_, row) => ({
+              id: `staged-${index}-${row}`,
+              providerID: index === 0 ? 'provider-1' : 'provider-2',
+              name: `Staged ${index}-${row}`,
+              enabled: true,
+              ...(catalogVariants[
+                `${index === 0 ? 'provider-1' : 'provider-2'}/staged-${index}-${row}`
+              ]
+                ? {
+                    variants: catalogVariants[
+                      `${index === 0 ? 'provider-1' : 'provider-2'}/staged-${index}-${row}`
+                    ]!.map((id) => ({ id })),
+                  }
+                : {}),
+            })),
+          ).flat(),
+        })
+      }
       return json(response, {
         data: [
           {
@@ -1696,6 +1828,21 @@ async function serveOpenCodeV2(
       heldPermissionReply.writeHead(204)
       heldPermissionReply.end()
       await finished
+    },
+    set serveUiForConfigProviders(value: boolean) {
+      serveUiForConfigProviders = value
+    },
+    get serveUiForConfigProviders() {
+      return serveUiForConfigProviders
+    },
+    set catalogStages(value: number[][]) {
+      catalogStages = value.map((stage) => [...stage])
+    },
+    set extraProviders(value: { id: string; name: string }[]) {
+      extraProviders.push(...value)
+    },
+    set catalogVariants(value: Record<string, string[]>) {
+      catalogVariants = { ...value }
     },
   }
 }
