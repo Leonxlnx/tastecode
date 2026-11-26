@@ -108,8 +108,7 @@
 }
 
 @container chat-stage (max-width: 480px) {
-  .composer-resource-picker__description,
-  .composer-resource-picker__meta span:last-child {
+  .composer-resource-picker__description {
     display: none;
   }
 
