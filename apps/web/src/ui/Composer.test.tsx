@@ -765,6 +765,24 @@ describe('Composer media attachments', () => {
     },
   )
 
+  it('opens the resource picker for fallback mixed-drop text and sends its selected chip', async () => {
+    const send = vi.fn()
+    vi.stubGlobal('harness', { droppedFilePath: () => '/work/notes.txt' })
+    renderComposer(send, { transport: populatedResourceTransport() })
+    const area = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.drop(area, {
+      dataTransfer: {
+        types: ['Files', 'text/plain'],
+        files: [new File(['notes'], 'notes.txt')],
+        getData: () => '@off',
+      },
+    })
+    fireEvent.click(await screen.findByRole('option', { name: /Official Docs/ }))
+    await findChip('mcp')
+    fireEvent.keyDown(area, { key: 'Enter' })
+    expect(send).toHaveBeenCalledWith('@officialDocs', ['/work/notes.txt'])
+  })
+
   it('keeps the text and file of a mixed drop at the caret', () => {
     const send = vi.fn()
     vi.stubGlobal('harness', { droppedFilePath: () => '/work/notes.txt' })
