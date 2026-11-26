@@ -51,7 +51,9 @@ const read = (file: string) => readFileSync(path.join(repo, file), 'utf8')
 const write = (file: string, text: string) => writeFileSync(path.join(repo, file), text)
 
 // One committed repository with tracked.txt, copied for each test (git-fixture.test-support).
-const template = gitRepositoryTemplate('harness-cp-', { 'tracked.txt': 'original\n' })
+const template = gitRepositoryTemplate('harness-cp-', {
+  'tracked.txt': 'original\n',
+})
 
 beforeEach(() => {
   repo = template.create()
@@ -117,7 +119,12 @@ describe('takeSnapshot', () => {
   it('refuses a folder that is not a repository', async () => {
     const plain = mkdtempSync(path.join(os.tmpdir(), 'harness-plain-'))
     await expect(takeSnapshot(plain)).rejects.toBeInstanceOf(NotARepositoryForCheckpoint)
-    rmSync(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    rmSync(plain, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    })
   })
 
   it('says git refuses a repository another user owns, not that there is none', async () => {
@@ -135,7 +142,12 @@ describe('takeSnapshot', () => {
       expect((refused as DubiousOwnership).message).toContain(repo)
     } finally {
       vi.unstubAllEnvs()
-      rmSync(configDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      rmSync(configDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      })
     }
   })
 
@@ -151,7 +163,9 @@ describe('takeSnapshot', () => {
     const fresh = mkdtempSync(path.join(os.tmpdir(), 'harness-cp-unborn-'))
     try {
       execFileSync('git', ['init', '-b', 'main', fresh], { windowsHide: true })
-      execFileSync('git', ['-C', fresh, 'config', 'core.autocrlf', 'false'], { windowsHide: true })
+      execFileSync('git', ['-C', fresh, 'config', 'core.autocrlf', 'false'], {
+        windowsHide: true,
+      })
       expect((await takeSnapshot(fresh)).clean).toBe(true)
       writeFileSync(path.join(fresh, 'first.txt'), 'before the agent\n')
       const snapshot = await takeSnapshot(fresh)
@@ -164,10 +178,18 @@ describe('takeSnapshot', () => {
       expect(readFileSync(path.join(fresh, 'first.txt'), 'utf8')).toBe('before the agent\n')
       expect(existsSync(path.join(fresh, 'agent.txt'))).toBe(false)
       expect(() =>
-        execFileSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: fresh, stdio: 'ignore' }),
+        execFileSync('git', ['rev-parse', '--verify', 'HEAD'], {
+          cwd: fresh,
+          stdio: 'ignore',
+        }),
       ).toThrow()
     } finally {
-      rmSync(fresh, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      rmSync(fresh, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      })
     }
   })
 
@@ -218,7 +240,10 @@ describe('takeSnapshot from the checkout index', () => {
       const checkout = linked ? mkdtempSync(path.join(os.tmpdir(), 'harness-cp-linked-')) : repo
       if (linked) git('worktree', 'add', '--detach', checkout, 'HEAD')
       const inCheckout = (...args: string[]) =>
-        execFileSync('git', args, { cwd: checkout, windowsHide: true }).toString()
+        execFileSync('git', args, {
+          cwd: checkout,
+          windowsHide: true,
+        }).toString()
       const tracked = path.join(checkout, 'tracked.txt')
       // Revoking read access changes ctime, which git would otherwise compare.
       git('config', 'core.trustctime', 'false')
@@ -235,7 +260,12 @@ describe('takeSnapshot from the checkout index', () => {
         chmodSync(tracked, 0o644)
         if (linked) {
           git('worktree', 'remove', '--force', checkout)
-          rmSync(checkout, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+          rmSync(checkout, {
+            recursive: true,
+            force: true,
+            maxRetries: 5,
+            retryDelay: 100,
+          })
         }
       }
     },
@@ -290,7 +320,11 @@ describe('takeSnapshot from the checkout index', () => {
     write('tracked.txt', 'main\n')
     git('commit', '-q', '-am', 'main')
     expect(() =>
-      execFileSync('git', ['merge', 'side'], { cwd: repo, stdio: 'ignore', windowsHide: true }),
+      execFileSync('git', ['merge', 'side'], {
+        cwd: repo,
+        stdio: 'ignore',
+        windowsHide: true,
+      }),
     ).toThrow()
     const conflicted = read('tracked.txt')
 
@@ -315,7 +349,14 @@ describe('takeSnapshot of a checkout that matches HEAD', () => {
         ? readFileSync(trace, 'utf8')
             .split('\n')
             .filter(Boolean)
-            .map((line) => JSON.parse(line) as { event: string; sid: string; name?: string })
+            .map(
+              (line) =>
+                JSON.parse(line) as {
+                  event: string
+                  sid: string
+                  name?: string
+                },
+            )
             // Top-level runs only; a git that starts another git nests its session id.
             .filter((event) => event.event === 'cmd_name' && !event.sid.includes('/'))
             .map((event) => event.name ?? '')
@@ -323,7 +364,12 @@ describe('takeSnapshot of a checkout that matches HEAD', () => {
       return { result, commands }
     } finally {
       vi.unstubAllEnvs()
-      rmSync(traceDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      rmSync(traceDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      })
     }
   }
   /**
@@ -334,7 +380,10 @@ describe('takeSnapshot of a checkout that matches HEAD', () => {
   function fullSnapshotTree(): string {
     const indexDir = mkdtempSync(path.join(os.tmpdir(), 'harness-cp-index-'))
     try {
-      const env = { ...process.env, GIT_INDEX_FILE: path.join(indexDir, 'index') }
+      const env = {
+        ...process.env,
+        GIT_INDEX_FILE: path.join(indexDir, 'index'),
+      }
       const run = (...args: string[]) =>
         execFileSync('git', args, { cwd: repo, env, windowsHide: true }).toString().trim()
       const trackedIgnored = git('ls-files', '--cached', '--ignored', '--exclude-standard', '-z')
@@ -345,7 +394,12 @@ describe('takeSnapshot of a checkout that matches HEAD', () => {
       if (trackedIgnored.length) run('add', '-f', '--', ...trackedIgnored)
       return run('write-tree')
     } finally {
-      rmSync(indexDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      rmSync(indexDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      })
     }
   }
   const treeOf = (commit: string) => git('rev-parse', `${commit}^{tree}`).trim()
@@ -354,7 +408,10 @@ describe('takeSnapshot of a checkout that matches HEAD', () => {
   it('records HEAD with a status instead of rebuilding the tree', async () => {
     const { result: snapshot, commands } = await gitCommands(() => takeSnapshot(repo))
 
-    expect(snapshot).toEqual({ commit: git('rev-parse', 'HEAD').trim(), clean: true })
+    expect(snapshot).toEqual({
+      commit: git('rev-parse', 'HEAD').trim(),
+      clean: true,
+    })
     expect(treeOf(snapshot.commit)).toBe(fullSnapshotTree())
     expect(commands).toContain('status')
     expect(commands).not.toEqual(expect.arrayContaining(FULL_PATH))
@@ -512,6 +569,46 @@ describe('restoreSnapshot', () => {
     await restoreSnapshot(repo, replaced.commit)
     expect(read('.env')).toBe('newer secret\n')
     expect(read('.gitignore')).toBe('.env\n')
+  })
+
+  it('backs up an ignored file standing where the checkpoint has a folder', async () => {
+    mkdirSync(path.join(repo, 'config'))
+    write('config/tracked', 'checkpoint\n')
+    git('add', 'config/tracked')
+    git('commit', '-m', 'config folder')
+    const before = await takeSnapshot(repo)
+    git('rm', '-q', 'config/tracked')
+    write('.gitignore', 'config\n')
+    write('config', 'unsaved settings\n')
+
+    const replaced = await restoreSnapshot(repo, before.commit)
+    expect(read('config/tracked')).toBe('checkpoint\n')
+    expect(git('show', `${replaced.commit}:config`)).toBe('unsaved settings\n')
+
+    await restoreSnapshot(repo, replaced.commit)
+    expect(read('config')).toBe('unsaved settings\n')
+  })
+
+  it('restores a project folder to the moment before its first file', async () => {
+    mkdirSync(path.join(repo, 'empty-project'))
+    const project = path.join(repo, 'empty-project')
+    const before = await takeSnapshot(project)
+    writeFileSync(path.join(project, 'first.js'), 'agent change\n')
+
+    await restoreSnapshot(project, before.commit)
+    expect(existsSync(path.join(project, 'first.js'))).toBe(false)
+    expect(read('tracked.txt')).toBe('original\n')
+  })
+
+  it('restores a file marked skip-worktree and leaves the mark in place', async () => {
+    const before = await takeSnapshot(repo)
+    git('update-index', '--skip-worktree', 'tracked.txt')
+    write('tracked.txt', 'agent change\n')
+
+    const replaced = await restoreSnapshot(repo, before.commit)
+    expect(read('tracked.txt')).toBe('original\n')
+    expect(git('ls-files', '-v', 'tracked.txt')).toMatch(/^S /)
+    expect(git('show', `${replaced.commit}:tracked.txt`)).toBe('agent change\n')
   })
 
   it('still restores when a checkpointed folder became a link to another folder', async (context) => {
@@ -752,7 +849,10 @@ describe('nested repositories', () => {
   // outer repository only sees such a folder as a gitlink, so it can neither
   // snapshot its files nor bring them back, and must not break because of it.
   const nestedGit = (...args: string[]) =>
-    execFileSync('git', args, { cwd: path.join(repo, 'app'), windowsHide: true }).toString()
+    execFileSync('git', args, {
+      cwd: path.join(repo, 'app'),
+      windowsHide: true,
+    }).toString()
 
   const initNested = (commit: boolean) => {
     mkdirSync(path.join(repo, 'app'))
@@ -927,10 +1027,20 @@ it.each(['checkout', 'git-directory'])(
       store = new Store(location)
       store.addProject(repo)
       for (const id of ['old', 'retained']) {
-        store.addThread({ id, projectPath: repo, provider: 'codex', title: id })
+        store.addThread({
+          id,
+          projectPath: repo,
+          provider: 'codex',
+          title: id,
+        })
         write('tracked.txt', `${id}\n`)
         const snapshot = await takeSnapshot(repo)
-        store.addCheckpoint({ threadId: id, seq: 0, commit: snapshot.commit, label: id })
+        store.addCheckpoint({
+          threadId: id,
+          seq: 0,
+          commit: snapshot.commit,
+          label: id,
+        })
         await retainCheckpoint(repo, store.checkpointNamespace, snapshot.commit)
       }
       store.closeThread('old')
@@ -974,7 +1084,12 @@ it.each(['checkout', 'git-directory'])(
       expect(git('show', `${retained}:tracked.txt`)).toBe('retained\n')
     } finally {
       store?.close()
-      rmSync(data, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      rmSync(data, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      })
     }
   },
 )
