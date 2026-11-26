@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync, StatementSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { readStateIndex, type StateIndex } from './state-index.js'
+import { readStateIndex, type StateIndex, rolloutKey } from './state-index.js'
 
 const roots: string[] = []
 const at = Date.parse('2026-10-17T10:00:00.000Z')
@@ -248,5 +248,22 @@ describe('Codex state index', () => {
       session: { id: 'long', title: 'Recreate this scene' },
     })
     db.close()
+  })
+})
+
+describe('a rollout file named in the index and on disk', () => {
+  it('is one file on Windows whatever the case of its drive or folders', () => {
+    expect(rolloutKey('e:\\Users\\Ann\\.codex\\sessions\\a.jsonl', 'win32')).toBe(
+      rolloutKey('E:\\users\\ann\\.codex\\sessions\\a.jsonl', 'win32'),
+    )
+    expect(rolloutKey('E:/Users/Ann/.codex/sessions/a.jsonl', 'win32')).toBe(
+      rolloutKey('E:\\Users\\Ann\\.codex\\sessions\\a.jsonl', 'win32'),
+    )
+  })
+
+  it('keeps case apart where the file system does', () => {
+    expect(rolloutKey('/home/ann/.codex/a.jsonl', 'linux')).not.toBe(
+      rolloutKey('/home/Ann/.codex/a.jsonl', 'linux'),
+    )
   })
 })
