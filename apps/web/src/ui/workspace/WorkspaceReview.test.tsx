@@ -565,6 +565,47 @@ describe('WorkspaceReview git actions', () => {
     expect(screen.queryByRole('button', { name: 'Create pull request' })).toBeNull()
   })
 
+  it.each([{ isComposing: true }, { keyCode: 229 }])(
+    'keeps PR candidate keys inside the input method (%j)',
+    async (ime) => {
+      const { transport, calls, answers } = gitCheckout({
+        diff: clean,
+        checkout: lookup({ upstream: 'origin/feature/review', ahead: 0 }),
+      })
+      let finish!: () => void
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      answers['pullRequests.create'] = async () => {
+        await pending
+        return {
+          repository: 'owner/repo',
+          number: 42,
+          url: 'https://github.com/owner/repo/pull/42',
+        }
+      }
+      renderReview(transport)
+      fireEvent.click(await screen.findByRole('button', { name: 'Create pull request' }))
+      const title = screen.getByRole('textbox', { name: 'Pull request title' })
+      const body = screen.getByRole('textbox', { name: 'Pull request description' })
+      fireEvent.change(title, { target: { value: 'My title' } })
+      fireEvent.change(body, { target: { value: 'My candidate' } })
+      fireEvent.keyDown(body, { key: 'Escape', ...ime })
+      expect(screen.getByDisplayValue('My candidate')).toBe(body)
+      fireEvent.keyDown(title, { key: 'Enter', ctrlKey: true, ...ime })
+      expect(calls('pullRequests.create')).toHaveLength(0)
+      fireEvent.keyDown(body, { key: 'Escape' })
+      expect(screen.queryByRole('form', { name: 'Create pull request' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Create pull request' }))
+      const freshTitle = screen.getByRole('textbox', { name: 'Pull request title' })
+      fireEvent.change(freshTitle, { target: { value: 'Ready' } })
+      fireEvent.keyDown(freshTitle, { key: 'Enter', metaKey: true })
+      expect(calls('pullRequests.create')).toHaveLength(1)
+      await act(async () => finish())
+      expect(await screen.findByText('Opened pull request #42')).toBeTruthy()
+    },
+  )
+
   it('opens a pull request from the last commit, then shows its chip', async () => {
     const pushed = lookup({ upstream: 'origin/feature/review', ahead: 1 })
     const { state, answers, transport, calls } = gitCheckout({ diff: changed, checkout: pushed })

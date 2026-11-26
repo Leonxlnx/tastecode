@@ -8,7 +8,7 @@ import {
   IconSparkles as Sparkles,
 } from '@tabler/icons-react'
 import { isMacOS } from '../../bridge.js'
-import { shortcutLabel } from '../../shortcuts.js'
+import { isComposingKey, shortcutLabel } from '../../shortcuts.js'
 import { IconMorph } from '../IconMorph.js'
 
 const SUBMIT_KEY = shortcutLabel({ key: 'enter', primary: true }, isMacOS())
@@ -16,6 +16,7 @@ const SUBMIT_KEY = shortcutLabel({ key: 'enter', primary: true }, isMacOS())
 /** Ctrl or Cmd+Enter submits, Escape closes; everything else is typing. */
 function composerKeys(onSubmit: () => void, onCancel: () => void) {
   return (event: KeyboardEvent) => {
+    if (isComposingKey(event)) return
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault()
       onSubmit()
